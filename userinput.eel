@@ -1,0 +1,12 @@
+function dialog() (
+  sprintf(#values, "%g,%g", input1, input2);
+  GetUserInputs("Label", 2, "Volume,Length", #values) ? (
+    match("%f,%f", #values, input1, input2);
+    1;
+  ) : 0;
+);
+
+input1 = 8; input2 = 16;
+dialog() ? (
+  ShowConsoleMsg(sprintf(#, "%d,%d\n", input1, input2));
+);

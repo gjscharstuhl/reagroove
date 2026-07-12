@@ -1,0 +1,92 @@
+-- gjs - Start recording at next start of active region
+-- Active region = region under play cursor if playing, otherwise edit cursor
+
+local TOLERANCE = 0.05 -- 20 ms trigger window
+local proj = 0
+
+local function get_active_position()
+  local play_state = reaper.GetPlayState()
+  local is_playing = (play_state & 1) == 1
+  local is_recording = (play_state & 4) == 4
+
+  if is_playing or is_recording then
+    return reaper.GetPlayPosition()
+  else
+    return reaper.GetCursorPosition()
+  end
+end
+
+local function find_region_at_position(pos)
+  local _, num_markers, num_regions = reaper.CountProjectMarkers(proj)
+  local total = num_markers + num_regions
+
+  for i = 0, total - 1 do
+    local ok, is_region, r_start, r_end, name, id =
+      reaper.EnumProjectMarkers(i)
+
+    if ok and is_region then
+      if pos >= r_start and pos < r_end then
+        return r_start, r_end, name, id
+      end
+    end
+  end
+
+  return nil
+end
+
+local current_pos = get_active_position()
+local region_start, region_end, region_name, region_id =
+  find_region_at_position(current_pos)
+
+if not region_start then
+  return
+end
+
+-- time selection op huidige region zetten
+reaper.GetSet_LoopTimeRange(true, false, region_start, region_end, false)
+
+local play_state = reaper.GetPlayState()
+local is_playing = (play_state & 1) == 1
+local is_recording = (play_state & 4) == 4
+
+if is_recording then
+  return
+end
+
+-- Als transport stil staat: naar begin region en meteen record
+if not is_playing then
+  reaper.SetEditCurPos(region_start, true, false)
+  reaper.Main_OnCommand(1013, 0) -- Transport: Record
+  return
+end
+
+-- Als hij speelt: wacht tot volgende keer begin region
+local armed = false
+
+local function wait_for_region_start()
+  local state = reaper.GetPlayState()
+  local still_playing = (state & 1) == 1
+  local now_recording = (state & 4) == 4
+
+  if now_recording then
+    return
+  end
+
+  if not still_playing then
+    return
+  end
+
+  local pos = reaper.GetPlayPosition()
+
+  -- Detecteer wrap/loop naar begin region
+  local trigger_pos = region_end - TOLERANCE
+  
+  if pos >= trigger_pos then
+    reaper.Main_OnCommand(1013, 0) -- Transport: Record
+    return
+  end
+
+  reaper.defer(wait_for_region_start)
+end
+
+wait_for_region_start()

@@ -1,0 +1,213 @@
+local M = {}
+
+local function get_regions_folder_track_number(folder)
+    for i = 0, reaper.CountTracks(0)-1 do
+        local tr = reaper.GetTrack(0, i)
+        local _, name = reaper.GetTrackName(tr)
+
+        if name:lower() == folder then
+            return math.floor(reaper.GetMediaTrackInfo_Value(tr, "IP_TRACKNUMBER"))
+        end
+    end
+
+    return nil
+end
+
+function get_selected_region_track(folder)
+
+    local folder_nr = get_regions_folder_track_number(folder)
+    if not folder_nr then return nil end
+
+    local tr_idx = folder_nr
+
+    while tr_idx < reaper.CountTracks(0) do
+
+        local tr = reaper.GetTrack(0, tr_idx)
+        if not tr then break end
+
+        if reaper.IsTrackSelected(tr) then
+            return tr
+        end
+
+        local depth = reaper.GetMediaTrackInfo_Value(tr, "I_FOLDERDEPTH")
+
+        if depth < 0 then
+            break
+        end
+
+        tr_idx = tr_idx + 1
+    end
+
+    return nil
+end
+
+ function cleararm(proj)
+	local _, _, sectionID, cmdID = reaper.get_action_context()
+   for i=0,reaper.CountTracks()-1 do
+     local tr=reaper.GetTrack(proj, i)
+       if tr then 
+		reaper.SetMediaTrackInfo_Value(tr,"I_RECARM", 0) 
+		reaper.SetMediaTrackInfo_Value(tr, "I_AUTOMODE", 0) -- trim/read
+		reaper.SetToggleCommandState(sectionID, cmdID, 0)
+	   end
+     end
+    
+ end
+ 
+ 
+function M.arm(nr,page)
+  
+  local _, _, sectionID, cmdID = reaper.get_action_context()
+  
+  -- tabs 2 t/m 9 = tracks 1 t/m 8
+  for tab = 2, 9 do
+    local proj = reaper.EnumProjects(tab - 1)
+
+    if proj then
+      mytracknr = tab - 1
+      cleararm(proj) 
+      if page==1 then
+        if mytracknr==nr then
+		  a=1
+          local track=reaper.GetTrack(proj, 0) -- eerste track in dat subproject
+          reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 1)
+
+        end
+      elseif page==2 then
+        if mytracknr==6 or  mytracknr==7 then
+          local track=reaper.GetTrack(proj, 1) -- eerste track in dat subproject
+          reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 1)
+      
+        end
+        if mytracknr==nr then
+			reaper.SetMediaTrackInfo_Value(track, "I_AUTOMODE", 4) -- latch
+			reaper.SetToggleCommandState(sectionID, cmdID, 1)
+		end
+      end
+    end
+    
+
+  end
+end
+
+function M.target(folder)
+
+  local region_track = get_selected_region_track(folder)
+   local tracknr
+   if region_track then
+        tracknr = reaper.GetMediaTrackInfo_Value(region_track, "IP_TRACKNUMBER")
+   end
+
+   local regionfoldernr=get_regions_folder_track_number(folder);
+   if tracknr==nil or regionfoldernr==nil then return end
+   local target_region_number =tracknr-regionfoldernr;
+   return target_region_number
+ end
+
+ function M.get_current_project_tab_number()
+ local current_proj = reaper.EnumProjects(-1)
+
+ for i = 0, 99 do
+     local proj = reaper.EnumProjects(i)
+
+     if not proj then
+         break
+         end
+
+         if proj == current_proj then
+             return i + 1 -- tabnummer is 1-based
+        end
+    end
+
+    return nil
+end
+
+function GetTrackByName(name)
+    for i = 0, reaper.CountTracks(0)-1 do
+        local tr = reaper.GetTrack(0, i)
+        local _, trName = reaper.GetTrackName(tr)
+        if trName == name then
+            return tr
+        end
+    end
+    return nil
+end
+
+function SelectTrackInFolder(folderName, tracknr)
+     folder = GetTrackByName(folderName)
+    if not folder then return nil end
+
+    local folderDepth = reaper.GetTrackDepth(folder)
+    local childCount = 0
+    local trackCount = reaper.CountTracks(0)
+    local folderIndex = reaper.GetMediaTrackInfo_Value(folder, "IP_TRACKNUMBER") - 1
+
+    for i = folderIndex + 1, trackCount - 1 do
+        local tr = reaper.GetTrack(0, i)
+
+        if reaper.GetTrackDepth(tr) <= folderDepth then
+            break
+        end
+
+        childCount = childCount + 1
+        if childCount == tracknr then
+            reaper.SetOnlyTrackSelected(tr)
+            return tr
+        end
+    end
+
+    return nil
+end
+
+function M.SelectTrackInFolder(folderName, tracknr)
+    tracknr = tonumber(tracknr)
+    if not folderName or not tracknr then return nil end
+
+    local folderTrack, folderIndex
+
+    for i = 0, reaper.CountTracks(0) - 1 do
+        local tr = reaper.GetTrack(0, i)
+        local _, name = reaper.GetTrackName(tr)
+
+        if name == folderName then
+            folderTrack = tr
+            folderIndex = i
+            break
+        end
+    end
+
+    if not folderTrack then return nil end
+
+    local folderDepth = reaper.GetTrackDepth(folderTrack)
+    local found = 0
+    local targetTrack = nil
+
+    for i = folderIndex + 1, reaper.CountTracks(0) - 1 do
+        local tr = reaper.GetTrack(0, i)
+        local depth = reaper.GetTrackDepth(tr)
+
+        if depth <= folderDepth then
+            break
+        end
+
+        -- deselecteer alleen binnen deze folder
+        reaper.SetTrackSelected(tr, false)
+
+        -- alleen directe tracks in deze folder tellen
+        if depth == folderDepth + 1 then
+            found = found + 1
+
+            if found == tracknr then
+                targetTrack = tr
+            end
+        end
+    end
+
+    if targetTrack then
+        reaper.SetTrackSelected(targetTrack, true)
+    end
+
+    return targetTrack
+end
+
+ return M
