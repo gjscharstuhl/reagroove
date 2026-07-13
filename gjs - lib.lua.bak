@@ -46,6 +46,7 @@ end
    for i=0,reaper.CountTracks()-1 do
      local tr=reaper.GetTrack(proj, i)
        if tr then 
+        reaper.SetTrackSelected(tr, false)
 		reaper.SetMediaTrackInfo_Value(tr,"I_RECARM", 0) 
 		reaper.SetMediaTrackInfo_Value(tr, "I_AUTOMODE", 0) -- trim/read
 		reaper.SetToggleCommandState(sectionID, cmdID, 0)
@@ -66,22 +67,25 @@ function M.arm(nr,page)
     if proj then
       mytracknr = tab - 1
       cleararm(proj) 
+      local track=reaper.GetTrack(proj, 0) -- eerste track in dat subproject
       if page==1 then
         if mytracknr==nr then
 		  a=1
-          local track=reaper.GetTrack(proj, 0) -- eerste track in dat subproject
+          reaper.SetTrackSelected(track, true)
           reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 1)
 
         end
       elseif page==2 then
-        if mytracknr==6 or  mytracknr==7 then
-          local track=reaper.GetTrack(proj, 1) -- eerste track in dat subproject
-          reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 1)
-      
-        end
+
         if mytracknr==nr then
-			reaper.SetMediaTrackInfo_Value(track, "I_AUTOMODE", 4) -- latch
-			reaper.SetToggleCommandState(sectionID, cmdID, 1)
+			
+			if track then
+			    reaper.SetTrackSelected(track, true)
+				reaper.SetMediaTrackInfo_Value(track, "I_AUTOMODE", 4) -- latch
+				reaper.SetToggleCommandState(sectionID, cmdID, 1)
+				reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 1)
+			end
+			
 		end
       end
     end
