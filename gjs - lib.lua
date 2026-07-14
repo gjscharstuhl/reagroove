@@ -750,5 +750,46 @@ function M.getTrackCount()
     return TRACK_COUNT
 end
 
+function M.getxy()
+local _, _, _, _, mode, resolution, val, valhw =
+  reaper.get_action_context()
+
+local note = math.floor((val / resolution) * 127 + 0.5)
+
+ active_track = nil
+local region_num = nil
+
+
+
+local cols = {
+  [0]  = 1,
+  [2]  = 2,
+  [3]  = 3,
+  [4]  = 4,
+  [5]  = 5,
+  [7]  = 6,
+  [9]  = 7,
+  [10] = 8
+}
+
+
+if note == 1 then
+  row = 8
+  col = 7
+elseif note == 2 then
+  row = 8
+  col = 8
+else
+  col = cols[note % 12]
+  if not col then return end
+
+  local base_note = 36
+  row = math.floor((note - base_note) / 12) + 1
+end
+
+if row < 1 or row > 8 then return end
+
+return row,col
+end
 
 return M
