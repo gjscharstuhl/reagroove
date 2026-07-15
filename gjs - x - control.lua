@@ -1,7 +1,11 @@
 -- ============================================================
 -- Launchpad X groovebox prototype
--- Schermen 0 t/m 7 via rechter sidebar
--- Bewaart radio- en toggle-state per scherm
+--
+-- Screen 0: hoofdscherm
+-- Screen 1: pattern launcher
+-- Screen 2: mixerfaders
+--
+-- Radio-, toggle- en faderstate worden per scherm onthouden.
 -- ============================================================
 
 local DEVICE_NAME = "X"
@@ -15,6 +19,7 @@ local MODE_NONE      = 0
 local MODE_HIGHLIGHT = 1
 local MODE_RADIO     = 2
 local MODE_TOGGLE    = 3
+local MODE_FADER     = 4
 
 
 -- ============================================================
@@ -37,12 +42,62 @@ local COLOR = {
     LIGHT_PURPLE = 44,
     BLUE         = 45,
 
-    PURPLE       = 69,
     PINK         = 52,
     MAGENTA      = 53,
+    PURPLE       = 69
 }
 
 local SELECT_COLOR = COLOR.RED
+
+
+-- ============================================================
+-- Mixer-faderkleuren
+--
+-- steps loopt van gedimd naar volledig helder.
+-- Deze waarden kunnen later per kleur op het oog worden verfijnd.
+-- ============================================================
+
+local FADER_COLORS = {
+    [1] = {
+        full = COLOR.RED,
+        steps = { 7, 6, 4, COLOR.RED }
+    },
+
+    [2] = {
+        full = COLOR.ORANGE,
+        steps = { 11, 10, 8, COLOR.ORANGE }
+    },
+
+    [3] = {
+        full = COLOR.GREEN,
+        steps = { 23, 22, 20, COLOR.GREEN }
+    },
+
+    [4] = {
+        full = COLOR.YELLOW,
+        steps = { 15, 14, 12, COLOR.YELLOW }
+    },
+
+    [5] = {
+        full = COLOR.MAGENTA,
+        steps = { 55, 54, 51, COLOR.MAGENTA }
+    },
+
+    [6] = {
+        full = COLOR.PURPLE,
+        steps = { 71, 70, 68, COLOR.PURPLE }
+    },
+
+    [7] = {
+        full = COLOR.PINK,
+        steps = { 55, 54, 51, COLOR.PINK }
+    },
+
+    [8] = {
+        full = COLOR.BLUE,
+        steps = { 47, 46, 44, COLOR.BLUE }
+    }
+}
 
 
 -- ============================================================
@@ -76,8 +131,10 @@ local LP = {
     current_screen = 0,
 
     -- Per scherm:
+    --
     -- screen_state[n].radio[group] = geselecteerde MIDI-noot
     -- screen_state[n].toggle[note] = true/false
+    -- screen_state[n].fader[group] = { row, step }
     screen_state = {},
 
     last_sequence = 0,
@@ -92,8 +149,9 @@ local LP = {
 local function get_screen_state(screen)
     if not LP.screen_state[screen] then
         LP.screen_state[screen] = {
-            radio = {},
-            toggle = {}
+            radio  = {},
+            toggle = {},
+            fader  = {}
         }
     end
 
@@ -112,15 +170,21 @@ local function save_pad_state(pad)
     end
 end
 
+
+-- ============================================================
+-- Synchronisatie tussen screen 1 en screen 0
+-- ============================================================
+
 local function set_screen0_track_and_region(track, region)
     local screen0_state = get_screen_state(0)
 
-    -- Trackselector staat op rij 1 van screen0
+    -- Trackselector staat op row 1.
     screen0_state.radio["tracks"] = 10 + track
 
-    -- Regionselector staat op rij 6 van screen0
+    -- Regionselector staat op row 6.
     screen0_state.radio["regions"] = 60 + region
 end
+
 
 -- ============================================================
 -- MIDI-output zoeken
@@ -240,6 +304,7 @@ local function drawpad(
                 tostring(col)
             )
         )
+
         return
     end
 
@@ -258,6 +323,11 @@ local function drawpad(
 
         group = options.group,
         active = false,
+
+        -- Faderinstellingen
+        fader_group = options.fader_group,
+        fader_full  = options.fader_full,
+        fader_steps = options.fader_steps,
 
         on_press = options.on_press,
         on_release = options.on_release
@@ -450,6 +520,91 @@ end
 
 
 -- ============================================================
+-- Faderfuncties
+-- ============================================================
+
+local function get_fader_state(group)
+    local state = get_screen_state(LP.current_screen)
+
+    if not state.fader[group] then
+        state.fader[group] = {
+            row = 1,
+            step = 4
+        }
+    end
+
+    return state.fader[group]
+end
+
+
+local function render_fader(group)
+    local fader = get_fader_state(group)
+
+    for _, pad in pairs(LP.pads) do
+        if pad.mode == MODE_FADER
+           and pad.fader_group == group then
+
+            local color = COLOR.OFF
+
+            if pad.row < fader.row then
+                -- Pads onder het huidige niveau volledig aan.
+                color = pad.fader_full
+
+            elseif pad.row == fader.row then
+                -- Bovenste actieve pad toont de fijnstap.
+                color = pad.fader_steps[fader.step]
+            end
+
+            send_pad_color(
+                pad.row,
+                pad.col,
+                color
+            )
+        end
+    end
+end
+
+
+local function drawfader(
+    col,
+    full_color,
+    brightness_steps,
+    options
+)
+    options = options or {}
+
+    local group =
+        options.group or "fader_" .. col
+
+    local state = get_screen_state(LP.current_screen)
+
+    if not state.fader[group] then
+        state.fader[group] = {
+            row = options.default_row or 1,
+            step = options.default_step or 4
+        }
+    end
+
+    for row = 1, 8 do
+        drawpad(
+            row,
+            col,
+            COLOR.OFF,
+            MODE_FADER,
+            {
+                fader_group = group,
+                fader_full = full_color,
+                fader_steps = brightness_steps,
+                on_press = options.on_press
+            }
+        )
+    end
+
+    render_fader(group)
+end
+
+
+-- ============================================================
 -- Interactielogica
 -- ============================================================
 
@@ -513,6 +668,26 @@ local function handle_pad_press(pad, velocity)
                 and pad.active_color
                 or pad.color
         )
+
+    elseif pad.mode == MODE_FADER then
+        local group = pad.fader_group
+        local fader = get_fader_state(group)
+
+        if pad.row == fader.row then
+            -- Dezelfde hoogte opnieuw indrukken:
+            -- fijnwaarde één stap verhogen.
+            if fader.step < 4 then
+                fader.step = fader.step + 1
+            end
+
+        else
+            -- Nieuwe grove hoogte:
+            -- begin bij fijnstap 1.
+            fader.row = pad.row
+            fader.step = 1
+        end
+
+        render_fader(group)
     end
 
     if pad.on_press then
@@ -537,10 +712,11 @@ end
 
 
 -- ============================================================
--- Screen 0
+-- Screen 0: hoofdscherm
 -- ============================================================
 
 local function drawscreen0()
+    -- Bovenste 16 pads als één radiogroep
     drawblock(
         8, 1,
         7, 8,
@@ -554,6 +730,7 @@ local function drawscreen0()
         }
     )
 
+    -- Regionselector
     drawstrip(
         6, 1, 8,
         COLOR.LIGHT_BLUE,
@@ -565,6 +742,7 @@ local function drawscreen0()
         }
     )
 
+    -- Play
     drawpad(
         4, 1,
         COLOR.GREEN,
@@ -574,6 +752,7 @@ local function drawscreen0()
         }
     )
 
+    -- Record
     drawpad(
         4, 2,
         COLOR.YELLOW,
@@ -583,6 +762,7 @@ local function drawscreen0()
         }
     )
 
+    -- Stop
     drawpad(
         4, 3,
         COLOR.GREY,
@@ -592,6 +772,7 @@ local function drawscreen0()
         }
     )
 
+    -- Pageselector binnen screen 0
     drawstrip(
         4, 5, 8,
         COLOR.BLUE,
@@ -603,6 +784,7 @@ local function drawscreen0()
         }
     )
 
+    -- Functieknoppen
     drawpad(
         3, 5,
         COLOR.PURPLE,
@@ -627,6 +809,7 @@ local function drawscreen0()
         MODE_HIGHLIGHT
     )
 
+    -- Mutes
     drawstrip(
         2, 1, 8,
         COLOR.DARK_YELLOW,
@@ -636,6 +819,7 @@ local function drawscreen0()
         }
     )
 
+    -- Trackselector
     drawstrip(
         1, 1, 8,
         COLOR.ORANGE,
@@ -650,44 +834,19 @@ end
 
 
 -- ============================================================
--- Tijdelijke testschermen 1 t/m 7
+-- Screen 1: pattern launcher
+--
+-- Iedere rij is één track/subproject.
+-- Iedere kolom is één region.
+-- Iedere rij heeft een eigen radiogroep.
 -- ============================================================
 
-local TEST_COLORS = {
-    COLOR.RED,
-    COLOR.ORANGE,
-    COLOR.YELLOW,
-    COLOR.GREEN,
-    COLOR.LIGHT_BLUE,
-    COLOR.BLUE,
-    COLOR.LIGHT_PURPLE,
-    COLOR.PURPLE
-}
-
-
-local function draw_test_screen(screen_number)
-    for row = 1, 8 do
-        local color_index =
-            ((row + screen_number - 2) % 8) + 1
-
-        local color =
-            TEST_COLORS[color_index]
-
-        drawstrip(
-            row,
-            1,
-            8,
-            color,
-            MODE_HIGHLIGHT,
-            {
-                active_color = SELECT_COLOR
-            }
-        )
-    end
-end
-
 local function drawscreen1()
-    local function draw_pattern_track(row, track, color)
+    local function draw_pattern_track(
+        row,
+        track,
+        color
+    )
         drawstrip(
             row,
             1,
@@ -745,7 +904,7 @@ local function drawscreen1()
     draw_pattern_track(
         3,
         6,
-        COLOR.LIGHT_PURPLE
+        COLOR.PURPLE
     )
 
     draw_pattern_track(
@@ -762,115 +921,88 @@ local function drawscreen1()
     )
 end
 
-local function drawscreen1oud()
-    drawstrip(
-        8, 1, 8,
-        COLOR.RED,
-        MODE_RADIO,
-        {
-            group = "pattern_track_1",
-            selected_col = 1,
-            active_color = COLOR.WHITE
-        }
-    )
 
-    drawstrip(
-        7, 1, 8,
-        COLOR.ORANGE,
-        MODE_RADIO,
-        {
-            group = "pattern_track_2",
-            selected_col = 1,
-            active_color = COLOR.WHITE
-        }
-    )
-
-    drawstrip(
-        6, 1, 8,
-        COLOR.GREEN,
-        MODE_RADIO,
-        {
-            group = "pattern_track_3",
-            selected_col = 1,
-            active_color = COLOR.WHITE
-        }
-    )
-
-    drawstrip(
-        5, 1, 8,
-        COLOR.YELLOW,
-        MODE_RADIO,
-        {
-            group = "pattern_track_4",
-            selected_col = 1,
-            active_color = COLOR.WHITE
-        }
-    )
-
-    drawstrip(
-        4, 1, 8,
-        COLOR.PURPLE,
-        MODE_RADIO,
-        {
-            group = "pattern_track_5",
-            selected_col = 1,
-            active_color = COLOR.WHITE
-        }
-    )
-
-    drawstrip(
-        3, 1, 8,
-        COLOR.LIGHT_PURPLE,
-        MODE_RADIO,
-        {
-            group = "pattern_track_6",
-            selected_col = 1,
-            active_color = COLOR.WHITE
-        }
-    )
-
-    drawstrip(
-        2, 1, 8,
-        COLOR.PINK,
-        MODE_RADIO,
-        {
-            group = "pattern_track_7",
-            selected_col = 1,
-            active_color = COLOR.WHITE
-        }
-    )
-
-    drawstrip(
-        1, 1, 8,
-        COLOR.BLUE,
-        MODE_RADIO,
-        {
-            group = "pattern_track_8",
-            selected_col = 1,
-            active_color = COLOR.WHITE
-        }
-    )
-end
+-- ============================================================
+-- Screen 2: mixerfaders
+-- ============================================================
 
 local function drawscreen2()
-    draw_test_screen(2)
+    for col = 1, 8 do
+        local colors = FADER_COLORS[col]
+
+        drawfader(
+            col,
+            colors.full,
+            colors.steps,
+            {
+                group = "mixer_fader_" .. col,
+
+                -- Begint onderaan en volledig helder.
+                default_row = 1,
+                default_step = 4
+            }
+        )
+    end
 end
+
+
+-- ============================================================
+-- Tijdelijke testschermen 3 t/m 7
+-- ============================================================
+
+local TEST_COLORS = {
+    COLOR.RED,
+    COLOR.ORANGE,
+    COLOR.YELLOW,
+    COLOR.GREEN,
+    COLOR.LIGHT_BLUE,
+    COLOR.BLUE,
+    COLOR.LIGHT_PURPLE,
+    COLOR.PURPLE
+}
+
+
+local function draw_test_screen(screen_number)
+    for row = 1, 8 do
+        local color_index =
+            ((row + screen_number - 2) % 8) + 1
+
+        local color =
+            TEST_COLORS[color_index]
+
+        drawstrip(
+            row,
+            1,
+            8,
+            color,
+            MODE_HIGHLIGHT,
+            {
+                active_color = SELECT_COLOR
+            }
+        )
+    end
+end
+
 
 local function drawscreen3()
     draw_test_screen(3)
 end
 
+
 local function drawscreen4()
     draw_test_screen(4)
 end
+
 
 local function drawscreen5()
     draw_test_screen(5)
 end
 
+
 local function drawscreen6()
     draw_test_screen(6)
 end
+
 
 local function drawscreen7()
     draw_test_screen(7)
@@ -989,6 +1121,10 @@ local function process_midi_input()
     local data2    = message:byte(3)
     local msg_type = status & 0xF0
 
+    -- --------------------------------------------------------
+    -- 8x8-grid: Note On / Note Off
+    -- --------------------------------------------------------
+
     if msg_type == 0x90
        or msg_type == 0x80 then
 
@@ -1019,7 +1155,12 @@ local function process_midi_input()
             handle_pad_release(pad)
         end
 
+    -- --------------------------------------------------------
+    -- Sidebar: Control Change
+    -- --------------------------------------------------------
+
     elseif msg_type == 0xB0 then
+        -- Alleen reageren op indrukken.
         if data2 == 0 then
             return
         end

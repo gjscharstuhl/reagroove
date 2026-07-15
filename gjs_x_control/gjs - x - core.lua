@@ -1,0 +1,684 @@
+-- ============================================================
+-- gjs - x - core.lua
+-- Shared Launchpad X API, state, input, output and screen system
+-- ============================================================
+local Bridge = _G.GJS_X_BRIDGE
+local API = {}
+local DEVICE_NAME = "X"
+
+-- Interaction modes
+local MODE_NONE      = 0
+local MODE_HIGHLIGHT = 1
+local MODE_RADIO     = 2
+local MODE_TOGGLE    = 3
+local MODE_FADER     = 4
+
+-- Launchpad palette values currently used by this project
+local COLOR = {
+    OFF          = 0,
+    GREY         = 1,
+    WHITE        = 3,
+    RED          = 5,
+    ORANGE       = 9,
+    YELLOW       = 13,
+    DARK_YELLOW  = 126,
+    GREEN        = 21,
+    LIGHT_BLUE   = 42,
+    LIGHT_PURPLE = 44,
+    BLUE         = 45,
+    PINK         = 52,
+    MAGENTA      = 53,
+    PURPLE       = 69
+}
+
+local SELECT_COLOR = COLOR.RED
+
+-- Right sidebar, top to bottom: screen 0 through screen 7
+local SCREEN_CC = {
+    [0] = 89,
+    [1] = 79,
+    [2] = 69,
+    [3] = 59,
+    [4] = 49,
+    [5] = 39,
+    [6] = 29,
+    [7] = 19
+}
+
+local LP = {
+    output_index = nil,
+    output_mode = nil,
+    pads = {},
+    radio_groups = {},
+    current_screen = 0,
+    screen_state = {},
+    last_sequence = 0,
+    running = true,
+    screens = {}
+}
+
+local function get_screen_state(screen)
+    if not LP.screen_state[screen] then
+        LP.screen_state[screen] = {
+            radio = {},
+            toggle = {},
+            fader = {}
+        }
+    end
+
+    return LP.screen_state[screen]
+end
+
+local function save_pad_state(pad)
+    local state = get_screen_state(LP.current_screen)
+
+    if pad.mode == MODE_RADIO and pad.group then
+        state.radio[pad.group] = pad.note
+    elseif pad.mode == MODE_TOGGLE then
+        state.toggle[pad.note] = pad.active
+    end
+end
+
+local function set_screen0_track_and_region(track, region)
+    local state = get_screen_state(0)
+    state.radio["tracks"] = 10 + track
+    state.radio["regions"] = 60 + region
+end
+
+local function find_midi_output(search_name)
+    local wanted = search_name:lower()
+
+    for index = 0, reaper.GetNumMIDIOutputs() - 1 do
+        local exists, name = reaper.GetMIDIOutputName(index, "")
+
+        if exists and name:lower():find(wanted, 1, true) then
+            return index, name
+        end
+    end
+
+    return nil, nil
+end
+
+local function initialise_x()
+    local output_index, output_name = find_midi_output(DEVICE_NAME)
+
+    if output_index == nil then
+        reaper.ShowMessageBox(
+            "Geen MIDI-output gevonden met '" .. DEVICE_NAME .. "' in de naam.",
+            "Launchpad X",
+            0
+        )
+        return false
+    end
+
+    LP.output_index = output_index
+    LP.output_mode = 16 + output_index
+
+    reaper.ShowConsoleMsg(
+        "Launchpad gevonden: " .. output_name .. "\n"
+    )
+
+    return true
+end
+
+local BRIDGE_TRACK_NAME = "DIRTT Launchpad Bridge"
+
+local function connect_bridge_track()
+    if LP.output_index == nil then
+        return false
+    end
+
+    local bridge_track = nil
+
+    for i = 0, reaper.CountTracks(0) - 1 do
+        local track = reaper.GetTrack(0, i)
+        local _, name = reaper.GetTrackName(track)
+
+        if name == BRIDGE_TRACK_NAME then
+            bridge_track = track
+            break
+        end
+    end
+
+    if not bridge_track then
+        reaper.ShowMessageBox(
+            "Track '" .. BRIDGE_TRACK_NAME .. "' niet gevonden.",
+            "Launchpad bridge",
+            0
+        )
+        return false
+    end
+
+    -- I_MIDIHWOUT:
+    -- bits 0–4  = kanaal, 0 betekent alle kanalen
+    -- bits 5–9  = MIDI-outputindex
+    local midi_hw_out = LP.output_index << 5
+
+    reaper.SetMediaTrackInfo_Value(
+        bridge_track,
+        "I_MIDIHWOUT",
+        midi_hw_out
+    )
+
+    reaper.TrackList_AdjustWindows(false)
+    reaper.UpdateArrange()
+
+    reaper.ShowConsoleMsg(
+        "Bridge gekoppeld aan MIDI-outputindex " ..
+        LP.output_index .. "\n"
+    )
+
+    return true
+end
+
+local function send_pad_color(row, col, color)
+    local note = row * 10 + col
+    reaper.StuffMIDIMessage(LP.output_mode, 0x90, note, color)
+end
+
+local function send_cc_color(cc, color)
+    reaper.StuffMIDIMessage(LP.output_mode, 0xB0, cc, color)
+end
+
+local function auto_program_mode()
+    if not Bridge then
+        reaper.ShowConsoleMsg(
+            "SysEx bridge module ontbreekt.\n"
+        )
+        return false
+    end
+
+    Bridge.programmer_mode()
+
+    reaper.ShowConsoleMsg(
+        "Programmer Mode-opdracht naar JSFX bridge gestuurd.\n"
+    )
+
+    return true
+end
+
+local function valid_position(row, col)
+    return row >= 1 and row <= 8 and col >= 1 and col <= 8
+end
+
+local function drawpad(row, col, color, mode, options)
+    mode = mode or MODE_NONE
+    options = options or {}
+
+    if not valid_position(row, col) then
+        reaper.ShowConsoleMsg(
+            string.format(
+                "Ongeldige padpositie: row=%s, col=%s\n",
+                tostring(row),
+                tostring(col)
+            )
+        )
+        return
+    end
+
+    local note = row * 10 + col
+    local pad = {
+        row = row,
+        col = col,
+        note = note,
+        color = color,
+        mode = mode,
+        active_color = options.active_color or SELECT_COLOR,
+        group = options.group,
+        active = false,
+        fader_group = options.fader_group,
+        fader_full = options.fader_full,
+        fader_steps = options.fader_steps,
+        on_press = options.on_press,
+        on_release = options.on_release
+    }
+
+    local state = get_screen_state(LP.current_screen)
+
+    if mode == MODE_RADIO and pad.group then
+        local saved_note = state.radio[pad.group]
+
+        if saved_note ~= nil then
+            pad.active = saved_note == note
+        else
+            pad.active = options.active or false
+
+            if pad.active then
+                state.radio[pad.group] = note
+            end
+        end
+    elseif mode == MODE_TOGGLE then
+        local saved_toggle = state.toggle[note]
+
+        if saved_toggle ~= nil then
+            pad.active = saved_toggle
+        else
+            pad.active = options.active or false
+            state.toggle[note] = pad.active
+        end
+    else
+        pad.active = options.active or false
+    end
+
+    LP.pads[note] = pad
+
+    if mode == MODE_RADIO and pad.group and pad.active then
+        LP.radio_groups[pad.group] = note
+    end
+
+    local visible_color = pad.active and pad.active_color or pad.color
+    send_pad_color(row, col, visible_color)
+end
+
+local function drawstrip(row, col_begin, col_end, color, mode, options)
+    col_begin = col_begin or 1
+    col_end = col_end or 8
+    color = color or COLOR.OFF
+    mode = mode or MODE_NONE
+    options = options or {}
+
+    local group = options.group
+
+    if mode == MODE_RADIO and group == nil then
+        group = string.format(
+            "radio_row_%d_%d_%d",
+            row,
+            col_begin,
+            col_end
+        )
+    end
+
+    for col = col_begin, col_end do
+        drawpad(row, col, color, mode, {
+            active_color = options.active_color,
+            group = group,
+            active = options.selected_col == col,
+            on_press = options.on_press,
+            on_release = options.on_release
+        })
+    end
+end
+
+local function drawblock(
+    row_top,
+    col_left,
+    row_bottom,
+    col_right,
+    color,
+    mode,
+    options
+)
+    row_top = row_top or 8
+    col_left = col_left or 1
+    row_bottom = row_bottom or 1
+    col_right = col_right or 8
+    color = color or COLOR.OFF
+    mode = mode or MODE_NONE
+    options = options or {}
+
+    local first_row = math.min(row_top, row_bottom)
+    local last_row = math.max(row_top, row_bottom)
+    local first_col = math.min(col_left, col_right)
+    local last_col = math.max(col_left, col_right)
+    local group = options.group
+
+    if mode == MODE_RADIO and group == nil then
+        group = string.format(
+            "radio_block_%d_%d_%d_%d",
+            first_row,
+            first_col,
+            last_row,
+            last_col
+        )
+    end
+
+    for row = first_row, last_row do
+        for col = first_col, last_col do
+            local selected =
+                options.selected_row == row and
+                options.selected_col == col
+
+            drawpad(row, col, color, mode, {
+                active_color = options.active_color,
+                group = group,
+                active = selected,
+                on_press = options.on_press,
+                on_release = options.on_release
+            })
+        end
+    end
+end
+
+local function clearscreen()
+    LP.pads = {}
+    LP.radio_groups = {}
+
+    for row = 1, 8 do
+        for col = 1, 8 do
+            send_pad_color(row, col, COLOR.OFF)
+        end
+    end
+end
+
+local function get_fader_state(group)
+    local state = get_screen_state(LP.current_screen)
+
+    if not state.fader[group] then
+        state.fader[group] = {
+            row = 1,
+            step = 4
+        }
+    end
+
+    return state.fader[group]
+end
+
+local function render_fader(group)
+    local fader = get_fader_state(group)
+
+    for _, pad in pairs(LP.pads) do
+        if pad.mode == MODE_FADER and pad.fader_group == group then
+            local color = COLOR.OFF
+
+            if pad.row < fader.row then
+                color = pad.fader_full
+            elseif pad.row == fader.row then
+                color = pad.fader_steps[fader.step]
+            end
+
+            send_pad_color(pad.row, pad.col, color)
+        end
+    end
+end
+
+local function drawfader(col, full_color, brightness_steps, options)
+    options = options or {}
+
+    local group = options.group or "fader_" .. col
+    local state = get_screen_state(LP.current_screen)
+
+    if not state.fader[group] then
+        state.fader[group] = {
+            row = options.default_row or 1,
+            step = options.default_step or 4
+        }
+    end
+
+    for row = 1, 8 do
+        drawpad(row, col, COLOR.OFF, MODE_FADER, {
+            fader_group = group,
+            fader_full = full_color,
+            fader_steps = brightness_steps,
+            on_press = options.on_press
+        })
+    end
+
+    render_fader(group)
+end
+
+local function handle_pad_press(pad, velocity)
+    if pad.mode == MODE_NONE then
+        return
+    end
+
+    if pad.mode == MODE_HIGHLIGHT then
+        send_pad_color(
+            pad.row,
+            pad.col,
+            pad.active_color
+        )
+
+    elseif pad.mode == MODE_RADIO then
+        local group = pad.group
+
+        if group == nil then
+            return
+        end
+
+        local previous_note =
+            LP.radio_groups[group]
+
+        if previous_note
+           and LP.pads[previous_note] then
+
+            local previous =
+                LP.pads[previous_note]
+
+            previous.active = false
+
+            send_pad_color(
+                previous.row,
+                previous.col,
+                previous.color
+            )
+        end
+
+        pad.active = true
+        LP.radio_groups[group] = pad.note
+
+        save_pad_state(pad)
+
+        send_pad_color(
+            pad.row,
+            pad.col,
+            pad.active_color
+        )
+
+    elseif pad.mode == MODE_TOGGLE then
+        pad.active = not pad.active
+
+        save_pad_state(pad)
+
+        send_pad_color(
+            pad.row,
+            pad.col,
+            pad.active
+                and pad.active_color
+                or pad.color
+        )
+
+    elseif pad.mode == MODE_FADER then
+        local group = pad.fader_group
+        local fader = get_fader_state(group)
+
+        if pad.row == fader.row then
+            -- Zelfde grove hoogte opnieuw indrukken:
+            -- stap 1 -> 2 -> 3 -> 4 -> 1
+            fader.step = (fader.step % 4) + 1
+        else
+            -- Andere hoogte gekozen:
+            -- begin daar opnieuw bij fijnstap 1.
+            fader.row = pad.row
+            fader.step = 1
+        end
+
+        render_fader(group)
+    end
+
+    if pad.on_press then
+        pad.on_press(pad, velocity)
+    end
+end
+
+local function handle_pad_release(pad)
+    if pad.mode == MODE_HIGHLIGHT then
+        send_pad_color(pad.row, pad.col, pad.color)
+    end
+
+    if pad.on_release then
+        pad.on_release(pad)
+    end
+end
+
+local function draw_sidebar()
+    for screen = 0, 7 do
+        local color = COLOR.GREY
+
+        if screen == LP.current_screen then
+            color = SELECT_COLOR
+        end
+
+        send_cc_color(SCREEN_CC[screen], color)
+    end
+end
+
+local function draw_current_screen()
+    clearscreen()
+
+    local draw_screen = LP.screens[LP.current_screen]
+
+    if draw_screen then
+        draw_screen(API)
+    end
+
+    draw_sidebar()
+end
+
+local function screen_from_cc(cc)
+    for screen = 0, 7 do
+        if SCREEN_CC[screen] == cc then
+            return screen
+        end
+    end
+
+    return nil
+end
+
+local function select_screen(screen)
+    if screen < 0 or screen > 7 then return end
+    if screen == LP.current_screen then return end
+
+    LP.current_screen = screen
+    draw_current_screen()
+    reaper.ShowConsoleMsg("Screen " .. screen .. "\n")
+end
+
+local function process_midi_input()
+    local sequence, message = reaper.MIDI_GetRecentInputEvent(0)
+
+    if sequence == 0 or sequence == LP.last_sequence then
+        return
+    end
+
+    LP.last_sequence = sequence
+
+    if #message < 3 then
+        return
+    end
+
+    local status = message:byte(1)
+    local data1 = message:byte(2)
+    local data2 = message:byte(3)
+    local msg_type = status & 0xF0
+
+    if msg_type == 0x90 or msg_type == 0x80 then
+        local pad = LP.pads[data1]
+        if not pad then return end
+
+        local note_on = msg_type == 0x90 and data2 > 0
+        local note_off =
+            msg_type == 0x80 or
+            (msg_type == 0x90 and data2 == 0)
+
+        if note_on then
+            handle_pad_press(pad, data2)
+        elseif note_off then
+            handle_pad_release(pad)
+        end
+    elseif msg_type == 0xB0 then
+        if data2 == 0 then return end
+
+        local new_screen = screen_from_cc(data1)
+
+        if new_screen ~= nil then
+            select_screen(new_screen)
+        end
+    end
+end
+
+local function mainloop()
+    if not LP.running then return end
+
+    process_midi_input()
+    reaper.defer(mainloop)
+end
+
+local function cleanup()
+    LP.running = false
+    reaper.ShowConsoleMsg("Launchpad-script gestopt.\n")
+end
+
+
+
+function start(screens)
+    if not initialise_x() then
+        return
+    end
+
+    if not connect_bridge_track() then
+        return
+    end
+
+    LP.screens = screens
+    LP.current_screen = 0
+
+    local attempts = 0
+    local max_attempts = 3
+    local last_send_time = 0
+
+    local function initialise_launchpad()
+        local now = reaper.time_precise()
+
+        if attempts < max_attempts then
+            if attempts == 0 or now - last_send_time >= 0.25 then
+                attempts = attempts + 1
+                last_send_time = now
+
+                auto_program_mode()
+
+                reaper.ShowConsoleMsg(
+                    "Programmer Mode poging " ..
+                    attempts .. "/" .. max_attempts .. "\n"
+                )
+            end
+
+            reaper.defer(initialise_launchpad)
+            return
+        end
+
+        if now - last_send_time < 0.35 then
+            reaper.defer(initialise_launchpad)
+            return
+        end
+
+        draw_current_screen()
+
+        reaper.atexit(cleanup)
+        mainloop()
+    end
+
+    initialise_launchpad()
+end
+
+
+-- Public API for screen files
+API.COLOR = COLOR
+API.SELECT_COLOR = SELECT_COLOR
+API.MODE_NONE = MODE_NONE
+API.MODE_HIGHLIGHT = MODE_HIGHLIGHT
+API.MODE_RADIO = MODE_RADIO
+API.MODE_TOGGLE = MODE_TOGGLE
+API.MODE_FADER = MODE_FADER
+
+API.drawpad = drawpad
+API.drawstrip = drawstrip
+API.drawblock = drawblock
+API.drawfader = drawfader
+API.get_screen_state = get_screen_state
+API.set_screen0_track_and_region = set_screen0_track_and_region
+API.send_pad_color = send_pad_color
+API.select_screen = select_screen
+API.redraw = draw_current_screen
+API.start = start
+
+return API
