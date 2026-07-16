@@ -12,7 +12,6 @@ local MODE_HIGHLIGHT = 1
 local MODE_RADIO     = 2
 local MODE_TOGGLE    = 3
 local MODE_FADER     = 4
-local MODE_BALANCE   = 5
 
 -- Launchpad palette values currently used by this project
 local COLOR = {
@@ -95,8 +94,7 @@ local function get_screen_state(screen)
         LP.screen_state[screen] = {
             radio = {},
             toggle = {},
-            fader = {},
-            balance = {}
+            fader = {}
         }
     end
 
@@ -275,27 +273,27 @@ local function drawpad(row, col, color, mode, options)
 
     local note = row * 10 + col
 
-	local pad = {
-		row = row,
-		col = col,
-		note = note,
+    local pad = {
+        row = row,
+        col = col,
+        note = note,
 
-		color = color,
-		mode = mode,
+        color = color,
+        mode = mode,
 
-		active_color =
-			options.active_color or SELECT_COLOR,
+        active_color =
+            options.active_color or SELECT_COLOR,
 
-		group = options.group,
-		active = false,
+        group = options.group,
+        active = false,
 
-		fader_group = options.fader_group,
-		balance_group = options.balance_group,
-		rgb = options.rgb,
+        -- Fadergegevens
+        fader_group = options.fader_group,
+        rgb = options.rgb,
 
-		on_press = options.on_press,
-		on_release = options.on_release
-	}
+        on_press = options.on_press,
+        on_release = options.on_release
+    }
 
     local state = get_screen_state(LP.current_screen)
 
@@ -448,20 +446,6 @@ local function get_fader_state(group)
     return state.fader[group]
 end
 
-local function get_balance_state(group)
-    local state = get_screen_state(LP.current_screen)
-
-    if not state.balance[group] then
-        state.balance[group] = {
-            position = 4,
-            step = 4,
-            centered = true
-        }
-    end
-
-    return state.balance[group]
-end
-
 local function render_fader(group)
     local fader = get_fader_state(group)
 
@@ -519,111 +503,9 @@ local function render_fader(group)
     )
 end
 
-local function render_horizontal_fader(group)
-    local balance = get_balance_state(group)
 
-    local brightness = {
-        0.25,
-        0.50,
-        0.75,
-        1.00
-    }
 
-    local fader_row = nil
-    local base_rgb = nil
-
-    for _, pad in pairs(LP.pads) do
-        if pad.mode == MODE_BALANCE
-           and pad.balance_group == group then
-
-            fader_row = pad.row
-            base_rgb = pad.rgb
-            break
-        end
-    end
-
-    if not fader_row
-       or not base_rgb
-       or not Bridge
-       or not Bridge.set_row_rgb then
-
-        return
-    end
-
-    local colors = {}
-
-    for col = 1, 8 do
-        colors[col] = { 0, 0, 0 }
-    end
-
-    if balance.centered then
-        -- Middenstand: pads 4 en 5 volledig aan
-        colors[4] = {
-            base_rgb[1],
-            base_rgb[2],
-            base_rgb[3]
-        }
-
-        colors[5] = {
-            base_rgb[1],
-            base_rgb[2],
-            base_rgb[3]
-        }
-
-    elseif balance.position <= 4 then
-        -- Linkerkant: geselecteerde pad t/m pad 4
-        for col = balance.position, 4 do
-            colors[col] = {
-                base_rgb[1],
-                base_rgb[2],
-                base_rgb[3]
-            }
-        end
-
-        -- Pads 2 en 3 gebruiken de vier fijnstappen.
-        -- Pad 1 is altijd volledig aan.
-        if balance.position > 1 then
-            local factor =
-                brightness[balance.step] or 1.0
-
-            colors[balance.position] = {
-                math.floor(base_rgb[1] * factor),
-                math.floor(base_rgb[2] * factor),
-                math.floor(base_rgb[3] * factor)
-            }
-        end
-
-    else
-        -- Rechterkant: pad 5 t/m geselecteerde pad
-        for col = 5, balance.position do
-            colors[col] = {
-                base_rgb[1],
-                base_rgb[2],
-                base_rgb[3]
-            }
-        end
-
-        -- Pads 6 en 7 gebruiken de vier fijnstappen.
-        -- Pad 8 is altijd volledig aan.
-        if balance.position < 8 then
-            local factor =
-                brightness[balance.step] or 1.0
-
-            colors[balance.position] = {
-                math.floor(base_rgb[1] * factor),
-                math.floor(base_rgb[2] * factor),
-                math.floor(base_rgb[3] * factor)
-            }
-        end
-    end
-
-    Bridge.set_row_rgb(
-        fader_row,
-        colors
-    )
-end
-
-local function draw_vertical_fader(
+local function drawfader(
     col,
     rgb,
     options
@@ -660,45 +542,6 @@ local function draw_vertical_fader(
 
     -- Iedere fader weer direct tekenen
     render_fader(group)
-end
-
-local function draw_horizontal_fader(
-    row,
-    rgb,
-    options
-)
-    options = options or {}
-
-    local group =
-        options.group or "balance_" .. row
-
-    local state = get_screen_state(LP.current_screen)
-
-    if not state.balance[group] then
-        state.balance[group] = {
-            position = 4,
-            step = 4,
-            centered = true
-        }
-    end
-
-    for col = 1, 8 do
-        drawpad(
-            row,
-            col,
-            COLOR.OFF,
-            MODE_BALANCE,
-            {
-                balance_group = group,
-                rgb = rgb,
-
-                on_press = options.on_press,
-                on_release = options.on_release
-            }
-        )
-    end
-
-    render_horizontal_fader(group)
 end
 
 local function handle_pad_press(pad, velocity)
@@ -767,50 +610,17 @@ local function handle_pad_press(pad, velocity)
         local fader = get_fader_state(group)
 
         if pad.row == fader.row then
-            -- Zelfde hoogte opnieuw:
-            -- 1 -> 2 -> 3 -> 4 -> 1
+            -- Zelfde grove hoogte opnieuw indrukken:
+            -- stap 1 -> 2 -> 3 -> 4 -> 1
             fader.step = (fader.step % 4) + 1
         else
-            -- Nieuwe hoogte begint bij stap 1
+            -- Andere hoogte gekozen:
+            -- begin daar opnieuw bij fijnstap 1.
             fader.row = pad.row
             fader.step = 1
         end
 
         render_fader(group)
-
-    elseif pad.mode == MODE_BALANCE then
-        local group = pad.balance_group
-        local balance = get_balance_state(group)
-        local position = pad.col
-
-        if position == 4 or position == 5 then
-            -- Pads 4 en 5 vormen samen de middenstand.
-            balance.centered = true
-            balance.position = position
-            balance.step = 4
-
-        elseif position == 1 or position == 8 then
-            -- Vol links/rechts: direct volledig aan,
-            -- zonder fijnstappen.
-            balance.centered = false
-            balance.position = position
-            balance.step = 4
-
-        elseif not balance.centered
-           and position == balance.position then
-
-            -- Zelfde pad opnieuw:
-            -- 1 -> 2 -> 3 -> 4 -> 1
-            balance.step = (balance.step % 4) + 1
-
-        else
-            -- Nieuwe balanspositie begint bij stap 1.
-            balance.centered = false
-            balance.position = position
-            balance.step = 1
-        end
-
-        render_horizontal_fader(group)
     end
 
     if pad.on_press then
@@ -991,7 +801,7 @@ API.MODE_FADER = MODE_FADER
 API.drawpad = drawpad
 API.drawstrip = drawstrip
 API.drawblock = drawblock
-API.draw_vertical_fader = draw_vertical_fader
+API.drawfader = drawfader
 API.get_screen_state = get_screen_state
 API.set_screen0_track_and_region = set_screen0_track_and_region
 API.send_pad_color = send_pad_color
@@ -1000,7 +810,5 @@ API.redraw = draw_current_screen
 API.start = start
 API.send_pad_rgb = send_pad_rgb
 API.render_fader = render_fader
-API.draw_horizontal_fader = draw_horizontal_fader
-API.render_horizontal_fader = render_horizontal_fader
 
 return API

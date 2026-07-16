@@ -1,28 +1,45 @@
--- ============================================================
--- Screen 7: temporary color test
--- ============================================================
-
-return function(api)
+local function drawscreen7(api)
     local C = api.COLOR
-    local colors = {
-        C.RED,
-        C.ORANGE,
-        C.YELLOW,
-        C.GREEN,
-        C.LIGHT_BLUE,
-        C.BLUE,
-        C.LIGHT_PURPLE,
-        C.PURPLE
-    }
+    local H = api.MODE_HIGHLIGHT
 
-    for row = 1, 8 do
-        local color_index = ((row + 7 - 2) % 8) + 1
+    -- Magenta
+    api.drawpad(7,4,C.MAGENTA,H)
+    api.drawpad(7,5,C.MAGENTA,H)
 
-        api.drawstrip(
-            row, 1, 8,
-            colors[color_index],
-            api.MODE_HIGHLIGHT,
-            { active_color = api.SELECT_COLOR }
-        )
-    end
+    api.drawpad(6,4,C.MAGENTA,H)
+    api.drawpad(6,5,C.MAGENTA,H)
+
+    -- Wit / Geel / Paars
+    api.drawpad(5,2,C.WHITE,H)
+    api.drawpad(5,3,C.YELLOW,H)
+    api.drawpad(5,4,C.MAGENTA,H)
+    api.drawpad(5,5,C.PURPLE,H)
+    api.drawpad(5,6,C.YELLOW,H)
+    api.drawpad(5,7,C.WHITE,H)
+
+    -- Groen / Blauw / Cyan
+    api.drawpad(4,2,C.GREEN,H)
+    api.drawpad(4,3,C.BLUE,H)
+    api.drawpad(4,4,C.LIGHT_BLUE,H)
+    api.drawpad(4,5,C.LIGHT_BLUE,H)
+    api.drawpad(4,6,C.BLUE,H)
+    api.drawpad(4,7,C.GREEN,H)
+
+    -- Oranje / Geel
+    api.drawpad(3,2,C.ORANGE,H)
+    api.drawpad(3,4,C.YELLOW,H)
+    api.drawpad(3,5,C.YELLOW,H)
+    api.drawpad(3,7,C.ORANGE,H)
+
+    -- Lichtpaars / Oranje
+    api.drawpad(2,2,C.LIGHT_PURPLE,H)
+    api.drawpad(2,4,C.ORANGE,H)
+    api.drawpad(2,5,C.ORANGE,H)
+    api.drawpad(2,7,C.LIGHT_PURPLE,H)
+
+    -- Rood
+    api.drawpad(1,4,C.RED,H)
+    api.drawpad(1,5,C.RED,H)
 end
+
+return drawscreen7

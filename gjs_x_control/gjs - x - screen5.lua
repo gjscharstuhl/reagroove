@@ -1,28 +1,39 @@
--- ============================================================
--- Screen 5: temporary color test
--- ============================================================
-
-return function(api)
+local function drawscreen5(api)
     local C = api.COLOR
-    local colors = {
-        C.RED,
-        C.ORANGE,
-        C.YELLOW,
-        C.GREEN,
-        C.LIGHT_BLUE,
+
+    -- Linksboven: blauwe save-slots
+    api.drawblock(
+        8, 1,
+        5, 4,
         C.BLUE,
-        C.LIGHT_PURPLE,
-        C.PURPLE
-    }
+        api.MODE_RADIO,
+        {
+            group = "save_slots_blue",
+            selected_row = 8,
+            selected_col = 1,
+            active_color = C.WHITE
+        }
+    )
 
-    for row = 1, 8 do
-        local color_index = ((row + 5 - 2) % 8) + 1
+    -- Rechtsboven: oranje save-slots
+    api.drawblock(
+        8, 5,
+        5, 8,
+        C.ORANGE,
+        api.MODE_RADIO,
+        {
+            group = "save_slots_orange",
+            selected_row = 8,
+            selected_col = 5,
+            active_color = C.WHITE
+        }
+    )
 
-        api.drawstrip(
-            row, 1, 8,
-            colors[color_index],
-            api.MODE_HIGHLIGHT,
-            { active_color = api.SELECT_COLOR }
-        )
-    end
+    -- Onderste functietoetsen
+    api.drawpad(2, 5, C.YELLOW, api.MODE_HIGHLIGHT)
+    api.drawpad(2, 6, C.RED,    api.MODE_HIGHLIGHT)
+    api.drawpad(2, 7, C.GREEN,  api.MODE_HIGHLIGHT)
+    api.drawpad(2, 8, C.BLUE,   api.MODE_HIGHLIGHT)
 end
+
+return drawscreen5

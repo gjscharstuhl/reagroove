@@ -1,28 +1,54 @@
--- ============================================================
--- Screen 4: temporary color test
--- ============================================================
-
-return function(api)
+local function drawscreen4(api)
     local C = api.COLOR
-    local colors = {
-        C.RED,
-        C.ORANGE,
-        C.YELLOW,
-        C.GREEN,
+
+    -- Bovenste twee grijze rijen:
+    -- samen één radiogroep van 16 pads.
+    api.drawblock(
+        8, 1,
+        7, 8,
+        C.GREY,
+        api.MODE_RADIO,
+        {
+            group = "scenes_patterns",
+            selected_row = 8,
+            selected_col = 1,
+            active_color = C.WHITE
+        }
+    )
+
+    -- Lichtblauwe selectorrij.
+    api.drawstrip(
+        6, 1, 8,
         C.LIGHT_BLUE,
-        C.BLUE,
-        C.LIGHT_PURPLE,
-        C.PURPLE
-    }
+        api.MODE_RADIO,
+        {
+            group = "scenes_regions",
+            selected_col = 1,
+            active_color = C.WHITE
+        }
+    )
 
-    for row = 1, 8 do
-        local color_index = ((row + 4 - 2) % 8) + 1
+    -- Groen toggle-block: rijen 3 t/m 5.
+    api.drawblock(
+        5, 1,
+        3, 8,
+        C.GREEN,
+        api.MODE_TOGGLE,
+        {
+            active_color = C.WHITE
+        }
+    )
 
-        api.drawstrip(
-            row, 1, 8,
-            colors[color_index],
-            api.MODE_HIGHLIGHT,
-            { active_color = api.SELECT_COLOR }
-        )
-    end
+    -- Geel toggle-block: onderste twee rijen.
+    api.drawblock(
+        2, 1,
+        1, 8,
+        C.YELLOW,
+        api.MODE_TOGGLE,
+        {
+            active_color = C.WHITE
+        }
+    )
 end
+
+return drawscreen4

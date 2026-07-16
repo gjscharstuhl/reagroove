@@ -117,29 +117,6 @@ function Bridge.last_acknowledged_sequence()
     return math.floor(reaper.gmem_read(2) or -1)
 end
 
-function Bridge.set_row_rgb(row, colors)
-    row = clamp(row, 1, 8)
 
-    if type(colors) ~= "table" or #colors < 8 then
-        return false
-    end
-
-    reaper.gmem_write(10, 8)
-
-    for col = 1, 8 do
-        local item = colors[col] or { 0, 0, 0 }
-        local base = 11 + ((col - 1) * 4)
-        local note = row * 10 + col
-
-        reaper.gmem_write(base + 0, note)
-        reaper.gmem_write(base + 1, clamp(item[1], 0, 127))
-        reaper.gmem_write(base + 2, clamp(item[2], 0, 127))
-        reaper.gmem_write(base + 3, clamp(item[3], 0, 127))
-    end
-
-    send_command(COMMAND_SET_FADER_RGB)
-
-    return true
-end
 
 return Bridge

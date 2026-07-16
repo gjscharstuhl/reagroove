@@ -22,7 +22,7 @@ local FADER_RGB = {
 
 local function drawscreen2(api)
     for col = 1, 8 do
-        api.draw_vertical_fader(
+        api.drawfader(
             col,
             FADER_RGB[col],
             {
