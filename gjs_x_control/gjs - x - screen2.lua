@@ -1,29 +1,30 @@
--- ============================================================
--- Screen 2: mixer faders
--- Eight vertical faders with four brightness refinement steps.
--- ============================================================
+local RGB_COLOR = {
+    RED     = {127,   0,   0},
+    ORANGE  = {127,  35,   0},
+    GREEN   = {  0, 127,   0},
+    YELLOW  = {127, 100,   0},
+    MAGENTA = {127,   0,  70},
+    PURPLE  = { 55,   0, 127},
+    PINK    = {127,  20,  90},
+    BLUE    = {  0,  35, 127}
+}
 
-return function(api)
-    local C = api.COLOR
+local FADER_RGB = {
+    RGB_COLOR.RED,
+    RGB_COLOR.ORANGE,
+    RGB_COLOR.GREEN,
+    RGB_COLOR.YELLOW,
+    RGB_COLOR.MAGENTA,
+    RGB_COLOR.PURPLE,
+    RGB_COLOR.PINK,
+    RGB_COLOR.BLUE
+}
 
-    local fader_colors = {
-        [1] = { full = C.RED,          steps = { 7, 6, 4, C.RED } },
-        [2] = { full = C.ORANGE,       steps = { 11, 10, 8, C.ORANGE } },
-        [3] = { full = C.GREEN,        steps = { 23, 22, 20, C.GREEN } },
-        [4] = { full = C.YELLOW,       steps = { 15, 14, 12, C.YELLOW } },
-        [5] = { full = C.MAGENTA,      steps = { 55, 54, 51, C.MAGENTA } },
-        [6] = { full = C.PURPLE,       steps = { 71, 70, 68, C.PURPLE } },
-        [7] = { full = C.PINK,         steps = { 55, 54, 51, C.PINK } },
-        [8] = { full = C.BLUE,         steps = { 47, 46, 44, C.BLUE } }
-    }
-
+local function drawscreen2(api)
     for col = 1, 8 do
-        local colors = fader_colors[col]
-
         api.drawfader(
             col,
-            colors.full,
-            colors.steps,
+            FADER_RGB[col],
             {
                 group = "mixer_fader_" .. col,
                 default_row = 1,
@@ -31,4 +32,40 @@ return function(api)
             }
         )
     end
+
+    local groups = {
+        "mixer_fader_1",
+        "mixer_fader_2",
+        "mixer_fader_3",
+        "mixer_fader_4",
+        "mixer_fader_5",
+        "mixer_fader_6",
+        "mixer_fader_7",
+        "mixer_fader_8"
+    }
+
+    local index = 1
+    local last_time = reaper.time_precise()
+
+    local function redraw_next_fader()
+        local now = reaper.time_precise()
+
+        if now - last_time < 0.005 then
+            reaper.defer(redraw_next_fader)
+            return
+        end
+
+        api.render_fader(groups[index])
+
+        index = index + 1
+        last_time = now
+
+        if index <= #groups then
+            reaper.defer(redraw_next_fader)
+        end
+    end
+
+    redraw_next_fader()
 end
+
+return drawscreen2

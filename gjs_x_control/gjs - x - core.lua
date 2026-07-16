@@ -33,6 +33,38 @@ local COLOR = {
 
 local SELECT_COLOR = COLOR.RED
 
+local RGB = {
+
+    RED    = {127, 0, 0},
+    GREEN  = {0, 127, 0},
+    BLUE   = {0, 0, 127},
+
+    ORANGE = {127, 40, 0},
+    YELLOW = {127, 110, 0},
+
+    PURPLE = {60, 0, 127},
+    MAGENTA= {127, 0, 80},
+    PINK   = {127, 30, 90},
+
+    CYAN   = {0, 127, 127},
+    WHITE  = {127,127,127},
+
+    GREY   = {40,40,40},
+    DARK_GREY = {15,15,15},
+
+    OFF = {0,0,0}
+}
+
+function scale_rgb(color, factor)
+
+    return {
+        math.floor(color[1] * factor),
+        math.floor(color[2] * factor),
+        math.floor(color[3] * factor)
+    }
+
+end
+
 -- Right sidebar, top to bottom: screen 0 through screen 7
 local SCREEN_CC = {
     [0] = 89,
@@ -176,6 +208,29 @@ local function send_pad_color(row, col, color)
     reaper.StuffMIDIMessage(LP.output_mode, 0x90, note, color)
 end
 
+local function send_pad_rgb(
+    row,
+    col,
+    red,
+    green,
+    blue
+)
+    if not Bridge then
+        reaper.ShowConsoleMsg(
+            "RGB mislukt: SysEx bridge niet geladen.\n"
+        )
+        return false
+    end
+
+    return Bridge.set_pad_rgb_at(
+        row,
+        col,
+        red,
+        green,
+        blue
+    )
+end
+
 local function send_cc_color(cc, color)
     reaper.StuffMIDIMessage(LP.output_mode, 0xB0, cc, color)
 end
@@ -217,18 +272,25 @@ local function drawpad(row, col, color, mode, options)
     end
 
     local note = row * 10 + col
+
     local pad = {
         row = row,
         col = col,
         note = note,
+
         color = color,
         mode = mode,
-        active_color = options.active_color or SELECT_COLOR,
+
+        active_color =
+            options.active_color or SELECT_COLOR,
+
         group = options.group,
         active = false,
+
+        -- Fadergegevens
         fader_group = options.fader_group,
-        fader_full = options.fader_full,
-        fader_steps = options.fader_steps,
+        rgb = options.rgb,
+
         on_press = options.on_press,
         on_release = options.on_release
     }
@@ -247,6 +309,7 @@ local function drawpad(row, col, color, mode, options)
                 state.radio[pad.group] = note
             end
         end
+
     elseif mode == MODE_TOGGLE then
         local saved_toggle = state.toggle[note]
 
@@ -256,18 +319,28 @@ local function drawpad(row, col, color, mode, options)
             pad.active = options.active or false
             state.toggle[note] = pad.active
         end
+
     else
         pad.active = options.active or false
     end
 
     LP.pads[note] = pad
 
-    if mode == MODE_RADIO and pad.group and pad.active then
+    if mode == MODE_RADIO
+       and pad.group
+       and pad.active then
+
         LP.radio_groups[pad.group] = note
     end
 
-    local visible_color = pad.active and pad.active_color or pad.color
-    send_pad_color(row, col, visible_color)
+    local visible_color =
+        pad.active and pad.active_color or pad.color
+
+    send_pad_color(
+        row,
+        col,
+        visible_color
+    )
 end
 
 local function drawstrip(row, col_begin, col_end, color, mode, options)
@@ -376,25 +449,72 @@ end
 local function render_fader(group)
     local fader = get_fader_state(group)
 
+    local brightness = {
+        0.25,
+        0.50,
+        0.75,
+        1.00
+    }
+
+    local fader_col = nil
+    local base_rgb = nil
+
     for _, pad in pairs(LP.pads) do
-        if pad.mode == MODE_FADER and pad.fader_group == group then
-            local color = COLOR.OFF
+        if pad.mode == MODE_FADER
+           and pad.fader_group == group then
 
-            if pad.row < fader.row then
-                color = pad.fader_full
-            elseif pad.row == fader.row then
-                color = pad.fader_steps[fader.step]
-            end
-
-            send_pad_color(pad.row, pad.col, color)
+            fader_col = pad.col
+            base_rgb = pad.rgb
+            break
         end
     end
+
+    if not fader_col or not base_rgb or not Bridge then
+        return
+    end
+
+    local colors = {}
+
+    for row = 1, 8 do
+        if row < fader.row then
+            colors[row] = {
+                base_rgb[1],
+                base_rgb[2],
+                base_rgb[3]
+            }
+
+        elseif row == fader.row then
+            local factor = brightness[fader.step]
+
+            colors[row] = {
+                math.floor(base_rgb[1] * factor),
+                math.floor(base_rgb[2] * factor),
+                math.floor(base_rgb[3] * factor)
+            }
+
+        else
+            colors[row] = { 0, 0, 0 }
+        end
+    end
+
+    Bridge.set_fader_rgb(
+        fader_col,
+        colors
+    )
 end
 
-local function drawfader(col, full_color, brightness_steps, options)
+
+
+local function drawfader(
+    col,
+    rgb,
+    options
+)
     options = options or {}
 
-    local group = options.group or "fader_" .. col
+    local group =
+        options.group or "fader_" .. col
+
     local state = get_screen_state(LP.current_screen)
 
     if not state.fader[group] then
@@ -405,14 +525,22 @@ local function drawfader(col, full_color, brightness_steps, options)
     end
 
     for row = 1, 8 do
-        drawpad(row, col, COLOR.OFF, MODE_FADER, {
-            fader_group = group,
-            fader_full = full_color,
-            fader_steps = brightness_steps,
-            on_press = options.on_press
-        })
+        drawpad(
+            row,
+            col,
+            COLOR.OFF,
+            MODE_FADER,
+            {
+                fader_group = group,
+                rgb = rgb,
+
+                on_press = options.on_press,
+                on_release = options.on_release
+            }
+        )
     end
 
+    -- Iedere fader weer direct tekenen
     render_fader(group)
 end
 
@@ -680,5 +808,7 @@ API.send_pad_color = send_pad_color
 API.select_screen = select_screen
 API.redraw = draw_current_screen
 API.start = start
+API.send_pad_rgb = send_pad_rgb
+API.render_fader = render_fader
 
 return API
