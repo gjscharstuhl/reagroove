@@ -3,6 +3,8 @@
 -- Shared Launchpad X API, state, input, output and screen system
 -- ============================================================
 local Bridge = _G.GJS_X_BRIDGE
+local Transport = _G.GJS_X_TRANSPORT
+local Pattern = _G.GJS_X_PATTERN
 local API = {}
 local DEVICE_NAME = "X"
 
@@ -79,6 +81,7 @@ local SCREEN_CC = {
 }
 
 local LP = {
+    input_index = nil,
     output_index = nil,
     output_mode = nil,
     pads = {},
@@ -89,6 +92,10 @@ local LP = {
     running = true,
     screens = {}
 }
+
+local function get_current_screen()
+    return LP.current_screen
+end
 
 local function get_screen_state(screen)
     if not LP.screen_state[screen] then
@@ -119,6 +126,22 @@ local function set_screen0_track_and_region(track, region)
     state.radio["regions"] = 60 + region
 end
 
+local function find_midi_input(search_name)
+    local wanted = search_name:lower()
+
+    for index = 0, reaper.GetNumMIDIInputs() - 1 do
+        local exists, name =
+            reaper.GetMIDIInputName(index, "")
+
+        if exists
+        and name:lower():find(wanted, 1, true) then
+            return index, name
+        end
+    end
+
+    return nil, nil
+end
+
 local function find_midi_output(search_name)
     local wanted = search_name:lower()
 
@@ -134,22 +157,47 @@ local function find_midi_output(search_name)
 end
 
 local function initialise_x()
-    local output_index, output_name = find_midi_output(DEVICE_NAME)
+    local input_index, input_name =
+        find_midi_input(DEVICE_NAME)
 
-    if output_index == nil then
+    if input_index == nil then
         reaper.ShowMessageBox(
-            "Geen MIDI-output gevonden met '" .. DEVICE_NAME .. "' in de naam.",
+            "Geen MIDI-input gevonden met '" ..
+            DEVICE_NAME ..
+            "' in de naam.",
             "Launchpad X",
             0
         )
         return false
     end
 
+    local output_index, output_name =
+        find_midi_output(DEVICE_NAME)
+
+    if output_index == nil then
+        reaper.ShowMessageBox(
+            "Geen MIDI-output gevonden met '" ..
+            DEVICE_NAME ..
+            "' in de naam.",
+            "Launchpad X",
+            0
+        )
+        return false
+    end
+
+    LP.input_index = input_index
     LP.output_index = output_index
     LP.output_mode = 16 + output_index
 
     reaper.ShowConsoleMsg(
-        "Launchpad gevonden: " .. output_name .. "\n"
+        string.format(
+            "Launchpad input: %s (index %d)\n" ..
+            "Launchpad output: %s (index %d)\n",
+            input_name,
+            input_index,
+            output_name,
+            output_index
+        )
     )
 
     return true
@@ -871,16 +919,8 @@ local function select_screen(screen)
     reaper.ShowConsoleMsg("Screen " .. screen .. "\n")
 end
 
-local function process_midi_input()
-    local sequence, message = reaper.MIDI_GetRecentInputEvent(0)
-
-    if sequence == 0 or sequence == LP.last_sequence then
-        return
-    end
-
-    LP.last_sequence = sequence
-
-    if #message < 3 then
+local function process_midi_message(message)
+    if not message or #message < 3 then
         return
     end
 
@@ -891,9 +931,14 @@ local function process_midi_input()
 
     if msg_type == 0x90 or msg_type == 0x80 then
         local pad = LP.pads[data1]
-        if not pad then return end
 
-        local note_on = msg_type == 0x90 and data2 > 0
+        if not pad then
+            return
+        end
+
+        local note_on =
+            msg_type == 0x90 and data2 > 0
+
         local note_off =
             msg_type == 0x80 or
             (msg_type == 0x90 and data2 == 0)
@@ -903,10 +948,14 @@ local function process_midi_input()
         elseif note_off then
             handle_pad_release(pad)
         end
-    elseif msg_type == 0xB0 then
-        if data2 == 0 then return end
 
-        local new_screen = screen_from_cc(data1)
+    elseif msg_type == 0xB0 then
+        if data2 == 0 then
+            return
+        end
+
+        local new_screen =
+            screen_from_cc(data1)
 
         if new_screen ~= nil then
             select_screen(new_screen)
@@ -914,18 +963,78 @@ local function process_midi_input()
     end
 end
 
+local function process_midi_input()
+    local events = {}
+    local newest_sequence = nil
+
+    -- Lees alle nieuwe recente events, niet alleen het allerlaatste event.
+    -- Anders kan een drukke Circuit Tracks-input de Launchpad-events verdringen.
+    for index = 0, 255 do
+        local sequence,
+              message,
+              timestamp,
+              device_index =
+            reaper.MIDI_GetRecentInputEvent(index)
+
+        if sequence == 0 then
+            break
+        end
+
+        if newest_sequence == nil then
+            newest_sequence = sequence
+        end
+
+        if sequence == LP.last_sequence then
+            break
+        end
+
+        if device_index == LP.input_index then
+            events[#events + 1] = message
+        end
+    end
+
+    if newest_sequence == nil
+    or newest_sequence == LP.last_sequence then
+        return
+    end
+
+    -- Markeer de nieuwste globale sequence als verwerkt.
+    LP.last_sequence = newest_sequence
+
+    -- MIDI_GetRecentInputEvent(0) is het nieuwste event.
+    -- Verwerk daarom achterstevoren zodat presses/releases in tijdsvolgorde blijven.
+    for index = #events, 1, -1 do
+        process_midi_message(events[index])
+    end
+end
+
 local function mainloop()
-    if not LP.running then return end
+    if not LP.running then
+        return
+    end
 
     process_midi_input()
+
+    if Transport and Transport.update then
+        Transport.update(API)
+    end
+    if Pattern and Pattern.update then
+        Pattern.update(API)
+    end
     reaper.defer(mainloop)
 end
 
 local function cleanup()
     LP.running = false
-    reaper.ShowConsoleMsg("Launchpad-script gestopt.\n")
-end
 
+    if Transport and Transport.cleanup then
+        Transport.cleanup(API)
+    end
+
+    reaper.ShowConsoleMsg(
+        "Launchpad-script gestopt.\n"
+    )
+end
 
 
 function start(screens)
@@ -1002,5 +1111,7 @@ API.send_pad_rgb = send_pad_rgb
 API.render_fader = render_fader
 API.draw_horizontal_fader = draw_horizontal_fader
 API.render_horizontal_fader = render_horizontal_fader
-
+API.transport = Transport
+API.get_current_screen = get_current_screen
+API.pattern = Pattern
 return API

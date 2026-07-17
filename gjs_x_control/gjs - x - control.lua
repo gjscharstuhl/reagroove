@@ -4,6 +4,9 @@
 -- Keep this file in the same folder as core.lua and screen*.lua
 -- ============================================================
 
+
+reaper.SetExtState("GJS_MULTI", "Page", "1", true)
+
 local script_path = debug.getinfo(1, "S").source:match("@?(.*[\\/])")
 
 if not script_path then
@@ -38,6 +41,24 @@ bridge.init()
 
 -- Beschikbaar maken voor core.lua
 _G.GJS_X_BRIDGE = bridge
+
+local transport =
+    load_file("gjs - x - transport.lua")
+
+if not transport then
+    return
+end
+
+_G.GJS_X_TRANSPORT = transport
+
+local pattern =
+    load_file("gjs - x - pattern.lua")
+
+if not pattern then
+    return
+end
+
+_G.GJS_X_PATTERN = pattern
 
 local core = load_file("gjs - x - core.lua")
 if not core then return end

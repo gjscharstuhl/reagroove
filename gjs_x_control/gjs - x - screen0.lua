@@ -29,26 +29,68 @@ return function(api)
         }
     )
 
-    api.drawpad(
-        4, 1,
-        C.GREEN,
-        api.MODE_HIGHLIGHT,
-        { active_color = api.SELECT_COLOR }
-    )
+	-- Play
+	api.drawpad(
+		4,
+		1,
+		C.GREEN,
+		api.MODE_HIGHLIGHT,
+		{
+			active_color = api.SELECT_COLOR,
 
-    api.drawpad(
-        4, 2,
-        C.YELLOW,
-        api.MODE_HIGHLIGHT,
-        { active_color = api.SELECT_COLOR }
-    )
+		on_press = function()
+			reaper.ShowConsoleMsg(
+				"PLAY - transport = " ..
+				tostring(api.transport) ..
+				"\n"
+			)
 
-    api.drawpad(
-        4, 3,
-        C.GREY,
-        api.MODE_HIGHLIGHT,
-        { active_color = api.SELECT_COLOR }
-    )
+			if api.transport then
+				api.transport.play()
+			end
+		end
+		}
+	)
+
+	-- Record
+	api.drawpad(
+		4,
+		2,
+		C.YELLOW,
+		api.MODE_HIGHLIGHT,
+		{
+			active_color = api.SELECT_COLOR,
+
+			on_press = function()
+				if api.transport then
+					api.transport.record()
+				end
+			end,
+
+			on_release = function()
+				if api.transport then
+					api.transport.invalidate_record_led()
+				end
+			end
+		}
+	)
+
+	-- Stop
+	api.drawpad(
+		4,
+		3,
+		C.GREY,
+		api.MODE_HIGHLIGHT,
+		{
+			active_color = api.SELECT_COLOR,
+
+			on_press = function()
+				if api.transport then
+					api.transport.stop()
+				end
+			end
+		}
+	)
 
     api.drawstrip(
         4, 5, 8,
