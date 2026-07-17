@@ -1008,6 +1008,9 @@ local function process_midi_input()
     end
 end
 
+local previous_play_state =
+    reaper.GetPlayState()
+
 local function mainloop()
     if not LP.running then
         return
@@ -1015,25 +1018,30 @@ local function mainloop()
 
     process_midi_input()
 
+    local play_state =
+        reaper.GetPlayState()
+
+    local was_playing =
+        (previous_play_state & 1) == 1
+
+    local is_playing =
+        (play_state & 1) == 1
+
+    if is_playing and not was_playing then
+        draw_current_screen()
+    end
+
+    previous_play_state = play_state
+
     if Transport and Transport.update then
         Transport.update(API)
     end
+
     if Pattern and Pattern.update then
         Pattern.update(API)
     end
+
     reaper.defer(mainloop)
-end
-
-local function cleanup()
-    LP.running = false
-
-    if Transport and Transport.cleanup then
-        Transport.cleanup(API)
-    end
-
-    reaper.ShowConsoleMsg(
-        "Launchpad-script gestopt.\n"
-    )
 end
 
 

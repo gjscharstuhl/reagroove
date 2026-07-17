@@ -10,23 +10,16 @@ local CMD_PLAY   = 1007
 local CMD_RECORD = 1013
 local CMD_STOP   = 1016
 
-local BLINK_INTERVAL = 0.25
 
 local state = {
     watching_record = false,
     phase = 0,
-
     active_track = nil,
     project = nil,
-
     reached_time_selection = false,
-    blink_on = false,
-    last_blink_time = 0,
-
     pending_cleanup_project = nil,
     pending_cleanup_time = nil,
-
-    -- Nil zorgt ervoor dat de LED opnieuw wordt geschreven.
+    last_play_led_color = nil,
     last_record_led_color = nil
 }
 
@@ -296,55 +289,71 @@ end
 
 
 -- ============================================================
--- Record-LED
+-- Transport-LEDs
 -- ============================================================
+
+local function get_transport_play_state()
+    local project = get_active_project()
+    if not project then
+        return 0
+    end
+    return reaper.GetPlayStateEx(project)
+end
+
+local function desired_play_led_color(api)
+    local play_state = get_transport_play_state()
+
+    if (play_state & 1) == 1
+    or (play_state & 4) == 4 then
+        return api.COLOR.GREEN
+    end
+
+    return api.COLOR.DARK_GREEN or 17
+end
 
 local function desired_record_led_color(api)
     if not state.watching_record then
         return api.COLOR.YELLOW
     end
 
-    if state.reached_time_selection then
-        return api.COLOR.YELLOW
+    if not state.reached_time_selection then
+        return api.COLOR.ORANGE
     end
 
-    if state.blink_on then
-        return api.COLOR.YELLOW
-    end
-
-    return api.COLOR.OFF
+    return api.COLOR.RED
 end
 
-
-local function update_record_led(api)
+local function update_transport_leds(api)
     if not api or not api.get_current_screen then
         return
     end
 
-    -- De recordknop bestaat alleen op screen 0.
     if api.get_current_screen() ~= 0 then
+        state.last_play_led_color = nil
         state.last_record_led_color = nil
         return
     end
 
-    local color =
-        desired_record_led_color(api)
+    local play_color = desired_play_led_color(api)
+    local record_color = desired_record_led_color(api)
 
-    if color == state.last_record_led_color then
-        return
+    if play_color ~= state.last_play_led_color then
+        api.send_pad_color(4, 1, play_color)
+        state.last_play_led_color = play_color
     end
 
-    api.send_pad_color(
-        4,
-        2,
-        color
-    )
-
-    state.last_record_led_color = color
+    if record_color ~= state.last_record_led_color then
+        api.send_pad_color(4, 2, record_color)
+        state.last_record_led_color = record_color
+    end
 end
 
-
 function Transport.invalidate_record_led()
+    state.last_record_led_color = nil
+end
+
+function Transport.invalidate_transport_leds()
+    state.last_play_led_color = nil
     state.last_record_led_color = nil
 end
 
@@ -354,39 +363,9 @@ end
 -- ============================================================
 
 function Transport.play()
-    reaper.ShowConsoleMsg("\n--- Transport.play ---\n")
-
-    local raw_active_track =
-        reaper.GetExtState(
-            "GJS_MULTI",
-            "ActiveTrack"
-        )
-
-    reaper.ShowConsoleMsg(
-        "ExtState ActiveTrack = [" ..
-        tostring(raw_active_track) ..
-        "]\n"
-    )
-
-    local project, active_track =
-        get_active_project()
-
-    reaper.ShowConsoleMsg(
-        "active_track = " ..
-        tostring(active_track) ..
-        "\n"
-    )
-
-    reaper.ShowConsoleMsg(
-        "project = " ..
-        tostring(project) ..
-        "\n"
-    )
+    local project = get_active_project()
 
     if not project then
-        reaper.ShowConsoleMsg(
-            "STOP: geen project gevonden\n"
-        )
         return
     end
 
@@ -400,17 +379,7 @@ function Transport.play()
     local play_state =
         reaper.GetPlayStateEx(project)
 
-    reaper.ShowConsoleMsg(
-        "play_state = " ..
-        tostring(play_state) ..
-        "\n"
-    )
-
     if (play_state & 4) == 4 then
-        reaper.ShowConsoleMsg(
-            "Opname stoppen\n"
-        )
-
         reaper.Main_OnCommandEx(
             CMD_RECORD,
             0,
@@ -418,6 +387,8 @@ function Transport.play()
         )
 
         state.watching_record = false
+        state.reached_time_selection = false
+        state.last_play_led_color = nil
         state.last_record_led_color = nil
 
         state.pending_cleanup_project = project
@@ -428,22 +399,16 @@ function Transport.play()
     end
 
     if play_state == 0 then
-        reaper.ShowConsoleMsg(
-            "Play-opdracht versturen\n"
-        )
-
         reaper.Main_OnCommandEx(
             CMD_PLAY,
             0,
             0
         )
-    else
-        reaper.ShowConsoleMsg(
-            "Geen play: state is niet 0\n"
-        )
+
+        state.last_play_led_color = nil
+        state.last_record_led_color = nil
     end
 end
-
 
 function Transport.stop()
     local project =
@@ -456,12 +421,11 @@ function Transport.stop()
     reaper.Main_OnCommandEx(
         CMD_STOP,
         0,
-        project
+        0
     )
 
     state.watching_record = false
     state.reached_time_selection = false
-    state.blink_on = false
     state.last_record_led_color = nil
 
     reaper.SetExtState(
@@ -506,10 +470,6 @@ function Transport.record()
     state.phase = phase
 
     state.reached_time_selection = false
-    state.blink_on = false
-    state.last_blink_time =
-        reaper.time_precise()
-
     state.last_record_led_color = nil
     state.watching_record = true
 
@@ -547,7 +507,6 @@ end
 function Transport.update(api)
     local now = reaper.time_precise()
 
-    -- Uitgestelde item-cleanup.
     if state.pending_cleanup_project
        and state.pending_cleanup_time
        and now >= state.pending_cleanup_time then
@@ -561,19 +520,19 @@ function Transport.update(api)
     end
 
     if not state.watching_record then
-        update_record_led(api)
+        update_transport_leds(api)
         return
     end
 
     if not state.project then
         state.watching_record = false
-        update_record_led(api)
+        state.reached_time_selection = false
+        update_transport_leds(api)
         return
     end
 
-    if inside_time_selection(state.project) then
-        state.reached_time_selection = true
-    end
+    state.reached_time_selection =
+        inside_time_selection(state.project)
 
     if state.phase == 2 then
         local fx_record =
@@ -586,8 +545,9 @@ function Transport.update(api)
 
         if fx_record ~= 1 then
             state.watching_record = false
+            state.reached_time_selection = false
             reset_fx_automation()
-            update_record_led(api)
+            update_transport_leds(api)
             return
         end
 
@@ -600,32 +560,21 @@ function Transport.update(api)
                 state.project
             )
 
-        local is_recording =
-            (play_state & 4) == 4
-
-        if not is_recording then
+        if (play_state & 4) ~= 4 then
             state.watching_record = false
-            update_record_led(api)
+            state.reached_time_selection = false
+            update_transport_leds(api)
             return
         end
     end
 
-    if not state.reached_time_selection
-       and now - state.last_blink_time
-           >= BLINK_INTERVAL then
-
-        state.blink_on = not state.blink_on
-        state.last_blink_time = now
-        state.last_record_led_color = nil
-    end
-
-    update_record_led(api)
+    update_transport_leds(api)
 end
-
 
 function Transport.cleanup(api)
     state.watching_record = false
-    state.blink_on = false
+    state.reached_time_selection = false
+    state.last_play_led_color = nil
     state.last_record_led_color = nil
 
     reset_fx_automation()
@@ -638,7 +587,7 @@ function Transport.cleanup(api)
     )
 
     if api then
-        update_record_led(api)
+        update_transport_leds(api)
     end
 end
 
