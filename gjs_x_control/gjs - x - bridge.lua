@@ -6,6 +6,7 @@ local COMMAND_PROGRAMMER_MODE = 1
 local COMMAND_LIVE_MODE       = 2
 local COMMAND_SET_PAD_RGB     = 3
 local COMMAND_SET_FADER_RGB   = 4
+local COMMAND_SET_MATRIX_RGB  = 5
 
 
 Bridge.sequence = 0
@@ -108,6 +109,47 @@ function Bridge.set_fader_rgb(col, colors)
     end
 
     send_command(COMMAND_SET_FADER_RGB)
+
+    return true
+end
+
+
+function Bridge.set_matrix_rgb(matrix)
+    if type(matrix) ~= "table" then
+        return false
+    end
+
+    reaper.gmem_write(10, 64)
+
+    local index = 0
+
+    for row = 1, 8 do
+        local row_colors = matrix[row]
+
+        if type(row_colors) ~= "table" then
+            row_colors = {}
+        end
+
+        for col = 1, 8 do
+            local item = row_colors[col]
+
+            if type(item) ~= "table" then
+                item = { 0, 0, 0 }
+            end
+
+            local base = 11 + (index * 4)
+            local note = row * 10 + col
+
+            reaper.gmem_write(base + 0, note)
+            reaper.gmem_write(base + 1, clamp(item[1], 0, 127))
+            reaper.gmem_write(base + 2, clamp(item[2], 0, 127))
+            reaper.gmem_write(base + 3, clamp(item[3], 0, 127))
+
+            index = index + 1
+        end
+    end
+
+    send_command(COMMAND_SET_MATRIX_RGB)
 
     return true
 end

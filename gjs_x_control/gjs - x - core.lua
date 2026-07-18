@@ -36,6 +36,25 @@ local COLOR = {
 
 local SELECT_COLOR = COLOR.RED
 
+-- Screens 0, 1, 2, 3, 4, 5 and 7 use the 8x8 RGB matrix bridge.
+-- Screen 6 continues to use its existing render path.
+local PALETTE_RGB = {
+    [COLOR.OFF]          = { 0,   0,   0   },
+    [COLOR.GREY]         = { 32,  32,  32  },
+    [COLOR.WHITE]        = { 127, 127, 127 },
+    [COLOR.RED]          = { 127, 0,   0   },
+    [COLOR.ORANGE]       = { 127, 40,  0   },
+    [COLOR.YELLOW]       = { 127, 110, 0   },
+    [COLOR.DARK_YELLOW]  = { 55,  38,  0   },
+    [COLOR.GREEN]        = { 0,   127, 0   },
+    [COLOR.LIGHT_BLUE]   = { 0,   70,  127 },
+    [COLOR.LIGHT_PURPLE] = { 75,  25,  127 },
+    [COLOR.BLUE]         = { 0,   0,   127 },
+    [COLOR.PINK]         = { 127, 30,  90  },
+    [COLOR.MAGENTA]      = { 127, 0,   80  },
+    [COLOR.PURPLE]       = { 60,  0,   127 }
+}
+
 local RGB = {
 
     RED    = {127, 0, 0},
@@ -90,7 +109,10 @@ local LP = {
     screen_state = {},
     last_sequence = 0,
     running = true,
-    screens = {}
+    screens = {},
+    framebuffer = nil,
+    building_matrix = false,
+    matrix_screen_active = false
 }
 
 local function get_current_screen()
@@ -253,9 +275,40 @@ local function connect_bridge_track()
     return true
 end
 
+local function palette_to_rgb(color)
+    local rgb = PALETTE_RGB[color] or PALETTE_RGB[COLOR.OFF]
+    return rgb[1], rgb[2], rgb[3]
+end
+
+local function new_black_matrix()
+    local matrix = {}
+
+    for row = 1, 8 do
+        matrix[row] = {}
+
+        for col = 1, 8 do
+            matrix[row][col] = { 0, 0, 0 }
+        end
+    end
+
+    return matrix
+end
+
 local function send_pad_color(row, col, color)
+    local red, green, blue = palette_to_rgb(color)
+
+    -- While a matrix screen is being drawn, collect all pad colours first.
+    if LP.building_matrix and LP.framebuffer then
+        LP.framebuffer[row][col] = { red, green, blue }
+        return true
+    end
+
+    -- Outside the one-time matrix build, keep live LED updates on the
+    -- existing MIDI path. This prevents a later bridge command from
+    -- overwriting command 5 in gmem before the JSFX has processed it.
     local note = row * 10 + col
     reaper.StuffMIDIMessage(LP.output_mode, 0x90, note, color)
+    return true
 end
 
 local function send_pad_rgb(
@@ -533,7 +586,7 @@ local function render_fader(group)
         end
     end
 
-    if not fader_col or not base_rgb or not Bridge then
+    if not fader_col or not base_rgb then
         return
     end
 
@@ -561,10 +614,19 @@ local function render_fader(group)
         end
     end
 
-    Bridge.set_fader_rgb(
-        fader_col,
-        colors
-    )
+    if LP.building_matrix and LP.framebuffer then
+        for row = 1, 8 do
+            LP.framebuffer[row][fader_col] = colors[row]
+        end
+        return
+    end
+
+    if Bridge and Bridge.set_fader_rgb then
+        Bridge.set_fader_rgb(
+            fader_col,
+            colors
+        )
+    end
 end
 
 local function render_horizontal_fader(group)
@@ -590,11 +652,7 @@ local function render_horizontal_fader(group)
         end
     end
 
-    if not fader_row
-       or not base_rgb
-       or not Bridge
-       or not Bridge.set_row_rgb then
-
+    if not fader_row or not base_rgb then
         return
     end
 
@@ -665,10 +723,19 @@ local function render_horizontal_fader(group)
         end
     end
 
-    Bridge.set_row_rgb(
-        fader_row,
-        colors
-    )
+    if LP.building_matrix and LP.framebuffer then
+        for col = 1, 8 do
+            LP.framebuffer[fader_row][col] = colors[col]
+        end
+        return
+    end
+
+    if Bridge and Bridge.set_row_rgb then
+        Bridge.set_row_rgb(
+            fader_row,
+            colors
+        )
+    end
 end
 
 local function draw_vertical_fader(
@@ -889,12 +956,53 @@ local function draw_sidebar()
 end
 
 local function draw_current_screen()
-    clearscreen()
-
     local draw_screen = LP.screens[LP.current_screen]
 
-    if draw_screen then
-        draw_screen(API)
+    local matrix_screen =
+        LP.current_screen == 0 or
+        LP.current_screen == 1 or
+        LP.current_screen == 2 or
+        LP.current_screen == 3 or
+        LP.current_screen == 4 or
+        LP.current_screen == 5 or
+        LP.current_screen == 7
+
+    if matrix_screen then
+        -- Build the complete screen in memory and then send one matrix.
+        LP.pads = {}
+        LP.radio_groups = {}
+        LP.framebuffer = new_black_matrix()
+        LP.building_matrix = true
+
+        if draw_screen then
+            draw_screen(API)
+        end
+
+        LP.building_matrix = false
+
+        if Bridge and Bridge.set_matrix_rgb then
+            Bridge.set_matrix_rgb(LP.framebuffer)
+            LP.matrix_screen_active = true
+        else
+            reaper.ShowConsoleMsg(
+                "Matrix tekenen mislukt: Bridge.set_matrix_rgb ontbreekt.\n"
+            )
+        end
+    else
+        -- Clear any persistent RGB matrix before returning to legacy screens.
+        if LP.matrix_screen_active
+           and Bridge
+           and Bridge.set_matrix_rgb then
+
+            Bridge.set_matrix_rgb(new_black_matrix())
+            LP.matrix_screen_active = false
+        end
+
+        clearscreen()
+
+        if draw_screen then
+            draw_screen(API)
+        end
     end
 
     draw_sidebar()
