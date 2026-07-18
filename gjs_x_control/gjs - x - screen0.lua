@@ -181,4 +181,8 @@ return function(api)
             end
         }
     )
+
+    -- Page 1 loop overview on the top two rows.
+    -- This is a visual overlay only; all existing pad callbacks remain intact.
+    api.draw_loop_overview()
 end

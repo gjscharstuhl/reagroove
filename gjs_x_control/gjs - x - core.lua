@@ -112,7 +112,12 @@ local LP = {
     screens = {},
     framebuffer = nil,
     building_matrix = false,
-    matrix_screen_active = false
+    matrix_screen_active = false,
+    loop_overview_signature = nil,
+    loop_overview_last_update = 0,
+    loop_overview_length = nil,
+    loop_overview_current_bar = nil,
+    loop_overview_background = nil
 }
 
 local function get_current_screen()
@@ -301,6 +306,13 @@ local function send_pad_color(row, col, color)
     if LP.building_matrix and LP.framebuffer then
         LP.framebuffer[row][col] = { red, green, blue }
         return true
+    end
+
+    -- Keep the in-memory matrix in sync with live pad changes. This lets
+    -- dynamic overlays (such as the loop overview) safely resend a complete
+    -- frame without restoring stale colours elsewhere on the screen.
+    if LP.matrix_screen_active and LP.framebuffer then
+        LP.framebuffer[row][col] = { red, green, blue }
     end
 
     -- Outside the one-time matrix build, keep live LED updates on the
@@ -943,6 +955,211 @@ local function handle_pad_release(pad)
     end
 end
 
+local LOOP_OVERVIEW_UPDATE_INTERVAL = 0.01
+local LOOP_LENGTH_RGB = { 83, 20, 20 } -- halfway between grey and red
+local LOOP_CURRENT_RGB = { 127, 0, 0 }
+
+local function get_loop_overview_values()
+    local active_track = tonumber(
+        reaper.GetExtState("GJS_MULTI", "ActiveTrack")
+    )
+
+    if not active_track then
+        return 0, nil
+    end
+
+    local project = reaper.EnumProjects(active_track)
+    if not project then
+        return 0, nil
+    end
+
+    local loop_start, loop_end = reaper.GetSet_LoopTimeRange2(
+        project,
+        false,
+        true,
+        0,
+        0,
+        false
+    )
+
+    if not loop_start or not loop_end or loop_end <= loop_start then
+        return 0, nil
+    end
+
+    local _, start_measure = reaper.TimeMap2_timeToBeats(project, loop_start)
+    local _, end_measure = reaper.TimeMap2_timeToBeats(project, loop_end)
+
+    local length = math.floor((end_measure - start_measure) + 0.5)
+    length = math.max(0, math.min(16, length))
+
+    local current_bar = nil
+    local play_state = reaper.GetPlayStateEx(project)
+
+    if (play_state & 1) == 1 then
+        local play_position = reaper.GetPlayPositionEx(project)
+
+        if play_position >= loop_start and play_position < loop_end then
+            local _, current_measure =
+                reaper.TimeMap2_timeToBeats(project, play_position)
+
+            current_bar =
+                math.floor(current_measure - start_measure) + 1
+
+            if current_bar < 1 or current_bar > 16 then
+                current_bar = nil
+            end
+        end
+    end
+
+    return length, current_bar
+end
+
+local function loop_pad_position(index)
+    if index <= 8 then
+        return 8, index
+    end
+
+    return 7, index - 8
+end
+
+local function copy_rgb(color)
+    color = color or { 0, 0, 0 }
+    return { color[1] or 0, color[2] or 0, color[3] or 0 }
+end
+
+local function remember_loop_background()
+    LP.loop_overview_background = {}
+
+    for index = 1, 16 do
+        local row, col = loop_pad_position(index)
+        LP.loop_overview_background[index] =
+            copy_rgb(LP.framebuffer[row][col])
+    end
+end
+
+local function loop_display_color(index, length, current_bar)
+    if index == current_bar then
+        return LOOP_CURRENT_RGB
+    end
+
+    if index <= length then
+        return LOOP_LENGTH_RGB
+    end
+
+    if LP.loop_overview_background then
+        return LP.loop_overview_background[index] or { 0, 0, 0 }
+    end
+
+    return { 0, 0, 0 }
+end
+
+local function paint_loop_overview(length, current_bar)
+    if not LP.framebuffer then
+        return
+    end
+
+    for index = 1, 16 do
+        local row, col = loop_pad_position(index)
+        LP.framebuffer[row][col] =
+            copy_rgb(loop_display_color(index, length, current_bar))
+    end
+end
+
+local function send_loop_pad_updates(indices, length, current_bar)
+    if not Bridge or not LP.framebuffer or #indices == 0 then
+        return false
+    end
+
+    -- Command 4 accepts an arbitrary list of RGB pads in one SysEx packet.
+    -- Using a single bridge command prevents command overwrites and avoids
+    -- resending the complete 8x8 matrix for every moving bar cursor.
+    reaper.gmem_write(10, #indices)
+
+    for item_index, index in ipairs(indices) do
+        local row, col = loop_pad_position(index)
+        local color = copy_rgb(loop_display_color(index, length, current_bar))
+        local base = 11 + ((item_index - 1) * 4)
+
+        LP.framebuffer[row][col] = color
+
+        reaper.gmem_write(base + 0, row * 10 + col)
+        reaper.gmem_write(base + 1, color[1])
+        reaper.gmem_write(base + 2, color[2])
+        reaper.gmem_write(base + 3, color[3])
+    end
+
+    Bridge.sequence = (Bridge.sequence or 0) + 1
+    reaper.gmem_write(1, 4)
+    reaper.gmem_write(0, Bridge.sequence)
+    return true
+end
+
+local function draw_loop_overview()
+    -- Capture the original two-row colours once during the matrix build.
+    -- They remain the background whenever a pad falls outside the loop.
+    remember_loop_background()
+
+    local length, current_bar = get_loop_overview_values()
+    paint_loop_overview(length, current_bar)
+
+    LP.loop_overview_length = length
+    LP.loop_overview_current_bar = current_bar
+    LP.loop_overview_signature =
+        tostring(length) .. ":" .. tostring(current_bar or 0)
+end
+
+local function update_loop_overview()
+    if LP.current_screen ~= 0
+       or not LP.matrix_screen_active
+       or not LP.framebuffer
+       or not Bridge then
+        return
+    end
+
+    local now = reaper.time_precise()
+    if now - LP.loop_overview_last_update < LOOP_OVERVIEW_UPDATE_INTERVAL then
+        return
+    end
+
+    LP.loop_overview_last_update = now
+
+    local length, current_bar = get_loop_overview_values()
+    local old_length = LP.loop_overview_length
+    local old_current = LP.loop_overview_current_bar
+
+    if length == old_length and current_bar == old_current then
+        return
+    end
+
+    if length ~= old_length then
+        -- Loop length changes are rare. Repaint the complete overlay so pads
+        -- that leave the loop correctly recover their original background.
+        paint_loop_overview(length, current_bar)
+        if Bridge.set_matrix_rgb then
+            Bridge.set_matrix_rgb(LP.framebuffer)
+        end
+    else
+        -- Normal playback update: restore only the previous cursor pad and
+        -- light only the new cursor pad, both inside one compact SysEx packet.
+        local indices = {}
+
+        if old_current then
+            indices[#indices + 1] = old_current
+        end
+
+        if current_bar and current_bar ~= old_current then
+            indices[#indices + 1] = current_bar
+        end
+
+        send_loop_pad_updates(indices, length, current_bar)
+    end
+
+    LP.loop_overview_length = length
+    LP.loop_overview_current_bar = current_bar
+    LP.loop_overview_signature =
+        tostring(length) .. ":" .. tostring(current_bar or 0)
+end
+
 local function draw_sidebar()
     for screen = 0, 7 do
         local color = COLOR.GREY
@@ -956,6 +1173,8 @@ local function draw_sidebar()
 end
 
 local function draw_current_screen()
+    LP.loop_overview_signature = nil
+
     local draw_screen = LP.screens[LP.current_screen]
 
     local matrix_screen =
@@ -1149,6 +1368,8 @@ local function mainloop()
         Pattern.update(API)
     end
 
+    update_loop_overview()
+
     reaper.defer(mainloop)
 end
 
@@ -1216,6 +1437,7 @@ API.MODE_FADER = MODE_FADER
 API.drawpad = drawpad
 API.drawstrip = drawstrip
 API.drawblock = drawblock
+API.draw_loop_overview = draw_loop_overview
 API.draw_vertical_fader = draw_vertical_fader
 API.get_screen_state = get_screen_state
 API.set_screen0_track_and_region = set_screen0_track_and_region
