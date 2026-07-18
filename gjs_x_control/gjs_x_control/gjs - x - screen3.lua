@@ -136,7 +136,7 @@ return function(api)
         local group = "mixer_pan_" .. row
 
         api.draw_horizontal_fader(
-            9-row,
+            row,
             FADER_RGB[row],
             {
                 group = group,

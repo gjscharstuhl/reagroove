@@ -1,6 +1,7 @@
 -- ============================================================
 -- Screen 2: mixer faders
--- Patch 2: read and write volumes for direct children of folder "tracks".
+-- Patch 1b: read volumes from direct children of folder "tracks"
+-- Read/display only; no volume writing yet.
 -- ============================================================
 
 return function(api)
@@ -87,13 +88,6 @@ return function(api)
                (position % 4) + 1
     end
 
-
-    local function fader_to_volume(row, step)
-        local position = ((row - 1) * 4) + (step - 1)
-        local db = -60 + (position / 31) * 72
-        return 10 ^ (db / 20)
-    end
-
     -- Page 1 is currently the only implemented mixer page, so do not gate
     -- volume loading on screen 0's page state yet. This avoids a stale or
     -- uninitialised page-selector state preventing the faders from loading.
@@ -115,40 +109,13 @@ return function(api)
     end
 
     for col = 1, 8 do
-        local track = children[col]
-        local group = "mixer_fader_" .. col
-
         api.draw_vertical_fader(
             col,
             FADER_RGB[col],
             {
-                group = group,
+                group = "mixer_fader_" .. col,
                 default_row = 1,
-                default_step = 4,
-
-                on_press = function()
-                    if not track then
-                        return
-                    end
-
-                    local fader = state.fader[group]
-                    if not fader then
-                        return
-                    end
-
-                    local volume = fader_to_volume(
-                        fader.row,
-                        fader.step
-                    )
-
-                    reaper.SetMediaTrackInfo_Value(
-                        track,
-                        "D_VOL",
-                        volume
-                    )
-
-                    reaper.TrackList_AdjustWindows(false)
-                end
+                default_step = 4
             }
         )
     end
