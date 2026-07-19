@@ -204,52 +204,61 @@ local function current_region_number(project)
     return nil
 end
 
-local function update_selection(track_number, selection)
+local function update_selection(api, track_number, selection)
     local project =
         reaper.EnumProjects(track_number)
 
     if not project then
-        return false
+        return
     end
 
     local play_state =
         reaper.GetPlayStateEx(project)
 
-    local new_state
+    local row = 9 - track_number
+    local col = selection.region
 
     if (play_state & 1) == 0 then
-        new_state = "stopped"
-    else
-        local current_region =
-            current_region_number(project)
+        selection.visual_state = "stopped"
+        return
+    end
 
-        if current_region == selection.region then
-            new_state = "active"
-        else
-            new_state = "queued"
+    local current_region =
+        current_region_number(project)
+
+    if current_region == selection.region then
+        if selection.visual_state ~= "active" then
+            selection.visual_state = "active"
+
+            api.send_pad_color(
+                row,
+                col,
+                api.COLOR.WHITE
+            )
         end
+
+        return
     end
 
-    if selection.visual_state == new_state then
-        return false
+    if selection.visual_state ~= "queued" then
+        selection.visual_state = "queued"
+
+        api.send_pad_color(
+            row,
+            col,
+            api.COLOR.LIGHT_BLUE
+        )
     end
-
-    selection.visual_state = new_state
-    return true
-end
-
-function Pattern.get_visual_state(track_number, region_number)
-    local selection = selections[track_number]
-
-    if not selection or selection.region ~= region_number then
-        return nil
-    end
-
-    return selection.visual_state
 end
 
 function Pattern.update(api)
     if next(selections) == nil then
+        return
+    end
+
+    -- Patternkleuren horen alleen op screen 1.
+    if api.get_current_screen
+    and api.get_current_screen() ~= 1 then
         return
     end
 
@@ -261,22 +270,12 @@ function Pattern.update(api)
 
     last_update_time = now
 
-    local changed = false
-
     for track_number, selection in pairs(selections) do
-        if update_selection(track_number, selection) then
-            changed = true
-        end
-    end
-
-    -- Redraw once through the framebuffer whenever queued/active changes.
-    -- This keeps LIGHT_BLUE identical to the initial matrix colour and also
-    -- lets screen 0 show the pending state without separate palette updates.
-    if changed
-    and api.redraw
-    and api.get_current_screen
-    and (api.get_current_screen() == 0 or api.get_current_screen() == 1) then
-        api.redraw()
+        update_selection(
+            api,
+            track_number,
+            selection
+        )
     end
 end
 

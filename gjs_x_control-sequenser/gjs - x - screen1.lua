@@ -10,22 +10,6 @@ return function(api)
     local C = api.COLOR
 
     local function draw_pattern_track(row, track, color)
-        local group = "pattern_track_" .. track
-        local state = api.get_screen_state(1)
-        local saved_note = state.radio[group]
-        local selected_col = saved_note and (saved_note % 10) or 1
-
-        local visual_state = nil
-        if api.pattern
-        and type(api.pattern.get_visual_state) == "function" then
-            visual_state = api.pattern.get_visual_state(track, selected_col)
-        end
-
-        local active_color = C.WHITE
-        if visual_state == "queued" then
-            active_color = C.LIGHT_BLUE
-        end
-
         api.drawstrip(
             row,
             1,
@@ -33,9 +17,9 @@ return function(api)
             color,
             api.MODE_RADIO,
             {
-                group = group,
-                selected_col = selected_col,
-                active_color = active_color,
+                group = "pattern_track_" .. track,
+                selected_col = 1,
+                active_color = C.WHITE,
 
                 on_press = function(pad)
                     local region = pad.col

@@ -106,7 +106,6 @@ local LP = {
     pads = {},
     radio_groups = {},
     current_screen = 0,
-    current_page = 1,
     screen_state = {},
     last_sequence = 0,
     running = true,
@@ -138,22 +137,6 @@ local function get_screen_state(screen)
     return LP.screen_state[screen]
 end
 
-local function get_page()
-    return LP.current_page or 1
-end
-
-local function set_page(page)
-    page = math.max(1, math.min(4, math.floor(tonumber(page) or 1)))
-    LP.current_page = page
-
-    -- Keep the screen-0 page radio state in sync.
-    local state = get_screen_state(0)
-    state.radio["page_selector"] = 44 + page
-
-    -- Shared runtime value for future page-aware screens.
-    reaper.SetExtState("GJS_X", "Page", tostring(page), false)
-end
-
 local function save_pad_state(pad)
     local state = get_screen_state(LP.current_screen)
 
@@ -164,19 +147,10 @@ local function save_pad_state(pad)
     end
 end
 
-local function set_screen1_track_and_region(track, region)
-    local state = get_screen_state(1)
-    local row = 9 - track
-    state.radio["pattern_track_" .. track] = row * 10 + region
-end
-
 local function set_screen0_track_and_region(track, region)
     local state = get_screen_state(0)
     state.radio["tracks"] = 10 + track
     state.radio["regions"] = 60 + region
-
-    -- Keep screen 1 on the same track/region combination.
-    set_screen1_track_and_region(track, region)
 end
 
 local function find_midi_input(search_name)
@@ -999,61 +973,42 @@ local function get_loop_overview_values()
         return 0, nil
     end
 
-    -- Follow the region that is currently under the play cursor. When stopped,
-    -- use the edit cursor so the overview remains visible instead of going dark.
-    local play_state = reaper.GetPlayStateEx(project)
-    local position
+    local loop_start, loop_end = reaper.GetSet_LoopTimeRange2(
+        project,
+        false,
+        true,
+        0,
+        0,
+        false
+    )
 
-    if (play_state & 1) == 1 then
-        position = reaper.GetPlayPositionEx(project)
-    else
-        position = reaper.GetCursorPositionEx(project)
-    end
-
-    local _, marker_count, region_count =
-        reaper.CountProjectMarkers(project)
-
-    local region_start = nil
-    local region_end = nil
-
-    for index = 0, marker_count + region_count - 1 do
-        local _, is_region, start_pos, end_pos =
-            reaper.EnumProjectMarkers2(project, index)
-
-        if is_region
-        and position >= start_pos
-        and position < end_pos then
-            region_start = start_pos
-            region_end = end_pos
-            break
-        end
-    end
-
-    if not region_start
-    or not region_end
-    or region_end <= region_start then
+    if not loop_start or not loop_end or loop_end <= loop_start then
         return 0, nil
     end
 
-    local _, start_measure =
-        reaper.TimeMap2_timeToBeats(project, region_start)
+    local _, start_measure = reaper.TimeMap2_timeToBeats(project, loop_start)
+    local _, end_measure = reaper.TimeMap2_timeToBeats(project, loop_end)
 
-    local _, end_measure =
-        reaper.TimeMap2_timeToBeats(project, region_end)
-
-    local _, current_measure =
-        reaper.TimeMap2_timeToBeats(project, position)
-
-    local length =
-        math.floor((end_measure - start_measure) + 0.5)
-
+    local length = math.floor((end_measure - start_measure) + 0.5)
     length = math.max(0, math.min(16, length))
 
-    local current_bar =
-        math.floor(current_measure - start_measure) + 1
+    local current_bar = nil
+    local play_state = reaper.GetPlayStateEx(project)
 
-    if current_bar < 1 or current_bar > length then
-        current_bar = nil
+    if (play_state & 1) == 1 then
+        local play_position = reaper.GetPlayPositionEx(project)
+
+        if play_position >= loop_start and play_position < loop_end then
+            local _, current_measure =
+                reaper.TimeMap2_timeToBeats(project, play_position)
+
+            current_bar =
+                math.floor(current_measure - start_measure) + 1
+
+            if current_bar < 1 or current_bar > 16 then
+                current_bar = nil
+            end
+        end
     end
 
     return length, current_bar
@@ -1430,7 +1385,6 @@ function start(screens)
 
     LP.screens = screens
     LP.current_screen = 0
-    set_page(tonumber(reaper.GetExtState("GJS_X", "Page")) or 1)
 
     local attempts = 0
     local max_attempts = 3
@@ -1487,7 +1441,6 @@ API.draw_loop_overview = draw_loop_overview
 API.draw_vertical_fader = draw_vertical_fader
 API.get_screen_state = get_screen_state
 API.set_screen0_track_and_region = set_screen0_track_and_region
-API.set_screen1_track_and_region = set_screen1_track_and_region
 API.send_pad_color = send_pad_color
 API.select_screen = select_screen
 API.redraw = draw_current_screen
@@ -1498,7 +1451,5 @@ API.draw_horizontal_fader = draw_horizontal_fader
 API.render_horizontal_fader = render_horizontal_fader
 API.transport = Transport
 API.get_current_screen = get_current_screen
-API.get_page = get_page
-API.set_page = set_page
 API.pattern = Pattern
 return API
