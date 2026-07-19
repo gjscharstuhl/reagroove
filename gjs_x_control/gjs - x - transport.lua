@@ -11,12 +11,14 @@ local CMD_RECORD = 1013
 local CMD_STOP   = 1016
 
 
+
 local state = {
     watching_record = false,
     phase = 0,
     active_track = nil,
     project = nil,
     reached_time_selection = false,
+    pending_record = false,
     pending_cleanup_project = nil,
     pending_cleanup_time = nil,
     last_play_led_color = nil,
@@ -388,6 +390,7 @@ function Transport.play()
 
         state.watching_record = false
         state.reached_time_selection = false
+        state.pending_record = false
         state.last_play_led_color = nil
         state.last_record_led_color = nil
 
@@ -411,12 +414,12 @@ function Transport.play()
 end
 
 function Transport.stop()
-    local project =
-        get_active_project()
+   -- local project =
+    --    get_active_project()
 
-    if not project then
-        return
-    end
+   -- if not project then
+    --    return
+   --`	 end
 
     reaper.Main_OnCommandEx(
         CMD_STOP,
@@ -426,6 +429,7 @@ function Transport.stop()
 
     state.watching_record = false
     state.reached_time_selection = false
+    state.pending_record = false
     state.last_record_led_color = nil
 
     reaper.SetExtState(
@@ -461,6 +465,7 @@ function Transport.record()
         )
 
         state.watching_record = false
+        state.pending_record = false
         state.last_record_led_color = nil
         return
     end
@@ -491,11 +496,21 @@ function Transport.record()
             true
         )
 
-        reaper.Main_OnCommandEx(
-            CMD_RECORD,
-            0,
-            project
-        )
+        -- Als er al wordt afgespeeld buiten de gekozen region,
+        -- laat de bestaande region-queue intact en start opname
+        -- pas zodra de time-selection is bereikt.
+        if (play_state & 1) == 1
+        and not inside_time_selection(project) then
+            state.pending_record = true
+        else
+            state.pending_record = false
+
+            reaper.Main_OnCommandEx(
+                CMD_RECORD,
+                0,
+                project
+            )
+        end
     end
 end
 
@@ -560,7 +575,27 @@ function Transport.update(api)
                 state.project
             )
 
-        if (play_state & 4) ~= 4 then
+        if state.pending_record then
+            -- Playback moet blijven lopen terwijl we wachten op
+            -- de reeds gequeuede region.
+            if (play_state & 1) ~= 1 then
+                state.watching_record = false
+                state.reached_time_selection = false
+                state.pending_record = false
+                update_transport_leds(api)
+                return
+            end
+
+            if state.reached_time_selection then
+                reaper.Main_OnCommandEx(
+                    CMD_RECORD,
+                    0,
+                    state.project
+                )
+
+                state.pending_record = false
+            end
+        elseif (play_state & 4) ~= 4 then
             state.watching_record = false
             state.reached_time_selection = false
             update_transport_leds(api)
@@ -574,6 +609,7 @@ end
 function Transport.cleanup(api)
     state.watching_record = false
     state.reached_time_selection = false
+    state.pending_record = false
     state.last_play_led_color = nil
     state.last_record_led_color = nil
 

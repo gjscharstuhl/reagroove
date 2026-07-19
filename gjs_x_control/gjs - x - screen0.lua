@@ -304,6 +304,7 @@ return function(api)
 
     for col = 1, 8 do
         local track = arm_tracks[col]
+        if track == nil then goto continue end
         local note = 20 + col
 		local muted =
 			reaper.GetMediaTrackInfo_Value(track, "B_MUTE") > 0.5
@@ -335,6 +336,7 @@ return function(api)
                 end
             }
         )
+        ::continue::
     end
 
     -- Tracks 1 t/m 8

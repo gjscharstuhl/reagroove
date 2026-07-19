@@ -164,11 +164,14 @@ function Pattern.select(track_number, region_number)
         false
     )
 
-    reaper.Main_OnCommandEx(
-        command,
-        0,
-        project
-    )
+	-- SWS-regioncommando's werken op de actieve projecttab.
+	--reaper.SelectProjectInstance(project)
+
+	reaper.Main_OnCommandEx(
+		command,
+		0,
+		project
+	)
 
     reaper.UpdateArrange()
 
