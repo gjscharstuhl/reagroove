@@ -1,10 +1,28 @@
+-- SCREEN2_ACTIVE_TRACK_PAGE3_V5
+-- SCREEN2_PAGE3_ROUTER_V4
 -- ============================================================
 -- gjs - x - screen2.lua
 -- Page 1: volumes of the first 8 direct children of folder "tracks"
 -- Page 2: global FX send levels for the active track
 -- ============================================================
 
+local script_path = debug.getinfo(1, "S").source:sub(2)
+local script_dir = script_path:match("(.*[\\/])") or ""
+local page3 = dofile(script_dir .. "gjs - x - page3.lua")
+
 return function(api)
+    local page = api.get_page and api.get_page() or 1
+
+    if page == 3 then
+        local active_track = tonumber(
+            reaper.GetExtState("GJS_X", "ActiveTrack")
+        ) or 1
+
+        active_track = math.max(1, math.min(8, math.floor(active_track)))
+        page3.render(api, active_track)
+        return
+    end
+
     local FOLDER_NAME = "tracks"
 
     local FADER_RGB = {
@@ -132,7 +150,6 @@ return function(api)
         return nil
     end
 
-    local page = api.get_page and api.get_page() or 1
     local children = find_direct_children(FOLDER_NAME, 8)
     local state = api.get_screen_state(2)
 
