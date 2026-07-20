@@ -273,4 +273,90 @@ return function(api)
             }
         )
     end
+
+    -- Keep the visible faders synchronized with changes made in REAPER or
+    -- by another controller. One column is checked per pass so bridge
+    -- commands cannot overwrite each other when several values change.
+    local sync_col = 1
+    local last_sync_time = 0
+    local sync_interval = 0.03
+
+    local function sync_next_fader()
+        if api.get_current_screen
+        and api.get_current_screen() ~= 2 then
+            return
+        end
+
+        if api.get_page
+        and api.get_page() ~= page then
+            return
+        end
+
+        local now = reaper.time_precise()
+        if now - last_sync_time < sync_interval then
+            reaper.defer(sync_next_fader)
+            return
+        end
+
+        last_sync_time = now
+
+        local group = "mixer_page_" .. page .. "_fader_" .. sync_col
+        local volume = nil
+
+        if page == 1 then
+            local track = children[sync_col]
+            if track then
+                volume = reaper.GetMediaTrackInfo_Value(track, "D_VOL")
+            end
+
+        elseif page == 2 then
+            local active_track = tonumber(
+                reaper.GetExtState("GJS_X", "ActiveTrack")
+            )
+            local source_track =
+                active_track and children[active_track] or nil
+            local destination_track = find_track_by_name(
+                GLOBAL_FX_TRACKS[sync_col]
+            )
+
+            if source_track and destination_track then
+                local send_index = find_send(
+                    source_track,
+                    destination_track
+                )
+
+                if send_index ~= nil then
+                    volume = reaper.GetTrackSendInfo_Value(
+                        source_track,
+                        0,
+                        send_index,
+                        "D_VOL"
+                    )
+                else
+                    volume = 0
+                end
+            end
+        end
+
+        if volume ~= nil then
+            local row, step = volume_to_fader(volume)
+            local fader = state.fader[group]
+
+            if not fader
+            or fader.row ~= row
+            or fader.step ~= step then
+                state.fader[group] = {
+                    row = row,
+                    step = step
+                }
+
+                api.render_fader(group)
+            end
+        end
+
+        sync_col = (sync_col % 8) + 1
+        reaper.defer(sync_next_fader)
+    end
+
+    reaper.defer(sync_next_fader)
 end
