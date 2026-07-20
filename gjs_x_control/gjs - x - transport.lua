@@ -1,7 +1,7 @@
 -- ============================================================
 -- gjs - x - transport.lua
 --
--- Transport- en recordlogica voor de actieve GJS_MULTI-projecttab
+-- Transport- en recordlogica voor de actieve GJS_X-projecttab
 -- ============================================================
 
 local Transport = {}
@@ -34,7 +34,7 @@ local function get_active_project()
     local active_track =
         tonumber(
             reaper.GetExtState(
-                "GJS_MULTI",
+                "GJS_X",
                 "ActiveTrack"
             )
         )
@@ -56,7 +56,7 @@ end
 local function get_phase()
     return tonumber(
         reaper.GetExtState(
-            "GJS_MULTI",
+            "GJS_X",
             "Page"
         )
     ) or 0
@@ -372,7 +372,7 @@ function Transport.play()
     end
 
     reaper.SetExtState(
-        "GJS_MULTI",
+        "GJS_X",
         "FxRec",
         "0",
         true
@@ -433,7 +433,7 @@ function Transport.stop()
     state.last_record_led_color = nil
 
     reaper.SetExtState(
-        "GJS_MULTI",
+        "GJS_X",
         "FxRec",
         "0",
         true
@@ -457,6 +457,9 @@ function Transport.record()
 
     -- Tweede druk tijdens normale opname:
     -- opname beëindigen.
+    reaper.ShowConsoleMsg(
+    "Phase = " .. tostring(get_phase()) .. "\n"
+	)
     if phase ~= 2 and (play_state & 4) == 4 then
         reaper.Main_OnCommandEx(
             CMD_RECORD,
@@ -480,7 +483,7 @@ function Transport.record()
 
     if phase == 2 then
         reaper.SetExtState(
-            "GJS_MULTI",
+            "GJS_X",
             "FxRec",
             "1",
             true
@@ -490,7 +493,7 @@ function Transport.record()
         -- De watcher schakelt latch in bij de region.
     else
         reaper.SetExtState(
-            "GJS_MULTI",
+            "GJS_X",
             "FxRec",
             "0",
             true
@@ -553,7 +556,7 @@ function Transport.update(api)
         local fx_record =
             tonumber(
                 reaper.GetExtState(
-                    "GJS_MULTI",
+                    "GJS_X",
                     "FxRec"
                 )
             ) or 0
@@ -616,7 +619,7 @@ function Transport.cleanup(api)
     reset_fx_automation()
 
     reaper.SetExtState(
-        "GJS_MULTI",
+        "GJS_X",
         "FxRec",
         "0",
         true

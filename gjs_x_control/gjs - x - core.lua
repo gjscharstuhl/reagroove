@@ -987,7 +987,7 @@ local LOOP_CURRENT_RGB = { 127, 0, 0 }
 
 local function get_loop_overview_values()
     local active_track = tonumber(
-        reaper.GetExtState("GJS_MULTI", "ActiveTrack")
+        reaper.GetExtState("GJS_X", "ActiveTrack")
     )
 
     if not active_track then

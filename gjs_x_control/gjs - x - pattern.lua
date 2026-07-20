@@ -124,14 +124,14 @@ function Pattern.select(track_number, region_number)
     last_update_time = 0
 
     reaper.SetExtState(
-        "GJS_MULTI",
+        "GJS_X",
         "ActiveTrack",
         tostring(track_number),
         false
     )
 
     reaper.SetExtState(
-        "GJS_MULTI",
+        "GJS_X",
         "TargetRegion",
         tostring(region_number),
         false
@@ -140,7 +140,7 @@ function Pattern.select(track_number, region_number)
     local page =
         tonumber(
             reaper.GetExtState(
-                "GJS_MULTI",
+                "GJS_X",
                 "Page"
             )
         ) or 1

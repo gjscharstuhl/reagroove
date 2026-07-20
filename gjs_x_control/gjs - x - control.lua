@@ -5,7 +5,7 @@
 -- ============================================================
 
 
-reaper.SetExtState("GJS_MULTI", "Page", "1", true)
+reaper.SetExtState("GJS_X", "Page", "1", true)
 
 local script_path = debug.getinfo(1, "S").source:match("@?(.*[\\/])")
 
