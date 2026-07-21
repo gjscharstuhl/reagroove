@@ -135,20 +135,28 @@ local function drawscreen5(api)
 
                     -- Core onthoudt onmiddellijk welk slot actief is.
                     -- Eerst redrawen, daarna pas de REAPER-projecten wisselen.
-                    api.set_active_slot(this_slot)
-                    api.redraw()
+					api.set_active_slot(this_slot)
 
-                    reaper.defer(function()
-                        local success, error_message =
-                            slot_manager.load(
-                                this_slot
-                            )
+					-- Laat eerst de Launchpad volledig de nieuwe actieve
+					-- status tekenen voordat REAPER projecten gaat wisselen.
+					reaper.defer(function()
 
-                        if not success and error_message then
-                            show_error(error_message)
-                            api.redraw()
-                        end
-                    end)
+						api.redraw()
+
+						reaper.defer(function()
+
+							local success, error_message =
+								slot_manager.load(this_slot)
+
+							if not success and error_message then
+								show_error(error_message)
+							end
+
+							api.redraw()
+
+						end)
+
+					end)
                 end
             }
         )
