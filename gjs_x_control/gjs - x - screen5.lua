@@ -117,6 +117,13 @@ local function drawscreen5(api)
                 -- van drawpad is voltooid.
                 on_release = function()
                     if save_mode then
+                        local success, error_message =
+                            slot_manager.save(this_slot)
+
+                        if not success and error_message then
+                            show_error(error_message)
+                        end
+
                         delayed_redraw(api)
                         return
                     end
@@ -173,4 +180,3 @@ local function drawscreen5(api)
 end
 
 return drawscreen5
-

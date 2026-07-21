@@ -208,4 +208,142 @@ function M.load(slot, on_loaded)
     return true
 end
 
+
+-- ============================================================
+-- SAVE
+-- Slaat alle geopende projecttabs op in ~/jams/slot_N/ en schrijft
+-- slot_N.RPL. De bestaande load- en LED-logica blijft ongewijzigd.
+-- ============================================================
+
+local function slot_dir_path(slot)
+    return JAMS_DIR .. "/" .. slot_name(slot)
+end
+
+local function basename(path)
+    return path:match("([^/\\]+)$") or path
+end
+
+local function strip_extension(name)
+    return (name:gsub("%.[^%.]+$", ""))
+end
+
+local function safe_name(name)
+    name = name:gsub("[/\\:%*%?\"<>|]", "_")
+    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+
+    if name == "" then
+        return "project"
+    end
+
+    return name
+end
+
+function M.save(slot)
+    slot = valid_slot(slot)
+
+    if not slot or not JAMS_DIR then
+        return false,
+            "Ongeldig slot of HOME ontbreekt."
+    end
+
+    local projects = {}
+    local index = 0
+
+    while true do
+        local project, project_path =
+            reaper.EnumProjects(index, "")
+
+        if not project then
+            break
+        end
+
+        projects[#projects + 1] = {
+            project = project,
+            original_path = project_path or "",
+            number = index + 1
+        }
+
+        index = index + 1
+    end
+
+    if #projects == 0 then
+        return false,
+            "Er zijn geen geopende projecten om op te slaan."
+    end
+
+    local directory = slot_dir_path(slot)
+
+    reaper.RecursiveCreateDirectory(JAMS_DIR, 0)
+    reaper.RecursiveCreateDirectory(directory, 0)
+
+    local saved_paths = {}
+
+    reaper.PreventUIRefresh(1)
+
+    for project_index = 1, #projects do
+        local entry = projects[project_index]
+        local project_name
+
+        if entry.original_path ~= "" then
+            project_name = strip_extension(
+                basename(entry.original_path)
+            )
+        else
+            project_name = string.format(
+                "project-%02d",
+                entry.number
+            )
+        end
+
+        project_name = safe_name(project_name)
+
+        local destination = string.format(
+            "%s/%02d-%s.rpp",
+            directory,
+            entry.number,
+            project_name
+        )
+
+        reaper.Main_SaveProjectEx(
+            entry.project,
+            destination,
+            0
+        )
+
+        if not file_exists(destination) then
+            reaper.PreventUIRefresh(-1)
+            reaper.UpdateArrange()
+
+            return false,
+                "Kon project niet opslaan:\n"
+                .. destination
+        end
+
+        saved_paths[#saved_paths + 1] = destination
+    end
+
+    reaper.PreventUIRefresh(-1)
+    reaper.UpdateArrange()
+
+    local list_path = slot_rpl_path(slot)
+    local list_file = io.open(list_path, "w")
+
+    if not list_file then
+        return false,
+            "Kon RPL-bestand niet schrijven:\n"
+            .. list_path
+    end
+
+    for project_index = 1, #saved_paths do
+        list_file:write(
+            saved_paths[project_index],
+            "\n"
+        )
+    end
+
+    list_file:close()
+
+    return true
+end
+
 return M
