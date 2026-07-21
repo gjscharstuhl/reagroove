@@ -227,6 +227,71 @@ local function strip_extension(name)
     return (name:gsub("%.[^%.]+$", ""))
 end
 
+
+local function normalize_path(path)
+    return (path or ""):gsub("\\", "/")
+end
+
+local function copy_file(source_path, destination_path)
+    local source = io.open(source_path, "rb")
+
+    if not source then
+        return false
+    end
+
+    local destination = io.open(destination_path, "wb")
+
+    if not destination then
+        source:close()
+        return false
+    end
+
+    while true do
+        local chunk = source:read(1024 * 1024)
+
+        if not chunk then
+            break
+        end
+
+        destination:write(chunk)
+    end
+
+    source:close()
+    destination:close()
+
+    return true
+end
+
+local function split_filename(name)
+    local stem, extension = name:match("^(.*)(%.[^%.]*)$")
+
+    if not stem then
+        return name, ""
+    end
+
+    return stem, extension
+end
+
+local function unique_media_path(media_directory, filename, reserved)
+    local stem, extension = split_filename(filename)
+    local candidate = media_directory .. "/" .. filename
+    local counter = 1
+
+    while reserved[normalize_path(candidate)] do
+        candidate = string.format(
+            "%s/%s-%02d%s",
+            media_directory,
+            stem,
+            counter,
+            extension
+        )
+        counter = counter + 1
+    end
+
+    reserved[normalize_path(candidate)] = true
+    return candidate
+end
+
 local function safe_name(name)
     name = name:gsub("[/\\:%*%?\"<>|]", "_")
     name = name:gsub("^%s+", ""):gsub("%s+$", "")
@@ -272,16 +337,81 @@ function M.save(slot)
     end
 
     local directory = slot_dir_path(slot)
+    local media_directory = directory .. "/media"
 
     reaper.RecursiveCreateDirectory(JAMS_DIR, 0)
     reaper.RecursiveCreateDirectory(directory, 0)
+    reaper.RecursiveCreateDirectory(media_directory, 0)
 
     local saved_paths = {}
+    local copied_sources = {}
+    local reserved_destinations = {}
 
     reaper.PreventUIRefresh(1)
 
     for project_index = 1, #projects do
         local entry = projects[project_index]
+        local item_count = reaper.CountMediaItems(entry.project)
+
+        for item_index = 0, item_count - 1 do
+            local item = reaper.GetMediaItem(entry.project, item_index)
+            local take_count = reaper.CountTakes(item)
+
+            for take_index = 0, take_count - 1 do
+                local take = reaper.GetTake(item, take_index)
+
+                if take and not reaper.TakeIsMIDI(take) then
+                    local source = reaper.GetMediaItemTake_Source(take)
+                    local source_path = reaper.GetMediaSourceFileName(source, "")
+
+                    if source_path and source_path ~= "" then
+                        local source_key = normalize_path(source_path)
+                        local destination = copied_sources[source_key]
+
+                        if not destination then
+                            if source_key:sub(1, #normalize_path(media_directory) + 1)
+                                == normalize_path(media_directory) .. "/" then
+                                destination = source_path
+                            else
+                                destination = unique_media_path(
+                                    media_directory,
+                                    basename(source_path),
+                                    reserved_destinations
+                                )
+
+                                if not copy_file(source_path, destination) then
+                                    reaper.PreventUIRefresh(-1)
+                                    reaper.UpdateArrange()
+
+                                    return false,
+                                        "Kon media niet kopieren:\n"
+                                        .. source_path
+                                end
+                            end
+
+                            copied_sources[source_key] = destination
+                        end
+
+                        if normalize_path(destination) ~= source_key then
+                            local new_source =
+                                reaper.PCM_Source_CreateFromFile(destination)
+
+                            if not new_source then
+                                reaper.PreventUIRefresh(-1)
+                                reaper.UpdateArrange()
+
+                                return false,
+                                    "Kon gekopieerde media niet openen:\n"
+                                    .. destination
+                            end
+
+                            reaper.SetMediaItemTake_Source(take, new_source)
+                        end
+                    end
+                end
+            end
+        end
+
         local project_name
 
         if entry.original_path ~= "" then
