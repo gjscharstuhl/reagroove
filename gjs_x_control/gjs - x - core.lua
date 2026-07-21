@@ -107,8 +107,14 @@ local LP = {
     radio_groups = {},
     current_screen = 0,
     current_page = 1,
+
+    -- Alleen geldig tijdens deze REAPER/core-sessie.
+    -- Bij het opstarten van REAPER is er dus geen actief jamslot.
+    active_slot = nil,
+
     screen_state = {},
     last_sequence = 0,
+    ignore_midi_until = 0,
     running = true,
     screens = {},
     framebuffer = nil,
@@ -327,7 +333,6 @@ end
 
 local function send_pad_color(row, col, color)
     local red, green, blue = palette_to_rgb(color)
-
     -- While a matrix screen is being drawn, collect all pad colours first.
     if LP.building_matrix and LP.framebuffer then
         LP.framebuffer[row][col] = { red, green, blue }
@@ -349,6 +354,8 @@ local function send_pad_color(row, col, color)
     return true
 end
 
+
+
 local function send_pad_rgb(
     row,
     col,
@@ -356,6 +363,30 @@ local function send_pad_rgb(
     green,
     blue
 )
+    red   = math.max(0, math.min(127, math.floor(red or 0)))
+    green = math.max(0, math.min(127, math.floor(green or 0)))
+    blue  = math.max(0, math.min(127, math.floor(blue or 0)))
+
+    -- Tijdens schermopbouw: alleen in framebuffer schrijven.
+    -- draw_current_screen() verstuurt daarna de complete matrix in één keer.
+    if LP.building_matrix and LP.framebuffer then
+        LP.framebuffer[row][col] = {
+            red,
+            green,
+            blue
+        }
+        return true
+    end
+
+    -- Framebuffer actueel houden bij latere live-updates.
+    if LP.matrix_screen_active and LP.framebuffer then
+        LP.framebuffer[row][col] = {
+            red,
+            green,
+            blue
+        }
+    end
+
     if not Bridge then
         reaper.ShowConsoleMsg(
             "RGB mislukt: SysEx bridge niet geladen.\n"
@@ -1335,7 +1366,30 @@ local function process_midi_message(message)
     end
 end
 
+local function suspend_midi_input(seconds)
+    local duration = tonumber(seconds) or 0.5
+    duration = math.max(0, duration)
+
+    LP.ignore_midi_until =
+        reaper.time_precise() + duration
+end
+
+local function discard_recent_midi_input()
+    local sequence = reaper.MIDI_GetRecentInputEvent(0)
+
+    if sequence and sequence ~= 0 then
+        LP.last_sequence = sequence
+    end
+end
+
 local function process_midi_input()
+    if reaper.time_precise() < (LP.ignore_midi_until or 0) then
+        -- Verwijder events die tijdens een projectwissel binnenkomen.
+        -- Alleen vroeg returnen is niet genoeg: dan zouden de oude events
+        -- na de blokkering alsnog verwerkt worden.
+        discard_recent_midi_input()
+        return
+    end
     local events = {}
     local newest_sequence = nil
 
@@ -1382,6 +1436,15 @@ end
 
 local previous_play_state =
     reaper.GetPlayState()
+
+local function discard_existing_midi_events()
+    local sequence =
+        reaper.MIDI_GetRecentInputEvent(0)
+
+    if sequence and sequence > 0 then
+        LP.last_sequence = sequence
+    end
+end
 
 local function mainloop()
     if not LP.running then
@@ -1461,15 +1524,36 @@ function start(screens)
             return
         end
 
-        draw_current_screen()
+		draw_current_screen()
 
-        reaper.atexit(cleanup)
-        mainloop()
+		discard_existing_midi_events()
+
+		reaper.atexit(cleanup)
+		mainloop()
     end
 
     initialise_launchpad()
 end
 
+
+local function get_active_slot()
+    return LP.active_slot
+end
+
+local function set_active_slot(slot)
+    slot = tonumber(slot)
+
+    if slot == nil then
+        LP.active_slot = nil
+        return
+    end
+
+    slot = math.floor(slot)
+
+    if slot >= 1 and slot <= 56 then
+        LP.active_slot = slot
+    end
+end
 
 -- Public API for screen files
 API.COLOR = COLOR
@@ -1498,6 +1582,9 @@ API.draw_horizontal_fader = draw_horizontal_fader
 API.render_horizontal_fader = render_horizontal_fader
 API.transport = Transport
 API.get_current_screen = get_current_screen
+API.get_active_slot = get_active_slot
+API.set_active_slot = set_active_slot
+API.suspend_midi_input = suspend_midi_input
 API.get_page = get_page
 API.set_page = set_page
 API.pattern = Pattern
