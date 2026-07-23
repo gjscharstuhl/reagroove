@@ -22,6 +22,29 @@ local function loadscene(scene_nr)
     end
 
     API.dump(scene, "Scene " .. tostring(scene_nr))
+    
+    local patterns = scene.patternlist or {}
+
+
+    for track = 1, 8 do
+        local region = patterns[track]
+
+        if region then
+            API.set_track_and_region(
+                track,
+                region
+            )
+
+            API.pattern.select(
+                track,
+                region
+            )
+            reaper.ShowConsoleMsg("load track,region "..tostring(track)..","..tostring(region))
+        end
+    end
+
+
+    API.redraw()
 
 end
 
