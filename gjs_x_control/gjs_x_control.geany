@@ -26,14 +26,14 @@ long_line_behaviour=1
 long_line_column=72
 
 [files]
-current_page=7
+current_page=5
 FILE_NAME_0=1883;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20control.lua;0;4
-FILE_NAME_1=4885;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20core.lua;0;4
+FILE_NAME_1=6190;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20core.lua;0;4
 FILE_NAME_2=243;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20scene_api.lua;0;4
 FILE_NAME_3=336;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20screen2.lua;0;4
 FILE_NAME_4=1482;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20screen1.lua;0;4
-FILE_NAME_5=3577;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20pattern.lua;0;4
-FILE_NAME_6=907;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20screen4.lua;0;4
+FILE_NAME_5=372;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20pattern.lua;0;4
+FILE_NAME_6=654;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20screen4.lua;0;4
 
 [VTE]
 last_dir=/home/gj

@@ -10,7 +10,9 @@ local selections = {}
 -- Beperk de statuscontrole tot 20 keer per seconde.
 local UPDATE_INTERVAL = 0.05
 local last_update_time = 0
+local queued_scene_patterns = nil
 
+local SCENE_QUEUE_LOOKAHEAD = 1.0
 local lib = dofile(
     reaper.GetResourcePath() ..
     "/Scripts/gjs/gjs - lib.lua"
@@ -36,6 +38,53 @@ local function find_region(project, region_number)
     end
 
     return nil, nil
+end
+
+local function copy_patternlist(patternlist)
+    local copy = {}
+
+    for track = 1, 8 do
+        copy[track] = patternlist[track]
+    end
+
+    return copy
+end
+
+local function get_longest_current_pattern()
+    local longest = nil
+
+    for track, selection in pairs(selections) do
+        local project = reaper.EnumProjects(track)
+
+        if project
+        and selection
+        and selection.region then
+
+            local start_pos, end_pos =
+                find_region(
+                    project,
+                    selection.region
+                )
+
+            if start_pos and end_pos then
+                local length = end_pos - start_pos
+
+                if not longest
+                or length > longest.length then
+                    longest = {
+                        track = track,
+                        project = project,
+                        region = selection.region,
+                        start_pos = start_pos,
+                        end_pos = end_pos,
+                        length = length
+                    }
+                end
+            end
+        end
+    end
+
+    return longest
 end
 
 local function get_region_command(region_number)
@@ -163,6 +212,14 @@ function Pattern.select(track_number, region_number)
         end_pos,
         false
     )
+    
+    reaper.ShowConsoleMsg(
+    string.format(
+        "QUEUE track=%d region=%d\n",
+        track_number,
+        region_number
+    )
+)
 
 	-- SWS-regioncommando's werken op de actieve projecttab.
 	--reaper.SelectProjectInstance(project)
@@ -184,6 +241,108 @@ function Pattern.select(track_number, region_number)
     )
 
     return true
+end
+
+function Pattern.queue_scene(patternlist)
+    if type(patternlist) ~= "table" then
+        return false
+    end
+
+    queued_scene_patterns =
+        copy_patternlist(patternlist)
+
+    reaper.ShowConsoleMsg(
+        "Scene patterns queued.\n"
+    )
+
+    return true
+end
+
+function Pattern.queue_scene(patternlist)
+    if type(patternlist) ~= "table" then
+        return false
+    end
+
+    queued_scene_patterns =
+        copy_patternlist(patternlist)
+
+    reaper.ShowConsoleMsg(
+        "Scene patterns queued.\n"
+    )
+
+    return true
+end
+
+local function activate_queued_scene(api)
+    if not queued_scene_patterns then
+        return false
+    end
+
+    local patternlist = queued_scene_patterns
+    queued_scene_patterns = nil
+
+    for track = 1, 8 do
+        local region = patternlist[track]
+
+        if region then
+            api.set_track_and_region(
+                track,
+                region
+            )
+
+            Pattern.select(
+                track,
+                region
+            )
+        end
+    end
+
+    if api.redraw then
+        api.redraw()
+    end
+
+    reaper.ShowConsoleMsg(
+        "Queued scene activated.\n"
+    )
+
+    return true
+end
+
+local function update_queued_scene(api)
+    if not queued_scene_patterns then
+        return
+    end
+
+    local longest =
+        get_longest_current_pattern()
+
+    if not longest then
+        activate_queued_scene(api)
+        return
+    end
+
+    local play_state =
+        reaper.GetPlayStateEx(
+            longest.project
+        )
+
+    if (play_state & 1) == 0 then
+        activate_queued_scene(api)
+        return
+    end
+
+    local play_pos =
+        reaper.GetPlayPositionEx(
+            longest.project
+        )
+
+    local remaining =
+        longest.end_pos - play_pos
+
+    if remaining >= 0
+    and remaining <= SCENE_QUEUE_LOOKAHEAD then
+        activate_queued_scene(api)
+    end
 end
 
 local function current_region_number(project)
@@ -252,6 +411,8 @@ function Pattern.get_visual_state(track_number, region_number)
 end
 
 function Pattern.update(api)
+    update_queued_scene(api)
+
     if next(selections) == nil then
         return
     end

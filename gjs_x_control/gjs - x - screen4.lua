@@ -8,44 +8,35 @@ local API
 
 local function loadscene(scene_nr)
 
-    local scene = scene_api.GetScene(scene_nr)
-	if not API then
-		reaper.ShowConsoleMsg("geen API")
-		return
-	end
+    local scene =
+        scene_api.GetScene(scene_nr)
+
+    if not API then
+        reaper.ShowConsoleMsg("geen API\n")
+        return
+    end
+
     if not scene then
         API.dump(
-            "Scene " .. tostring(scene_nr) .. " bestaat niet.",
+            "Scene " ..
+            tostring(scene_nr) ..
+            " bestaat niet.",
             "Scene"
         )
         return
     end
 
-    API.dump(scene, "Scene " .. tostring(scene_nr))
-    
-    local patterns = scene.patternlist or {}
+    API.dump(
+        scene,
+        "Scene " .. tostring(scene_nr)
+    )
 
+    local patternlist =
+        scene.patternlist or {}
 
-    for track = 1, 8 do
-        local region = patterns[track]
-
-        if region then
-            API.set_track_and_region(
-                track,
-                region
-            )
-
-            API.pattern.select(
-                track,
-                region
-            )
-            reaper.ShowConsoleMsg("load track,region "..tostring(track)..","..tostring(region))
-        end
-    end
-
-
-    API.redraw()
-
+    API.pattern.queue_scene(
+        patternlist
+    )
 end
 
 
