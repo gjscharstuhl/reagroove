@@ -1,7 +1,69 @@
-local function drawscreen4(api)
-    local C = api.COLOR
+local scene_api = include("gjs - scene_api.lua")
 
-    -- Bovenste twee grijze rijen:
+local operation=1
+local active_scene=1
+
+local API
+
+
+local function loadscene(scene_nr)
+
+    local scene = scene_api.GetScene(scene_nr)
+	if not API then
+		reaper.ShowConsoleMsg("geen API")
+		return
+	end
+    if not scene then
+        API.dump(
+            "Scene " .. tostring(scene_nr) .. " bestaat niet.",
+            "Scene"
+        )
+        return
+    end
+
+    API.dump(scene, "Scene " .. tostring(scene_nr))
+
+end
+
+
+local function savescene(scene_nr)
+    scene_api.SaveScene(scene_nr)
+end
+	
+
+
+local function copytoplaylist(scene)
+	reaper.ShowConsoleMsg("hello from copy"..tostring(scene))
+end
+
+
+local operations = {
+    [1] = loadscene,
+    [2] = savescene,
+    [3] = copytoplaylist,
+}
+
+local function DoOperation(operation)
+    local f = operations[operation]
+    if f then
+        f(active_scene)
+    end
+end
+
+
+local function DoOperation(operation)
+    local f = operations[operation]
+    if f then
+        f(active_scene)
+    end
+end
+
+
+local function drawscreen4(api)
+	API=api
+    local C = api.COLOR
+	
+    -- Bovenste twee grijze rijen: sequenser zoals in screen 0
     -- samen één radiogroep van 16 pads.
     api.drawblock(
         8, 1,
@@ -16,7 +78,7 @@ local function drawscreen4(api)
         }
     )
 
-    -- Lichtblauwe selectorrij.
+    -- Lichtblauwe selectorrij. region selection (of iets anders)
     api.drawstrip(
         6, 1, 8,
         C.LIGHT_BLUE,
@@ -28,10 +90,10 @@ local function drawscreen4(api)
         }
     )
 
-    -- Groen toggle-block: rijen 3 t/m 5.
+    -- Groen toggle-block: playlist
     api.drawblock(
         5, 1,
-        3, 8,
+        4, 8,
         C.GREEN,
         api.MODE_TOGGLE,
         {
@@ -39,14 +101,40 @@ local function drawscreen4(api)
         }
     )
 
-    -- Geel toggle-block: onderste twee rijen.
+    -- Geel toggle-block: scene selectie
     api.drawblock(
-        2, 1,
-        1, 8,
+        3, 1,
+        2, 8,
         C.YELLOW,
-        api.MODE_TOGGLE,
+        api.MODE_RADIO,
         {
-            active_color = C.WHITE
+            selected_row = 3,
+            selected_col = 1,
+            active_color = C.WHITE,
+            on_press = function(pad)
+                
+                     active_scene=pad.col
+                     reaper.ShowConsoleMsg("active scene ="..tostring(active_scene))
+            
+            end
+        }
+    )
+    
+        -- Geel toggle-block: scene selectie
+   api.drawstrip(
+        1, 1, 8,
+        C.ORANGE,
+        api.MODE_RADIO,
+        {
+            group = "scenes_operations",
+            selected_row = 8,
+            selected_col = 1,
+            active_color = C.WHITE,
+             on_press = function(pad)
+                
+                     DoOperation(pad.col,active_scene)
+            
+            end
         }
     )
 end

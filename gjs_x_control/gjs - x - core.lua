@@ -2,11 +2,21 @@
 -- gjs - x - core.lua
 -- Shared Launchpad X API, state, input, output and screen system
 -- ============================================================
+local scene_api = include("gjs - scene_api.lua")
+
+------------------------------------------------------------
+-- Dependencies
+------------------------------------------------------------
+
 local Bridge = _G.GJS_X_BRIDGE
 local Transport = _G.GJS_X_TRANSPORT
 local Pattern = _G.GJS_X_PATTERN
 local API = {}
 local DEVICE_NAME = "X"
+
+------------------------------------------------------------
+-- Constants
+------------------------------------------------------------
 
 -- Interaction modes
 local MODE_NONE      = 0
@@ -77,7 +87,7 @@ local RGB = {
     OFF = {0,0,0}
 }
 
-function scale_rgb(color, factor)
+local function scale_rgb(color, factor)
 
     return {
         math.floor(color[1] * factor),
@@ -86,6 +96,10 @@ function scale_rgb(color, factor)
     }
 
 end
+
+------------------------------------------------------------
+-- Screen configuration
+------------------------------------------------------------
 
 -- Right sidebar, top to bottom: screen 0 through screen 7
 local SCREEN_CC = {
@@ -98,6 +112,10 @@ local SCREEN_CC = {
     [6] = 29,
     [7] = 19
 }
+
+------------------------------------------------------------
+-- State
+------------------------------------------------------------
 
 local LP = {
     input_index = nil,
@@ -126,6 +144,55 @@ local LP = {
     loop_overview_current_bar = nil,
     loop_overview_background = nil
 }
+
+------------------------------------------------------------
+-- Helpers
+------------------------------------------------------------
+
+local function msgbox(message, title)
+    reaper.ShowMessageBox(
+        tostring(message or ""),
+        title or "GJS X",
+        0
+    )
+end
+
+local function table_to_string(value, indent, visited)
+    indent = indent or 0
+    visited = visited or {}
+
+    if type(value) ~= "table" then
+        return tostring(value)
+    end
+
+    if visited[value] then
+        return "<recursive table>"
+    end
+
+    visited[value] = true
+
+    local lines = { "{" }
+    local padding = string.rep("  ", indent + 1)
+
+    for key, item in pairs(value) do
+        local item_text = table_to_string(item, indent + 1, visited)
+        lines[#lines + 1] = string.format(
+            "%s[%s] = %s,",
+            padding,
+            tostring(key),
+            item_text
+        )
+    end
+
+    lines[#lines + 1] = string.rep("  ", indent) .. "}"
+    visited[value] = nil
+
+    return table.concat(lines, "\n")
+end
+
+local function dump(value, title)
+    reaper.ShowConsoleMsg(table_to_string(value))
+end
 
 local function get_current_screen()
     return LP.current_screen
@@ -176,14 +243,21 @@ local function set_screen1_track_and_region(track, region)
     state.radio["pattern_track_" .. track] = row * 10 + region
 end
 
-local function set_screen0_track_and_region(track, region)
+local function set_track_and_region(track, region)
     local state = get_screen_state(0)
     state.radio["tracks"] = 10 + track
     state.radio["regions"] = 60 + region
 
     -- Keep screen 1 on the same track/region combination.
     set_screen1_track_and_region(track, region)
+    
+    --update scene
+     scene_api.set_pattern(track, region)
 end
+
+------------------------------------------------------------
+-- MIDI device setup
+------------------------------------------------------------
 
 local function find_midi_input(search_name)
     local wanted = search_name:lower()
@@ -311,6 +385,10 @@ local function connect_bridge_track()
 
     return true
 end
+
+------------------------------------------------------------
+-- Pad output and drawing
+------------------------------------------------------------
 
 local function palette_to_rgb(color)
     local rgb = PALETTE_RGB[color] or PALETTE_RGB[COLOR.OFF]
@@ -605,6 +683,10 @@ local function clearscreen()
     end
 end
 
+------------------------------------------------------------
+-- Faders and balance controls
+------------------------------------------------------------
+
 local function get_fader_state(group)
     local state = get_screen_state(LP.current_screen)
 
@@ -885,6 +967,10 @@ local function draw_horizontal_fader(
     render_horizontal_fader(group)
 end
 
+------------------------------------------------------------
+-- Pad interaction
+------------------------------------------------------------
+
 local function handle_pad_press(pad, velocity)
     if pad.mode == MODE_NONE then
         return
@@ -1011,6 +1097,10 @@ local function handle_pad_release(pad)
         pad.on_release(pad)
     end
 end
+
+------------------------------------------------------------
+-- Loop overview
+------------------------------------------------------------
 
 local LOOP_OVERVIEW_UPDATE_INTERVAL = 0.01
 local LOOP_LENGTH_RGB = { 83, 20, 20 } -- halfway between grey and red
@@ -1236,6 +1326,10 @@ local function update_loop_overview()
         tostring(length) .. ":" .. tostring(current_bar or 0)
 end
 
+------------------------------------------------------------
+-- Screens
+------------------------------------------------------------
+
 local function draw_sidebar()
     for screen = 0, 7 do
         local color = COLOR.GREY
@@ -1321,6 +1415,10 @@ local function select_screen(screen)
     draw_current_screen()
     reaper.ShowConsoleMsg("Screen " .. screen .. "\n")
 end
+
+------------------------------------------------------------
+-- MIDI input processing
+------------------------------------------------------------
 
 local function process_midi_message(message)
     if not message or #message < 3 then
@@ -1434,6 +1532,10 @@ local function process_midi_input()
     end
 end
 
+------------------------------------------------------------
+-- Main loop
+------------------------------------------------------------
+
 local previous_play_state =
     reaper.GetPlayState()
 
@@ -1482,7 +1584,11 @@ local function mainloop()
 end
 
 
-function start(screens)
+------------------------------------------------------------
+-- Startup
+------------------------------------------------------------
+
+local function start(screens)
     if not initialise_x() then
         return
     end
@@ -1536,6 +1642,10 @@ function start(screens)
 end
 
 
+------------------------------------------------------------
+-- Jam slot state
+------------------------------------------------------------
+
 local function get_active_slot()
     return LP.active_slot
 end
@@ -1555,7 +1665,13 @@ local function set_active_slot(slot)
     end
 end
 
--- Public API for screen files
+------------------------------------------------------------
+-- API
+------------------------------------------------------------
+
+API.msgbox = msgbox
+API.dump = dump
+
 API.COLOR = COLOR
 API.SELECT_COLOR = SELECT_COLOR
 API.MODE_NONE = MODE_NONE
@@ -1570,7 +1686,7 @@ API.drawblock = drawblock
 API.draw_loop_overview = draw_loop_overview
 API.draw_vertical_fader = draw_vertical_fader
 API.get_screen_state = get_screen_state
-API.set_screen0_track_and_region = set_screen0_track_and_region
+API.set_track_and_region = set_track_and_region
 API.set_screen1_track_and_region = set_screen1_track_and_region
 API.send_pad_color = send_pad_color
 API.select_screen = select_screen
@@ -1588,4 +1704,5 @@ API.suspend_midi_input = suspend_midi_input
 API.get_page = get_page
 API.set_page = set_page
 API.pattern = Pattern
+
 return API

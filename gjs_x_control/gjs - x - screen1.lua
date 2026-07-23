@@ -5,6 +5,7 @@
 -- Elke rij is één track/projecttab.
 -- Elke kolom is één region.
 -- ============================================================
+local scene_api = include("gjs - scene_api.lua")
 
 return function(api)
     local C = api.COLOR
@@ -43,7 +44,7 @@ return function(api)
                     -- Bewaar de gekozen track en region voor screen 0.
                     -- Trackselector: onderste rij.
                     -- Regionselector: derde rij van boven (row 6).
-                    api.set_screen0_track_and_region(
+                    api.set_track_and_region(
                         track,
                         region
                     )

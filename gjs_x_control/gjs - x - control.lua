@@ -1,77 +1,89 @@
 -- ============================================================
 -- gjs - x - control.lua
 -- Main entry point
--- Keep this file in the same folder as core.lua and screen*.lua
 -- ============================================================
-
 
 reaper.SetExtState("GJS_X", "Page", "1", true)
 
-local script_path = debug.getinfo(1, "S").source:match("@?(.*[\\/])")
+------------------------------------------------------------
+-- Global include()
+------------------------------------------------------------
 
-if not script_path then
-    reaper.ShowMessageBox(
-        "Kon de map van het script niet bepalen.",
-        "Launchpad X",
-        0
-    )
-    return
-end
+_G.__modules = {}
+_G.__include_cache = {}
+_G.include = function(file)
 
-local function load_file(name)
-    local full_path = script_path .. name
-    local ok, result = pcall(dofile, full_path)
+    if __include_cache[file] then
+        return __include_cache[file]
+    end
+
+    local caller = debug.getinfo(2, "S").source:sub(2)
+    local dir = caller:match("(.*[\\/])") or ""
+    local path = dir .. file
+
+    local ok, module = pcall(dofile, path)
 
     if not ok then
         reaper.ShowMessageBox(
-            "Fout bij laden van:\n" .. full_path .. "\n\n" .. tostring(result),
+            "Error loading:\n\n" ..
+            path ..
+            "\n\n" ..
+            tostring(module),
             "Launchpad X",
             0
         )
         return nil
     end
 
-    return result
+    __include_cache[file] = module
+
+    return module
+
 end
 
+------------------------------------------------------------
+-- Modules
+------------------------------------------------------------
 
--- SysEx-bridge initialiseren
-local bridge = load_file("gjs - x - bridge.lua")
+local bridge = include("gjs - x - bridge.lua")
+if not bridge then return end
 bridge.init()
 
--- Beschikbaar maken voor core.lua
 _G.GJS_X_BRIDGE = bridge
 
-local transport =
-    load_file("gjs - x - transport.lua")
-
-if not transport then
-    return
-end
-
+local transport = include("gjs - x - transport.lua")
+if not transport then return end
 _G.GJS_X_TRANSPORT = transport
 
-local pattern =
-    load_file("gjs - x - pattern.lua")
-
-if not pattern then
-    return
-end
-
+local pattern = include("gjs - x - pattern.lua")
+if not pattern then return end
 _G.GJS_X_PATTERN = pattern
 
-local core = load_file("gjs - x - core.lua")
+local core = include("gjs - x - core.lua")
 if not core then return end
+
+------------------------------------------------------------
+-- Screens
+------------------------------------------------------------
 
 local screens = {}
 
 for screen = 0, 7 do
-    local module = load_file(
+
+    local module = include(
         string.format("gjs - x - screen%d.lua", screen)
     )
 
-    if not module then return end
+    if not module then
+        return
+    end
+
     screens[screen] = module
+
 end
+
+------------------------------------------------------------
+-- Start
+------------------------------------------------------------
 
 core.start(screens)
