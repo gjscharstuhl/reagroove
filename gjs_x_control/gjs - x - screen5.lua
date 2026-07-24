@@ -1,9 +1,17 @@
--- SCREEN5_LOAD_FAST_V11
+-- SCREEN5_DRAWBLOCK_RGB_V12
 -- ============================================================
--- Fix:
--- Laden gebeurt op on_release, niet op on_press.
--- Daardoor kan de core het pad niet na de projectwissel alsnog
--- naar OFF terugzetten.
+-- Rijen 8 t/m 2: 56 jam-slots.
+-- Linksboven = slot 1, rechtsonder = slot 56.
+--
+-- Load mode:
+--   leeg     = donkerblauw
+--   bestaand = felblauw
+--
+-- Save mode:
+--   leeg     = donkeroranje
+--   bestaand = feloranje
+--
+-- Actief geladen slot = wit.
 -- ============================================================
 
 local script_path = debug.getinfo(1, "S").source:sub(2)
@@ -14,6 +22,7 @@ local slot_manager = dofile(
 )
 
 local MODE_NOTE = 11
+
 local HOME = os.getenv("HOME")
 local JAMS_DIR = HOME and (HOME .. "/jams") or nil
 
@@ -25,12 +34,17 @@ local SAVE_FULL  = { 127, 35, 0 }
 
 local ACTIVE_RGB = { 127, 127, 127 }
 
-local function slot_to_pad(slot)
-    local zero = slot - 1
+------------------------------------------------------------
+-- Pad/slot conversion
+------------------------------------------------------------
 
-    return 8 - math.floor(zero / 8),
-           (zero % 8) + 1
+local function pad_to_slot(row, col)
+    return ((8 - row) * 8) + col
 end
+
+------------------------------------------------------------
+-- Helpers
+------------------------------------------------------------
 
 local function delayed_redraw(api)
     reaper.defer(function()
@@ -77,100 +91,114 @@ local function show_error(message)
     )
 end
 
+------------------------------------------------------------
+-- Screen
+------------------------------------------------------------
+
 local function drawscreen5(api)
     local C = api.COLOR
     local state = api.get_screen_state(5)
-    local save_mode = state.toggle[MODE_NOTE] == true
-    local existing = scan_existing_slots()
-    local active_slot = api.get_active_slot()
 
-    local function rgb_for_slot(slot)
+    local save_mode =
+        state.toggle[MODE_NOTE] == true
+
+    local existing =
+        scan_existing_slots()
+
+    local active_slot =
+        api.get_active_slot()
+
+    --------------------------------------------------------
+    -- Slot background
+    --------------------------------------------------------
+
+    local function slot_background_rgb(row, col)
+        local slot = pad_to_slot(row, col)
+
         if slot == active_slot then
             return ACTIVE_RGB
         end
 
         if save_mode then
-            return existing[slot] and SAVE_FULL or SAVE_EMPTY
+            return existing[slot]
+                and SAVE_FULL
+                or SAVE_EMPTY
         end
 
-        return existing[slot] and LOAD_FULL or LOAD_EMPTY
+        return existing[slot]
+            and LOAD_FULL
+            or LOAD_EMPTY
     end
 
-    for slot = 1, 56 do
-        local this_slot = slot
-        local row, col = slot_to_pad(this_slot)
+    --------------------------------------------------------
+    -- Slot action
+    --------------------------------------------------------
 
-        api.drawpad(
-            row,
-            col,
-            C.OFF,
-            api.MODE_HIGHLIGHT,
-            {
-                active_color = C.WHITE,
+    local function handle_slot_release(pad)
+        local slot =
+            pad_to_slot(pad.row, pad.col)
 
-                -- Alleen visuele highlight tijdens indrukken.
-                on_press = function()
-                end,
+        if save_mode then
+            local success, error_message =
+                slot_manager.save(slot)
 
-                -- Cruciale fix:
-                -- start het laden pas nadat de release-afhandeling
-                -- van drawpad is voltooid.
-                on_release = function()
-                    if save_mode then
-                        local success, error_message =
-                            slot_manager.save(this_slot)
+            if not success and error_message then
+                show_error(error_message)
+            end
 
-                        if not success and error_message then
-                            show_error(error_message)
-                        end
+            delayed_redraw(api)
+            return
+        end
 
-                        delayed_redraw(api)
-                        return
-                    end
+        if not slot_manager.can_load(slot) then
+            delayed_redraw(api)
+            return
+        end
 
-                    if not slot_manager.can_load(this_slot) then
-                        delayed_redraw(api)
-                        return
-                    end
+        -- Meteen onthouden welk slot actief wordt.
+        api.set_active_slot(slot)
 
-                    -- Core onthoudt onmiddellijk welk slot actief is.
-                    -- Eerst redrawen, daarna pas de REAPER-projecten wisselen.
-					api.set_active_slot(this_slot)
+        -- Eerst de nieuwe actieve status tekenen.
+        -- Daarna pas de REAPER-projecten wisselen.
+        reaper.defer(function()
+            api.redraw()
 
-					-- Laat eerst de Launchpad volledig de nieuwe actieve
-					-- status tekenen voordat REAPER projecten gaat wisselen.
-					reaper.defer(function()
+            reaper.defer(function()
+                local success, error_message =
+                    slot_manager.load(slot)
 
-						api.redraw()
-
-						reaper.defer(function()
-
-							local success, error_message =
-								slot_manager.load(this_slot)
-
-							if not success and error_message then
-								show_error(error_message)
-							end
-
-							api.redraw()
-
-						end)
-
-					end)
+                if not success and error_message then
+                    show_error(error_message)
                 end
-            }
-        )
 
-        local rgb = rgb_for_slot(this_slot)
-
-        api.send_pad_rgb(
-            row,
-            col,
-            rgb[1],
-            rgb[2],
-            rgb[3]
-        )
+                api.redraw()
+            end)
+        end)
     end
+
+    --------------------------------------------------------
+    -- Slots 1 t/m 56
+    --------------------------------------------------------
+
+    api.drawblock(
+        8,
+        1,
+        2,
+        8,
+        C.OFF,
+        api.MODE_HIGHLIGHT,
+        {
+            background_rgb = slot_background_rgb,
+            active_rgb = ACTIVE_RGB,
+
+            -- De actie gebeurt pas bij loslaten.
+            on_release = handle_slot_release
+        }
+    )
+
+    --------------------------------------------------------
+    -- Load/save toggle
+    --------------------------------------------------------
 
     api.drawpad(
         1,

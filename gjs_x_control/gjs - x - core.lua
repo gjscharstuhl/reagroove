@@ -62,7 +62,8 @@ local PALETTE_RGB = {
     [COLOR.BLUE]         = { 0,   0,   127 },
     [COLOR.PINK]         = { 127, 30,  90  },
     [COLOR.MAGENTA]      = { 127, 0,   80  },
-    [COLOR.PURPLE]       = { 60,  0,   127 }
+    [COLOR.PURPLE]       = { 60,  0,   127 },
+    
 }
 
 local RGB = {
@@ -506,6 +507,39 @@ local function valid_position(row, col)
     return row >= 1 and row <= 8 and col >= 1 and col <= 8
 end
 
+local function draw_pad_state(pad)
+    if pad.active then
+        send_pad_color(
+            pad.row,
+            pad.col,
+            pad.active_color
+        )
+        return
+    end
+
+    local rgb = pad.background_rgb
+
+    if type(rgb) == "function" then
+        rgb = rgb(pad.row, pad.col)
+    end
+
+    if rgb then
+        send_pad_rgb(
+            pad.row,
+            pad.col,
+            rgb[1],
+            rgb[2],
+            rgb[3]
+        )
+    else
+        send_pad_color(
+            pad.row,
+            pad.col,
+            pad.color
+        )
+    end
+end
+
 local function drawpad(row, col, color, mode, options)
     mode = mode or MODE_NONE
     options = options or {}
@@ -533,6 +567,8 @@ local function drawpad(row, col, color, mode, options)
 
 		active_color =
 			options.active_color or SELECT_COLOR,
+		background_rgb =
+			options.background_rgb,
 
 		group = options.group,
 		active = false,
@@ -583,14 +619,7 @@ local function drawpad(row, col, color, mode, options)
         LP.radio_groups[pad.group] = note
     end
 
-    local visible_color =
-        pad.active and pad.active_color or pad.color
-
-    send_pad_color(
-        row,
-        col,
-        visible_color
-    )
+	draw_pad_state(pad)
 end
 
 local function drawstrip(row, col_begin, col_end, color, mode, options)
@@ -619,6 +648,21 @@ local function drawstrip(row, col_begin, col_end, color, mode, options)
             on_press = options.on_press,
             on_release = options.on_release
         })
+        local rgb = options.background_rgb
+
+		if type(rgb) == "function" then
+			rgb = rgb(row, col)
+		end
+
+		if rgb then
+			send_pad_rgb(
+				row,
+				col,
+				rgb[1],
+				rgb[2],
+				rgb[3]
+			)
+		end
     end
 end
 
@@ -660,14 +704,29 @@ local function drawblock(
             local selected =
                 options.selected_row == row and
                 options.selected_col == col
+				drawpad(row, col, color, mode, {
+					active_color = options.active_color,
+					background_rgb = options.background_rgb,
+					group = group,
+					active = selected,
+					on_press = options.on_press,
+					on_release = options.on_release
+				})
+            local rgb = options.background_rgb
 
-            drawpad(row, col, color, mode, {
-                active_color = options.active_color,
-                group = group,
-                active = selected,
-                on_press = options.on_press,
-                on_release = options.on_release
-            })
+			if type(rgb) == "function" then
+				rgb = rgb(row, col)
+			end
+
+			if rgb then
+				send_pad_rgb(
+					row,
+					col,
+					rgb[1],
+					rgb[2],
+					rgb[3]
+				)
+			end
         end
     end
 end
@@ -983,30 +1042,31 @@ local function handle_pad_press(pad, velocity)
             pad.active_color
         )
 
-    elseif pad.mode == MODE_RADIO then
-        local group = pad.group
+	elseif pad.mode == MODE_RADIO then
+		local group = pad.group
 
-        if group == nil then
-            return
-        end
+		if group == nil then
+			return
+		end
 
-        local previous_note =
-            LP.radio_groups[group]
+		local previous_note =
+			LP.radio_groups[group]
 
-        if previous_note
-           and LP.pads[previous_note] then
+		if previous_note
+		   and LP.pads[previous_note] then
 
-            local previous =
-                LP.pads[previous_note]
+			local previous =
+				LP.pads[previous_note]
 
-            previous.active = false
+			previous.active = false
+			draw_pad_state(previous)
+		end
 
-            send_pad_color(
-                previous.row,
-                previous.col,
-                previous.color
-            )
-        end
+		pad.active = true
+		LP.radio_groups[group] = pad.note
+
+		save_pad_state(pad)
+		draw_pad_state(pad)
 
         pad.active = true
         LP.radio_groups[group] = pad.note
