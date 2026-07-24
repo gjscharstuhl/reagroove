@@ -1066,18 +1066,8 @@ local function handle_pad_press(pad, velocity)
 		LP.radio_groups[group] = pad.note
 
 		save_pad_state(pad)
+
 		draw_pad_state(pad)
-
-        pad.active = true
-        LP.radio_groups[group] = pad.note
-
-        save_pad_state(pad)
-
-        send_pad_color(
-            pad.row,
-            pad.col,
-            pad.active_color
-        )
 
     elseif pad.mode == MODE_TOGGLE then
         pad.active = not pad.active

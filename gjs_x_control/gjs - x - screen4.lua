@@ -7,17 +7,112 @@ local MODE_COPY = 3
 local operation = MODE_LOAD
 local active_scene = 1
 
-local SCENE_EMPTY  = { 10, 3, 0 }
-local SCENE_SAVED  = { 127, 35, 0 }
-local SCENE_ACTIVE = { 127, 127, 127 }
+local pending_scene = nil
+local pending_targets = nil
+local pending_generation = 0
+
+local SCENE_EMPTY   = { 10, 3, 0 }
+local SCENE_SAVED   = { 127, 35, 0 }
+local SCENE_PENDING = { 50, 50, 127 }
+local SCENE_ACTIVE  = { 127, 127, 127 }
 
 local function pad_to_scene(row, col)
     return ((3 - row) * 8) + col
 end
 
+local function scene_to_pad(scene_nr)
+    if scene_nr <= 8 then
+        return 3, scene_nr
+    end
+
+    return 2, scene_nr - 8
+end
+
 local function show_error(message)
     reaper.ShowConsoleMsg(
         "Screen 4: " .. tostring(message) .. "\n"
+    )
+end
+
+local function pending_scene_has_arrived(api)
+    if not pending_scene
+    or type(pending_targets) ~= "table" then
+        return false
+    end
+
+    if not api.pattern
+    or type(api.pattern.get_visual_state) ~= "function" then
+        return false
+    end
+
+    for track = 1, 8 do
+        local region = pending_targets[track]
+
+        if region then
+            local visual_state =
+                api.pattern.get_visual_state(
+                    track,
+                    region
+                )
+
+            if visual_state == "queued" then
+                return false
+            end
+        end
+    end
+
+    return true
+end
+
+local function start_pending_watch(api)
+    pending_generation = pending_generation + 1
+    local generation = pending_generation
+    local first_cycle = true
+
+    local function watch()
+        if generation ~= pending_generation then
+            return
+        end
+
+        if not pending_scene then
+            return
+        end
+
+        -- Geef Pattern.update eerst minstens één defer-cyclus om de
+        -- aangevraagde regions als queued te registreren.
+        if first_cycle then
+            first_cycle = false
+            reaper.defer(watch)
+            return
+        end
+
+        if pending_scene_has_arrived(api) then
+            active_scene = pending_scene
+            pending_scene = nil
+            pending_targets = nil
+
+            if api.get_current_screen() == 4 then
+                api.redraw()
+            end
+
+            return
+        end
+
+        reaper.defer(watch)
+    end
+
+    reaper.defer(watch)
+end
+
+local function show_pending_scene(api, scene_nr)
+    local row, col = scene_to_pad(scene_nr)
+
+    api.send_pad_rgb(
+        row,
+        col,
+        SCENE_PENDING[1],
+        SCENE_PENDING[2],
+        SCENE_PENDING[3]
     )
 end
 
@@ -30,20 +125,42 @@ local function load_scene(api, scene_nr)
         return false
     end
 
+    local targets = {}
+
     for track = 1, 8 do
         local region = scene_api.get_pattern(track)
 
         if region then
+            targets[track] = region
+
             api.set_track_and_region(track, region)
             api.pattern.select(track, region)
         end
     end
 
+    pending_scene = scene_nr
+    pending_targets = targets
+
+    -- De radio-afhandeling heeft de ingedrukte pad zojuist wit gemaakt.
+    -- Schrijf hem hier direct blauw overheen. De watcher maakt hem pas
+    -- wit wanneer alle patterns werkelijk hun doelregion hebben bereikt.
+    show_pending_scene(api, scene_nr)
+    start_pending_watch(api)
+
     return true
 end
 
 local function save_scene(scene_nr)
-    return scene_api.SaveScene(scene_nr)
+    local success = scene_api.SaveScene(scene_nr)
+
+    if success then
+        pending_generation = pending_generation + 1
+        pending_scene = nil
+        pending_targets = nil
+        active_scene = scene_nr
+    end
+
+    return success
 end
 
 local function copy_scene_to_playlist(scene_nr)
@@ -63,7 +180,10 @@ local function do_operation(api, scene_nr)
         return copy_scene_to_playlist(scene_nr)
     end
 
-    show_error("onbekende operation mode " .. tostring(operation))
+    show_error(
+        "onbekende operation mode " ..
+        tostring(operation)
+    )
     return false
 end
 
@@ -118,7 +238,9 @@ local function drawscreen4(api)
     local function scene_background_rgb(row, col)
         local scene_nr = pad_to_scene(row, col)
 
-        if scene_nr == active_scene then
+        if scene_nr == pending_scene then
+            return SCENE_PENDING
+        elseif scene_nr == active_scene then
             return SCENE_ACTIVE
         elseif scene_api.GetScene(scene_nr) then
             return SCENE_SAVED
@@ -144,13 +266,19 @@ local function drawscreen4(api)
                     pad_to_scene(pad.row, pad.col)
 
                 if do_operation(api, scene_nr) then
-                    active_scene = scene_nr
+                    if operation ~= MODE_LOAD then
+                        api.redraw()
+                    end
                 end
-
-                api.redraw()
             end
         }
     )
+
+    -- Bij een redraw terwijl een scene nog pending is, overschrijft
+    -- MODE_RADIO de geselecteerde pad met wit. Zet hem daarna weer blauw.
+    if pending_scene then
+        show_pending_scene(api, pending_scene)
+    end
 
     api.drawstrip(
         1, 1, 8,
