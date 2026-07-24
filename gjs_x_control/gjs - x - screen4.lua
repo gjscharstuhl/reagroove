@@ -129,7 +129,8 @@ local function show_playlist_pad(api, slot, rgb)
 end
 
 local function redraw_pending_overlays(api)
-    if pending_scene then
+    if operation ~= MODE_PLAY
+    and pending_scene then
         show_pending_scene(api, pending_scene)
     end
 
@@ -141,7 +142,8 @@ local function redraw_pending_overlays(api)
         )
     end
 
-    if playlist_pending_slot then
+    if operation ~= MODE_PLAY
+    and playlist_pending_slot then
         show_playlist_pad(
             api,
             playlist_pending_slot,
@@ -498,10 +500,11 @@ local function drawscreen4(api)
     local function playlist_background_rgb(row, col)
         local slot = pad_to_playlist_slot(row, col)
 
-        if slot == playlist_pending_slot then
-            return PLAYLIST_PENDING
-        elseif slot == playlist_active_slot then
+        if slot == playlist_active_slot then
             return PLAYLIST_ACTIVE
+        elseif operation ~= MODE_PLAY
+        and slot == playlist_pending_slot then
+            return PLAYLIST_PENDING
         elseif playlist_api.IsFilled(slot) then
             return PLAYLIST_FILLED
         end
@@ -540,14 +543,25 @@ local function drawscreen4(api)
 
     if operation == MODE_COPY then
         displayed_scene = selected_copy_scene
-    elseif operation ~= MODE_PLAY then
+    elseif operation == MODE_PLAY then
+        -- In PLAY volgt de witte scene-indicatie uitsluitend
+        -- het werkelijk actieve playlistslot.
+        if playlist_active_slot then
+            displayed_scene =
+                playlist_api.Get(playlist_active_slot)
+        end
+    else
         displayed_scene = active_scene
     end
 
     local active_row
     local active_col
 
-    if displayed_scene then
+    if displayed_scene
+    and operation ~= MODE_PLAY then
+        -- Buiten PLAY blijft de bestaande radioselectie actief.
+        -- In PLAY wordt wit uitsluitend via background_rgb getekend,
+        -- zodat er geen kortstondige radio-highlight kan knipperen.
         active_row, active_col =
             scene_to_pad(displayed_scene)
     end
@@ -555,7 +569,8 @@ local function drawscreen4(api)
     local function scene_background_rgb(row, col)
         local scene_nr = pad_to_scene(row, col)
 
-        if scene_nr == pending_scene then
+        if operation ~= MODE_PLAY
+        and scene_nr == pending_scene then
             return SCENE_PENDING
         end
 
@@ -571,8 +586,17 @@ local function drawscreen4(api)
             return SCENE_EMPTY
         end
 
-        if operation ~= MODE_PLAY
-        and scene_nr == active_scene then
+        if operation == MODE_PLAY then
+            if scene_nr == displayed_scene then
+                return SCENE_ACTIVE
+            elseif scene_api.GetScene(scene_nr) then
+                return SCENE_SAVED
+            end
+
+            return SCENE_EMPTY
+        end
+
+        if scene_nr == active_scene then
             return SCENE_ACTIVE
         elseif scene_api.GetScene(scene_nr) then
             return SCENE_SAVED
