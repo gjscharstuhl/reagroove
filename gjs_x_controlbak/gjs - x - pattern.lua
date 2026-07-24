@@ -22,7 +22,6 @@ local lib = dofile(
 )
 
 local command_cache = {}
-local current_region_number
 
 local function find_region(project, region_number)
     local _, markers, regions =
@@ -167,34 +166,9 @@ function Pattern.select(track_number, region_number)
         return false
     end
 
-    local play_state =
-        reaper.GetPlayStateEx(project)
-
-    local play_pos =
-        reaper.GetPlayPositionEx(project)
-
-    local current_region =
-        current_region_number
-        and current_region_number(project)
-        or nil
-
-    -- Wanneer dezelfde region opnieuw wordt gequeued, is die region
-    -- op dit moment nog actief. Zonder extra status zou de playlist
-    -- deze stap onmiddellijk als aangekomen beschouwen.
-    --
-    -- Daarom wachten we bij een herhaling tot de playpositie werkelijk
-    -- over de regiongrens is gewrapt.
-    local wait_for_wrap =
-        (play_state & 1) ~= 0
-        and current_region == region_number
-
     selections[track_number] = {
         region = region_number,
-        visual_state = wait_for_wrap
-            and "queued"
-            or nil,
-        wait_for_wrap = wait_for_wrap,
-        queue_play_pos = play_pos
+        visual_state = nil
     }
 
     last_update_time = 0
@@ -339,7 +313,7 @@ local function update_queued_scene(api)
     end
 end
 
-current_region_number = function(project)
+local function current_region_number(project)
     local pos = reaper.GetPlayPositionEx(project)
 
     local _, num_markers, num_regions =
@@ -380,22 +354,7 @@ local function update_selection(track_number, selection)
             current_region_number(project)
 
         if current_region == selection.region then
-            if selection.wait_for_wrap then
-                local play_pos =
-                    reaper.GetPlayPositionEx(project)
-
-                -- Dezelfde region is opnieuw gequeued. Hij wordt pas actief
-                -- nadat de transportpositie van het einde terug naar het
-                -- begin van de region is gesprongen.
-                if play_pos < selection.queue_play_pos then
-                    selection.wait_for_wrap = false
-                    new_state = "active"
-                else
-                    new_state = "queued"
-                end
-            else
-                new_state = "active"
-            end
+            new_state = "active"
         else
             new_state = "queued"
         end
