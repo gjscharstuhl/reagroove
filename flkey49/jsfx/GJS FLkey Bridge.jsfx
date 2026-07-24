@@ -1,0 +1,144 @@
+desc:GJS FLkey Bridge
+tags:midi flkey novation gmem bridge
+
+options:gmem=GJS_FLKEY_V1
+
+slider1:0<0,9,1>Last command
+slider2:0<0,2147483647,1>Last request
+slider3:0<0,127,1>Data A
+slider4:0<0,127,1>Data B
+slider5:0<0,127,1>Data C
+slider6:0<0,127,1>Data D
+
+@init
+buf = 10000;
+
+PRODUCT_ID = $x11;
+
+CMD_PAD_RGB = 1;
+CMD_CC_RGB = 2;
+CMD_DAW_MODE = 3;
+CMD_LAYOUT = 4;
+CMD_CLEAR_DISPLAY = 5;
+CMD_PARAMETER_NAME = 6;
+CMD_PARAMETER_VALUE = 7;
+CMD_MESSAGE = 8;
+CMD_TEMPO = 9;
+
+TARGET_NOTE_RGB = $x43;
+TARGET_CC_RGB = $x53;
+
+last_request = -1;
+
+function send3(status, data1, data2)
+(
+    midisend(0, status, data1, data2);
+);
+
+function send_rgb(target, index, red, green, blue)
+local(n)
+(
+    n = 0;
+
+    buf[n] = $xF0; n += 1;
+    buf[n] = $x00; n += 1;
+    buf[n] = $x20; n += 1;
+    buf[n] = $x29; n += 1;
+    buf[n] = $x02; n += 1;
+    buf[n] = PRODUCT_ID; n += 1;
+    buf[n] = $x01; n += 1;
+
+    buf[n] = target; n += 1;
+    buf[n] = max(0, min(127, floor(index))); n += 1;
+    buf[n] = max(0, min(127, floor(red))); n += 1;
+    buf[n] = max(0, min(127, floor(green))); n += 1;
+    buf[n] = max(0, min(127, floor(blue))); n += 1;
+
+    buf[n] = $xF7; n += 1;
+
+    midisend_buf(0, buf, n);
+);
+
+function clear_display()
+local(n)
+(
+    n = 0;
+
+    buf[n] = $xF0; n += 1;
+    buf[n] = $x00; n += 1;
+    buf[n] = $x20; n += 1;
+    buf[n] = $x29; n += 1;
+    buf[n] = $x02; n += 1;
+    buf[n] = PRODUCT_ID; n += 1;
+    buf[n] = $x06; n += 1;
+    buf[n] = $xF7; n += 1;
+
+    midisend_buf(0, buf, n);
+);
+
+function send_tempo(value)
+local(n, hi, lo)
+(
+    value = max(0, min(16383, floor(value)));
+    hi = floor(value / 128);
+    lo = value % 128;
+
+    n = 0;
+
+    buf[n] = $xF0; n += 1;
+    buf[n] = $x00; n += 1;
+    buf[n] = $x20; n += 1;
+    buf[n] = $x29; n += 1;
+    buf[n] = $x02; n += 1;
+    buf[n] = PRODUCT_ID; n += 1;
+    buf[n] = $x0A; n += 1;
+    buf[n] = hi; n += 1;
+    buf[n] = lo; n += 1;
+    buf[n] = $xF7; n += 1;
+
+    midisend_buf(0, buf, n);
+);
+
+@block
+request = floor(gmem[0]);
+
+request > 0 && request != last_request ? (
+    command = floor(gmem[1]);
+    a = floor(gmem[2]);
+    b = floor(gmem[3]);
+    c = floor(gmem[4]);
+    d = floor(gmem[5]);
+
+    command == CMD_PAD_RGB ? (
+        send_rgb(TARGET_NOTE_RGB, a, b, c, d);
+
+    ) : command == CMD_CC_RGB ? (
+        send_rgb(TARGET_CC_RGB, a, b, c, d);
+
+    ) : command == CMD_DAW_MODE ? (
+        a > 0 ? send3($x9F, $x0C, $x7F)
+              : send3($x9F, $x0C, $x00);
+
+    ) : command == CMD_LAYOUT ? (
+        send3($xBF, $x03, a);
+
+    ) : command == CMD_CLEAR_DISPLAY ? (
+        clear_display();
+
+    ) : command == CMD_TEMPO ? (
+        send_tempo(a);
+    );
+
+    last_request = request;
+
+    slider1 = command;
+    slider2 = request;
+    slider3 = a;
+    slider4 = b;
+    slider5 = c;
+    slider6 = d;
+    sliderchange();
+
+    // ACK pas schrijven nadat het commando is uitgevoerd.
+    gmem[10] = request;
+);

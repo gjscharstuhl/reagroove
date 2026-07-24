@@ -1,0 +1,223 @@
+desc:GJS FLkey 49 Lua Bridge
+tags:midi novation flkey lua sysex
+options:gmem=GJS_FLKEY_BRIDGE
+
+// Put this JSFX on a track with a MIDI hardware send to the FLkey DAW port.
+// Lua scripts communicate through REAPER gmem.
+//
+// Queue layout:
+// gmem[0] = write position
+// gmem[1] = read position
+// gmem[2] = capacity
+// gmem[3] = record size
+// gmem[4] = ready flag
+// gmem[5] = dropped commands
+// gmem[6] = processed commands
+// records start at gmem[16]
+//
+// Record:
+// [0] command
+// [1] argument count
+// [2...] arguments
+
+@init
+
+QUEUE_BASE = 16;
+CAPACITY = 64;
+RECORD_SIZE = 64;
+
+gmem[2] = CAPACITY;
+gmem[3] = RECORD_SIZE;
+gmem[4] = 1;
+
+buf = 10000;
+
+PRODUCT_ID = $x11;
+CMD_LED = $x01;
+CMD_PARAM_NAME = $x07;
+CMD_PARAM_VALUE = $x08;
+CMD_TEMP_TEXT = $x09;
+
+function send3(status, data1, data2)
+(
+  midisend(0, status, data1, data2);
+);
+
+function sx_begin(command)
+(
+  sx_n = 0;
+  buf[sx_n] = $xF0; sx_n += 1;
+  buf[sx_n] = $x00; sx_n += 1;
+  buf[sx_n] = $x20; sx_n += 1;
+  buf[sx_n] = $x29; sx_n += 1;
+  buf[sx_n] = $x02; sx_n += 1;
+  buf[sx_n] = PRODUCT_ID; sx_n += 1;
+  buf[sx_n] = command; sx_n += 1;
+);
+
+function sx_add(value)
+(
+  buf[sx_n] = max(0, min(127, floor(value)));
+  sx_n += 1;
+);
+
+function sx_send()
+(
+  buf[sx_n] = $xF7;
+  sx_n += 1;
+  midisend_buf(0, buf, sx_n);
+);
+
+function target_byte(target, lighting_type)
+local(base)
+(
+  base = target == 1 ? $x50 : $x40;
+  base | lighting_type;
+);
+
+function send_text(command, screen_index, rec_base, text_len)
+local(i, ch)
+(
+  sx_begin(command);
+  sx_add(screen_index);
+
+  i = 0;
+  loop(text_len,
+    ch = gmem[rec_base + 4 + i];
+    sx_add(ch);
+    i += 1;
+  );
+
+  sx_send();
+);
+
+function process_command(rec_base)
+local(cmd, argc, enabled, layout, tempo, msb, lsb, target, index, r, g, b, colour, row, text_len, i, raw_len)
+(
+  cmd = floor(gmem[rec_base]);
+  argc = floor(gmem[rec_base + 1]);
+
+  cmd == 1 ? (
+    enabled = gmem[rec_base + 2] != 0;
+    send3($x9F, $x0C, enabled ? $x7F : 0);
+  ) :
+  cmd == 2 ? (
+    layout = floor(gmem[rec_base + 2]);
+    send3($xBF, $x03, layout);
+  ) :
+  cmd == 3 ? (
+    layout = floor(gmem[rec_base + 2]);
+    send3($xBF, $x09, layout);
+  ) :
+  cmd == 4 ? (
+    layout = floor(gmem[rec_base + 2]);
+    send3($xBF, $x0A, layout);
+  ) :
+  cmd == 5 ? (
+    tempo = max(0, min(16383, floor(gmem[rec_base + 2])));
+    msb = (tempo >> 7) & $x7F;
+    lsb = tempo & $x7F;
+    sx_begin($x0A);
+    sx_add(msb);
+    sx_add(lsb);
+    sx_send();
+  ) :
+  cmd == 6 ? (
+    row = floor(gmem[rec_base + 2]);
+    text_len = min(60, floor(gmem[rec_base + 3]));
+    send_text(CMD_TEMP_TEXT, row, rec_base, text_len);
+  ) :
+  cmd == 7 ? (
+    target = floor(gmem[rec_base + 2]);
+    index = floor(gmem[rec_base + 3]);
+    r = gmem[rec_base + 4];
+    g = gmem[rec_base + 5];
+    b = gmem[rec_base + 6];
+
+    sx_begin(CMD_LED);
+    sx_add(target_byte(target, $x03));
+    sx_add(index);
+    sx_add(r);
+    sx_add(g);
+    sx_add(b);
+    sx_send();
+  ) :
+  cmd == 8 ? (
+    target = floor(gmem[rec_base + 2]);
+    index = floor(gmem[rec_base + 3]);
+    colour = floor(gmem[rec_base + 4]);
+
+    sx_begin(CMD_LED);
+    sx_add(target_byte(target, $x00));
+    sx_add(index);
+    sx_add(colour);
+    sx_send();
+  ) :
+  cmd == 9 ? (
+    target = floor(gmem[rec_base + 2]);
+    index = floor(gmem[rec_base + 3]);
+    colour = floor(gmem[rec_base + 4]);
+
+    sx_begin(CMD_LED);
+    sx_add(target_byte(target, $x02));
+    sx_add(index);
+    sx_add(colour);
+    sx_send();
+  ) :
+  cmd == 10 ? (
+    // Clear the 16 Channel Rack pads.
+    sx_begin(CMD_LED);
+    i = 0;
+    loop(8,
+      sx_add($x43);
+      sx_add(96 + i);
+      sx_add(0); sx_add(0); sx_add(0);
+      i += 1;
+    );
+    i = 0;
+    loop(8,
+      sx_add($x43);
+      sx_add(112 + i);
+      sx_add(0); sx_add(0); sx_add(0);
+      i += 1;
+    );
+    sx_send();
+  ) :
+  cmd == 11 ? (
+    // Raw complete MIDI message, including F0/F7 when it is SysEx.
+    raw_len = min(60, floor(gmem[rec_base + 2]));
+    i = 0;
+    loop(raw_len,
+      buf[i] = floor(gmem[rec_base + 3 + i]) & $xFF;
+      i += 1;
+    );
+    midisend_buf(0, buf, raw_len);
+  ) :
+  cmd == 12 ? (
+    index = floor(gmem[rec_base + 2]);
+    text_len = min(60, floor(gmem[rec_base + 3]));
+    send_text(CMD_PARAM_NAME, index, rec_base, text_len);
+  ) :
+  cmd == 13 ? (
+    index = floor(gmem[rec_base + 2]);
+    text_len = min(60, floor(gmem[rec_base + 3]));
+    send_text(CMD_PARAM_VALUE, index, rec_base, text_len);
+  );
+);
+
+@block
+
+read_pos = floor(gmem[1]);
+write_pos = floor(gmem[0]);
+
+while (read_pos != write_pos)
+(
+  rec_base = QUEUE_BASE + read_pos * RECORD_SIZE;
+  process_command(rec_base);
+
+  read_pos = (read_pos + 1) % CAPACITY;
+  gmem[1] = read_pos;
+  gmem[6] += 1;
+
+  write_pos = floor(gmem[0]);
+);

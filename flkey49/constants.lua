@@ -1,0 +1,26 @@
+local M = {}
+
+M.GMEM_NAME = "GJS_FLKEY_V1"
+M.DEVICE_NAME = "hw:F49,0,1"
+
+M.MIDI_CHANNEL = 16
+
+M.CMD = {
+    PAD_RGB = 1,
+    CC_RGB = 2,
+    DAW_MODE = 3,
+    LAYOUT = 4,
+    CLEAR_DISPLAY = 5,
+    PARAMETER_NAME = 6,
+    PARAMETER_VALUE = 7,
+    MESSAGE = 8,
+    TEMPO = 9
+}
+
+M.FIRST_FADER_BUTTON_CC = 37
+M.LAST_FADER_BUTTON_CC = 44
+
+M.FIRST_PAD_NOTE = 96
+M.LAST_PAD_NOTE = 119
+
+return M
