@@ -1,4 +1,5 @@
 local scene_api = include("gjs - scene_api.lua")
+local playlist_api = include("gjs - playlist_api.lua")
 
 local MODE_LOAD = 1
 local MODE_SAVE = 2
@@ -6,6 +7,7 @@ local MODE_COPY = 3
 
 local operation = MODE_LOAD
 local active_scene = 1
+local selected_copy_scene = nil
 
 local pending_scene = nil
 local pending_targets = nil
@@ -15,6 +17,9 @@ local SCENE_EMPTY   = { 10, 3, 0 }
 local SCENE_SAVED   = { 127, 35, 0 }
 local SCENE_PENDING = { 50, 50, 127 }
 local SCENE_ACTIVE  = { 127, 127, 127 }
+
+local PLAYLIST_EMPTY  = { 0, 20, 0 }
+local PLAYLIST_FILLED = { 0, 127, 0 }
 
 local function pad_to_scene(row, col)
     return ((3 - row) * 8) + col
@@ -26,6 +31,10 @@ local function scene_to_pad(scene_nr)
     end
 
     return 2, scene_nr - 8
+end
+
+local function pad_to_playlist_slot(row, col)
+    return ((5 - row) * 8) + col
 end
 
 local function show_error(message)
@@ -141,9 +150,6 @@ local function load_scene(api, scene_nr)
     pending_scene = scene_nr
     pending_targets = targets
 
-    -- De radio-afhandeling heeft de ingedrukte pad zojuist wit gemaakt.
-    -- Schrijf hem hier direct blauw overheen. De watcher maakt hem pas
-    -- wit wanneer alle patterns werkelijk hun doelregion hebben bereikt.
     show_pending_scene(api, scene_nr)
     start_pending_watch(api)
 
@@ -163,21 +169,43 @@ local function save_scene(scene_nr)
     return success
 end
 
-local function copy_scene_to_playlist(scene_nr)
-    show_error(
-        "copy-to-playlist is nog niet aangesloten " ..
-        "(scene " .. tostring(scene_nr) .. ")"
-    )
-    return false
+local function select_scene_for_copy(scene_nr)
+    if not scene_api.GetScene(scene_nr) then
+        show_error(
+            "scene " .. tostring(scene_nr) ..
+            " is niet opgeslagen"
+        )
+        return false
+    end
+
+    selected_copy_scene = scene_nr
+    return true
 end
 
-local function do_operation(api, scene_nr)
+local function copy_selected_scene_to_slot(slot)
+    if not selected_copy_scene then
+        show_error("selecteer eerst een opgeslagen scene")
+        return false
+    end
+
+    if not playlist_api.Set(slot, selected_copy_scene) then
+        show_error(
+            "playlist slot " .. tostring(slot) ..
+            " kon niet worden opgeslagen"
+        )
+        return false
+    end
+
+    return true
+end
+
+local function press_scene(api, scene_nr)
     if operation == MODE_LOAD then
         return load_scene(api, scene_nr)
     elseif operation == MODE_SAVE then
         return save_scene(scene_nr)
     elseif operation == MODE_COPY then
-        return copy_scene_to_playlist(scene_nr)
+        return select_scene_for_copy(scene_nr)
     end
 
     show_error(
@@ -214,25 +242,59 @@ local function drawscreen4(api)
         }
     )
 
+    local function playlist_background_rgb(row, col)
+        local slot = pad_to_playlist_slot(row, col)
+
+        if playlist_api.IsFilled(slot) then
+            return PLAYLIST_FILLED
+        end
+
+        return PLAYLIST_EMPTY
+    end
+
     api.drawblock(
         5, 1,
         4, 8,
-        C.GREEN,
-        api.MODE_TOGGLE,
+        C.OFF,
+        api.MODE_HIGHLIGHT,
         {
-            active_color = C.WHITE
+            active_color = C.WHITE,
+            background_rgb = playlist_background_rgb,
+
+            on_press = function(pad)
+                if operation ~= MODE_COPY then
+                    return
+                end
+
+                local slot =
+                    pad_to_playlist_slot(pad.row, pad.col)
+
+                if copy_selected_scene_to_slot(slot) then
+                    api.redraw()
+                end
+            end
         }
     )
+
+    local displayed_scene = nil
+
+    if operation == MODE_COPY then
+        displayed_scene = selected_copy_scene
+    else
+        displayed_scene = active_scene
+    end
 
     local active_row
     local active_col
 
-    if active_scene <= 8 then
-        active_row = 3
-        active_col = active_scene
-    else
-        active_row = 2
-        active_col = active_scene - 8
+    if displayed_scene then
+        if displayed_scene <= 8 then
+            active_row = 3
+            active_col = displayed_scene
+        else
+            active_row = 2
+            active_col = displayed_scene - 8
+        end
     end
 
     local function scene_background_rgb(row, col)
@@ -240,6 +302,10 @@ local function drawscreen4(api)
 
         if scene_nr == pending_scene then
             return SCENE_PENDING
+        elseif operation == MODE_COPY then
+            if scene_nr == selected_copy_scene then
+                return SCENE_ACTIVE
+            end
         elseif scene_nr == active_scene then
             return SCENE_ACTIVE
         elseif scene_api.GetScene(scene_nr) then
@@ -265,7 +331,7 @@ local function drawscreen4(api)
                 local scene_nr =
                     pad_to_scene(pad.row, pad.col)
 
-                if do_operation(api, scene_nr) then
+                if press_scene(api, scene_nr) then
                     if operation ~= MODE_LOAD then
                         api.redraw()
                     end
@@ -274,8 +340,6 @@ local function drawscreen4(api)
         }
     )
 
-    -- Bij een redraw terwijl een scene nog pending is, overschrijft
-    -- MODE_RADIO de geselecteerde pad met wit. Zet hem daarna weer blauw.
     if pending_scene then
         show_pending_scene(api, pending_scene)
     end
@@ -291,6 +355,14 @@ local function drawscreen4(api)
 
             on_press = function(pad)
                 operation = pad.col
+
+                if operation == MODE_COPY then
+                    selected_copy_scene = nil
+
+                    local state = api.get_screen_state(4)
+                    state.radio["scene_selection"] = nil
+                end
+
                 api.redraw()
             end
         }
