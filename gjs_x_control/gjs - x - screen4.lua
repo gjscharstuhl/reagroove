@@ -317,7 +317,12 @@ local function select_scene_for_copy(scene_nr)
     return true
 end
 
-local function copy_selected_scene_to_slot(slot)
+local function toggle_selected_scene_in_slot(slot)
+    -- Gevuld playlistslot opnieuw indrukken = verwijderen.
+    if playlist_api.IsFilled(slot) then
+        return playlist_api.Clear(slot)
+    end
+
     if not selected_copy_scene then
         show_error("selecteer eerst een opgeslagen scene")
         return false
@@ -521,7 +526,7 @@ local function drawscreen4(api)
                     )
 
                 if operation == MODE_COPY then
-                    if copy_selected_scene_to_slot(slot) then
+                    if toggle_selected_scene_in_slot(slot) then
                         api.redraw()
                     end
                 elseif operation == MODE_PLAY then
@@ -552,12 +557,22 @@ local function drawscreen4(api)
 
         if scene_nr == pending_scene then
             return SCENE_PENDING
-        elseif operation == MODE_COPY then
+        end
+
+        if operation == MODE_COPY then
+            -- Bij het openen van COPY verdwijnt alleen de witte selectie.
+            -- Alle opgeslagen scenes blijven helder oranje zichtbaar.
             if scene_nr == selected_copy_scene then
                 return SCENE_ACTIVE
+            elseif scene_api.GetScene(scene_nr) then
+                return SCENE_SAVED
             end
-        elseif operation ~= MODE_PLAY
-           and scene_nr == active_scene then
+
+            return SCENE_EMPTY
+        end
+
+        if operation ~= MODE_PLAY
+        and scene_nr == active_scene then
             return SCENE_ACTIVE
         elseif scene_api.GetScene(scene_nr) then
             return SCENE_SAVED
