@@ -1445,6 +1445,16 @@ local function draw_current_screen()
     end
 
     draw_sidebar()
+
+    -- A complete screen redraw sends the whole 8x8 matrix, including the
+    -- yellow base colour of the record pad. Apply the live transport LEDs
+    -- only after that matrix has been sent, so pages 1 through 4 cannot
+    -- overwrite the actual play/record state.
+    if Transport and Transport.invalidate_transport_leds
+       and Transport.update then
+        Transport.invalidate_transport_leds()
+        Transport.update(API)
+    end
 end
 
 local function screen_from_cc(cc)
