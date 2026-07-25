@@ -1,6 +1,6 @@
 -- ============================================================
 -- gjs - x - slot_manager.lua
--- LOAD V5
+-- LOAD/SAVE V6
 --
 -- Belangrijk:
 -- ActiveSlot wordt ingesteld VOORDAT REAPER van project wisselt.
@@ -9,6 +9,9 @@
 -- ============================================================
 
 local M = {}
+
+local scene_api = include("gjs - scene_api.lua")
+local playlist_api = include("gjs - playlist_api.lua")
 
 local HOME = os.getenv("HOME")
 local JAMS_DIR = HOME and (HOME .. "/jams") or nil
@@ -45,6 +48,202 @@ local function slot_rpl_path(slot)
         .. "/"
         .. name
         .. ".RPL"
+end
+
+
+local function slot_config_path(slot)
+    return JAMS_DIR
+        .. "/"
+        .. slot_name(slot)
+        .. "/config.txt"
+end
+
+local function trim(value)
+    return (value or ""):match("^%s*(.-)%s*$")
+end
+
+local function write_config(slot)
+    local path = slot_config_path(slot)
+    local file = io.open(path, "w")
+
+    if not file then
+        return false,
+            "Kon config.txt niet schrijven:\n"
+            .. path
+    end
+
+    file:write("VERSION=1\n\n")
+    file:write("[SCENES]\n")
+
+    local scenelist = scene_api.GetSceneList()
+
+    for scene_nr = 1, 16 do
+        local saved_scene = scenelist[scene_nr]
+        local patternlist =
+            saved_scene and saved_scene.patternlist
+
+        if type(patternlist) == "table"
+        and #patternlist >= 8 then
+            file:write(
+                tostring(scene_nr),
+                "=",
+                table.concat({
+                    tostring(patternlist[1]),
+                    tostring(patternlist[2]),
+                    tostring(patternlist[3]),
+                    tostring(patternlist[4]),
+                    tostring(patternlist[5]),
+                    tostring(patternlist[6]),
+                    tostring(patternlist[7]),
+                    tostring(patternlist[8])
+                }, ","),
+                "\n"
+            )
+        end
+    end
+
+    file:write("\n[PLAYLIST]\n")
+
+    local slots = playlist_api.GetSlots()
+
+    for playlist_slot = 1,
+        playlist_api.GetSlotCount() do
+        local scene_nr = slots[playlist_slot]
+
+        if scene_nr then
+            file:write(
+                tostring(playlist_slot),
+                "=",
+                tostring(scene_nr),
+                "\n"
+            )
+        end
+    end
+
+    file:close()
+    return true
+end
+
+local function read_patternlist(value)
+    local result = {}
+
+    for token in tostring(value or ""):gmatch("[^,]+") do
+        local number = tonumber(trim(token))
+
+        if not number then
+            return nil
+        end
+
+        number = math.floor(number)
+
+        if number < 1 or number > 8 then
+            return nil
+        end
+
+        result[#result + 1] = number
+    end
+
+    if #result ~= 8 then
+        return nil
+    end
+
+    return result
+end
+
+local function read_config(slot)
+    scene_api.Clear()
+    playlist_api.ClearAll()
+
+    local path = slot_config_path(slot)
+    local file = io.open(path, "r")
+
+    -- Oude slots zonder config.txt blijven gewoon laadbaar.
+    if not file then
+        return true
+    end
+
+    local section = nil
+    local scenelist = scene_api.GetSceneList()
+
+    for raw_line in file:lines() do
+        local line = trim(raw_line:gsub("\r", ""))
+
+        if line ~= ""
+        and line:sub(1, 1) ~= "#"
+        and line:sub(1, 1) ~= ";" then
+            local section_name =
+                line:match("^%[([^%]]+)%]$")
+
+            if section_name then
+                section = section_name:upper()
+            else
+                local key, value =
+                    line:match("^([^=]+)=(.*)$")
+
+                if key then
+                    key = trim(key)
+                    value = trim(value)
+
+                    if section == "SCENES" then
+                        local scene_nr = tonumber(key)
+                        local patternlist =
+                            read_patternlist(value)
+
+                        if scene_nr and patternlist then
+                            scene_nr = math.floor(scene_nr)
+
+                            if scene_nr >= 1
+                            and scene_nr <= 16 then
+                                scenelist[scene_nr] = {
+                                    current = nil,
+                                    next = nil,
+                                    patternlist = patternlist
+                                }
+                            end
+                        end
+                    elseif section == "PLAYLIST" then
+                        local playlist_slot = tonumber(key)
+                        local scene_nr = tonumber(value)
+
+                        if playlist_slot and scene_nr then
+                            playlist_api.Set(
+                                math.floor(playlist_slot),
+                                math.floor(scene_nr)
+                            )
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    file:close()
+    return true
+end
+
+local function remove_old_project_files(directory)
+    local filenames = {}
+    local index = 0
+
+    while true do
+        local filename =
+            reaper.EnumerateFiles(directory, index)
+
+        if not filename then
+            break
+        end
+
+        filenames[#filenames + 1] = filename
+        index = index + 1
+    end
+
+    for _, filename in ipairs(filenames) do
+        -- Alleen oude actuele projectbestanden verwijderen.
+        -- REAPER-back-ups zoals .rpp-bak blijven bestaan.
+        if filename:lower():match("%.rpp$") then
+            os.remove(directory .. "/" .. filename)
+        end
+    end
 end
 
 local function file_exists(path)
@@ -133,6 +332,13 @@ function M.load(slot, on_loaded)
                 .. ":\n"
                 .. projects[index]
         end
+    end
+
+    local config_ok, config_error =
+        read_config(slot)
+
+    if not config_ok then
+        return false, config_error
     end
 
     local function open_projects()
@@ -343,6 +549,11 @@ function M.save(slot)
     reaper.RecursiveCreateDirectory(directory, 0)
     reaper.RecursiveCreateDirectory(media_directory, 0)
 
+    -- Houd de slotmap schoon:
+    -- verwijder oude .rpp-bestanden en schrijf alleen de huidige tabs.
+    -- .rpp-bak blijft behouden.
+    remove_old_project_files(directory)
+
     local saved_paths = {}
     local copied_sources = {}
     local reserved_destinations = {}
@@ -472,6 +683,13 @@ function M.save(slot)
     end
 
     list_file:close()
+
+    local config_ok, config_error =
+        write_config(slot)
+
+    if not config_ok then
+        return false, config_error
+    end
 
     return true
 end

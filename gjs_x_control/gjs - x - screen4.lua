@@ -105,6 +105,10 @@ local function pending_scene_has_arrived(api)
 end
 
 local function show_pending_scene(api, scene_nr)
+    if api.get_current_screen() ~= 4 then
+        return
+    end
+
     local row, col = scene_to_pad(scene_nr)
 
     api.send_pad_rgb(
@@ -117,6 +121,10 @@ local function show_pending_scene(api, scene_nr)
 end
 
 local function show_playlist_pad(api, slot, rgb)
+    if api.get_current_screen() ~= 4 then
+        return
+    end
+
     local row, col = playlist_slot_to_pad(slot)
 
     api.send_pad_rgb(
