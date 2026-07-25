@@ -1,6 +1,6 @@
 -- ============================================================
 -- Screen 0: main screen
--- Version 18 - restore exact palette colors after matrix draw
+-- Version 13 - preserve original colors for pads 35-38
 -- ============================================================
 
 
@@ -9,7 +9,6 @@ local clear_api = include("gjs - x - clear.lua")
 
 return function(api)
     local C = api.COLOR
-
 
     local function normalized_name(name)
         return (name or "")
@@ -336,7 +335,7 @@ return function(api)
         C.PURPLE,
         api.MODE_HIGHLIGHT,
         {
-            active_color = api.SELECT_COLOR,
+            active_color = C.PURPLE,
             on_press = tap_and_sync_tempo
         }
     )
@@ -348,7 +347,7 @@ return function(api)
         C.LIGHT_PURPLE,
         api.MODE_HIGHLIGHT,
         {
-            active_color = api.SELECT_COLOR,
+            active_color = C.LIGHT_PURPLE,
             on_press = function()
                 reaper.Main_OnCommand(40029, 0)
             end
@@ -362,22 +361,22 @@ return function(api)
         C.LIGHT_PURPLE,
         api.MODE_HIGHLIGHT,
         {
-            active_color = api.SELECT_COLOR,
+            active_color = C.LIGHT_PURPLE,
             on_press = function()
                 reaper.Main_OnCommand(40030, 0)
             end
         }
     )
 
-    -- Pad 38 keeps the original LIGHT_BLUE -> SELECT_COLOR highlight.
-    -- Only the page-aware clear callback is new.
+    -- Pad 38: page-aware clear command.
+    -- Page 1 remains reserved; pages 2 through 4 clear regions.
     api.drawpad(
         3,
         8,
         C.LIGHT_BLUE,
         api.MODE_HIGHLIGHT,
         {
-            active_color = api.SELECT_COLOR,
+            active_color = C.LIGHT_BLUE,
 
             on_press = function()
                 if current_page >= 2
@@ -387,8 +386,6 @@ return function(api)
             end
         }
     )
-
-
 
     -- Record-arm buttons for the first eight direct children of folder
     -- "tracks". Load REAPER's current state before drawing each toggle.
