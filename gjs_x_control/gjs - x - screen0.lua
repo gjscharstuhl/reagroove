@@ -252,22 +252,31 @@ return function(api)
         }
     )
 
-    -- Play
-    api.drawpad(
-        4,
-        1,
-        C.GREEN,
-        api.MODE_HIGHLIGHT,
-        {
-            active_color = api.SELECT_COLOR,
+	-- Play
+	api.drawpad(
+		4,
+		1,
+		C.DARK_GREEN,
+		api.MODE_HIGHLIGHT,
+		{
+			active_color = api.SELECT_COLOR,
 
-            on_press = function()
-                if api.transport then
-                    api.transport.play()
-                end
-            end
-        }
-    )
+			on_press = function()
+				if api.transport then
+					api.transport.play()
+				end
+			end,
+
+		on_release = function()
+			if api.transport then
+				api.transport.invalidate_transport_leds()
+				api.transport.update(api)
+			end
+
+			return true
+		end
+		}
+	)
 
     -- Record
     api.drawpad(
@@ -284,11 +293,13 @@ return function(api)
                 end
             end,
 
-            on_release = function()
-                if api.transport then
-                    api.transport.invalidate_record_led()
-                end
-            end
+		on_release = function()
+			if api.transport then
+				api.transport.invalidate_transport_leds()
+				api.transport.update(api)
+			end
+			return true
+		end
         }
     )
 

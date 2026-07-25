@@ -295,22 +295,20 @@ end
 -- ============================================================
 
 local function get_transport_play_state()
-    local project = get_active_project()
-    if not project then
-        return 0
-    end
-    return reaper.GetPlayStateEx(project)
+    return reaper.GetPlayState()
 end
 
 local function desired_play_led_color(api)
     local play_state = get_transport_play_state()
+
+
 
     if (play_state & 1) == 1
     or (play_state & 4) == 4 then
         return api.COLOR.GREEN
     end
 
-    return api.COLOR.DARK_GREEN or 17
+    return api.COLOR.DARK_GREEN
 end
 
 local function desired_record_led_color(api)
@@ -414,22 +412,25 @@ function Transport.play()
 end
 
 function Transport.stop()
-   -- local project =
-    --    get_active_project()
 
-   -- if not project then
-    --    return
-   --`	 end
+    -- Stop hoofdproject plus alle acht subprojecten.
+    for project_index = 0, 9 do
+        local project = reaper.EnumProjects(project_index)
 
-    reaper.Main_OnCommandEx(
-        CMD_STOP,
-        0,
-        0
-    )
+        if project then
+            reaper.Main_OnCommandEx(
+                CMD_STOP,
+                0,
+                project
+            )
+        end
+    end
 
     state.watching_record = false
     state.reached_time_selection = false
     state.pending_record = false
+
+    state.last_play_led_color = nil
     state.last_record_led_color = nil
 
     reaper.SetExtState(

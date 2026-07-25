@@ -1,6 +1,7 @@
 -- ============================================================
 -- gjs - x - core.lua
 -- Shared Launchpad X API, state, input, output and screen system
+-- Version 16 - add RGB DARK_GREEN transport idle colour
 -- ============================================================
 local scene_api = include("gjs - scene_api.lua")
 
@@ -26,67 +27,58 @@ local MODE_TOGGLE    = 3
 local MODE_FADER     = 4
 local MODE_BALANCE   = 5
 
--- Launchpad palette values currently used by this project
+-- RGB colours used by every pad in the 8x8 matrix.
+-- Existing screen code can keep using C.RED, C.LIGHT_BLUE, etc.
 local COLOR = {
-    OFF          = 0,
-    GREY         = 1,
-    WHITE        = 3,
-    RED          = 5,
-    ORANGE       = 9,
-    YELLOW       = 13,
-    DARK_YELLOW  = 126,
-    GREEN        = 21,
-    LIGHT_BLUE   = 42,
-    LIGHT_PURPLE = 44,
-    BLUE         = 45,
-    PINK         = 52,
-    MAGENTA      = 53,
-    PURPLE       = 69
+    OFF          = { 0,   0,   0   },
+    GREY         = { 32,  32,  32  },
+    WHITE        = { 127, 127, 127 },
+    RED          = { 127, 0,   0   },
+    ORANGE       = { 127, 40,  0   },
+    YELLOW       = { 127, 110, 0   },
+    DARK_YELLOW  = { 55,  38,  0   },
+    GREEN        = { 0,   127, 0   },
+    DARK_GREEN   = { 0,   45,  0   },
+    LIGHT_BLUE   = { 0,   70,  127 },
+    LIGHT_PURPLE = { 75,  25,  127 },
+    BLUE         = { 0,   0,   127 },
+    PINK         = { 127, 30,  90  },
+    MAGENTA      = { 127, 0,   80  },
+    PURPLE       = { 60,  0,   127 }
 }
 
 local SELECT_COLOR = COLOR.RED
 
--- Screens 0, 1, 2, 3, 4, 5 and 7 use the 8x8 RGB matrix bridge.
--- Screen 6 continues to use its existing render path.
-local PALETTE_RGB = {
-    [COLOR.OFF]          = { 0,   0,   0   },
-    [COLOR.GREY]         = { 32,  32,  32  },
-    [COLOR.WHITE]        = { 127, 127, 127 },
-    [COLOR.RED]          = { 127, 0,   0   },
-    [COLOR.ORANGE]       = { 127, 40,  0   },
-    [COLOR.YELLOW]       = { 127, 110, 0   },
-    [COLOR.DARK_YELLOW]  = { 55,  38,  0   },
-    [COLOR.GREEN]        = { 0,   127, 0   },
-    [COLOR.LIGHT_BLUE]   = { 0,   70,  127 },
-    [COLOR.LIGHT_PURPLE] = { 75,  25,  127 },
-    [COLOR.BLUE]         = { 0,   0,   127 },
-    [COLOR.PINK]         = { 127, 30,  90  },
-    [COLOR.MAGENTA]      = { 127, 0,   80  },
-    [COLOR.PURPLE]       = { 60,  0,   127 },
-    
+-- The Launchpad sidebar buttons are CC LEDs and still require palette
+-- values. This is deliberately separate from the RGB pad colour system.
+local SIDEBAR_COLOR = {
+    GREY = 1,
+    RED  = 5
 }
 
-local RGB = {
-
-    RED    = {127, 0, 0},
-    GREEN  = {0, 127, 0},
-    BLUE   = {0, 0, 127},
-
-    ORANGE = {127, 40, 0},
-    YELLOW = {127, 110, 0},
-
-    PURPLE = {60, 0, 127},
-    MAGENTA= {127, 0, 80},
-    PINK   = {127, 30, 90},
-
-    CYAN   = {0, 127, 127},
-    WHITE  = {127,127,127},
-
-    GREY   = {40,40,40},
-    DARK_GREY = {15,15,15},
-
-    OFF = {0,0,0}
+-- Temporary backwards compatibility for scripts that still pass a raw
+-- Launchpad palette number to API.send_pad_color(). The number is converted
+-- to RGB; no 8x8 pad is sent through the old palette MIDI path anymore.
+local LEGACY_PALETTE_RGB = {
+    [0]   = COLOR.OFF,
+    [1]   = COLOR.GREY,
+    [3]   = COLOR.WHITE,
+    [5]   = COLOR.RED,
+    [9]   = COLOR.ORANGE,
+    [13]  = COLOR.YELLOW,
+    [126] = COLOR.DARK_YELLOW,
+    [17]  = COLOR.DARK_GREEN,
+    [21]  = COLOR.GREEN,
+    [42]  = COLOR.LIGHT_BLUE,
+    [44]  = COLOR.LIGHT_PURPLE,
+    [45]  = COLOR.BLUE,
+    [52]  = COLOR.PINK,
+    [53]  = COLOR.MAGENTA,
+    [69]  = COLOR.PURPLE
 }
+
+-- Kept as a convenient public-style RGB collection for faders and screens.
+local RGB = COLOR
 
 local function scale_rgb(color, factor)
 
@@ -391,11 +383,6 @@ end
 -- Pad output and drawing
 ------------------------------------------------------------
 
-local function palette_to_rgb(color)
-    local rgb = PALETTE_RGB[color] or PALETTE_RGB[COLOR.OFF]
-    return rgb[1], rgb[2], rgb[3]
-end
-
 local function new_black_matrix()
     local matrix = {}
 
@@ -410,41 +397,47 @@ local function new_black_matrix()
     return matrix
 end
 
-local function send_pad_color(row, col, color)
-    local red, green, blue = palette_to_rgb(color)
-    -- While a matrix screen is being drawn, collect all pad colours first.
-    if LP.building_matrix and LP.framebuffer then
-        LP.framebuffer[row][col] = { red, green, blue }
-        return true
-    end
 
-    -- Keep the in-memory matrix in sync with live pad changes. This lets
-    -- dynamic overlays (such as the loop overview) safely resend a complete
-    -- frame without restoring stale colours elsewhere on the screen.
-    if LP.matrix_screen_active and LP.framebuffer then
-        LP.framebuffer[row][col] = { red, green, blue }
-    end
-
-    -- Outside the one-time matrix build, keep live LED updates on the
-    -- existing MIDI path. This prevents a later bridge command from
-    -- overwriting command 5 in gmem before the JSFX has processed it.
-    local note = row * 10 + col
-    reaper.StuffMIDIMessage(LP.output_mode, 0x90, note, color)
-    return true
+local function clamp_rgb_value(value)
+    value = tonumber(value) or 0
+    return math.max(0, math.min(127, math.floor(value)))
 end
 
+local function resolve_rgb(color_or_red, green, blue)
+    if type(color_or_red) == "table" then
+        return
+            clamp_rgb_value(color_or_red[1] or color_or_red.r),
+            clamp_rgb_value(color_or_red[2] or color_or_red.g),
+            clamp_rgb_value(color_or_red[3] or color_or_red.b)
+    end
 
+    if green ~= nil or blue ~= nil then
+        return
+            clamp_rgb_value(color_or_red),
+            clamp_rgb_value(green),
+            clamp_rgb_value(blue)
+    end
+
+    if type(color_or_red) == "number" then
+        local legacy =
+            LEGACY_PALETTE_RGB[color_or_red] or COLOR.OFF
+
+        return legacy[1], legacy[2], legacy[3]
+    end
+
+    return 0, 0, 0
+end
 
 local function send_pad_rgb(
     row,
     col,
-    red,
+    color_or_red,
     green,
     blue
 )
-    red   = math.max(0, math.min(127, math.floor(red or 0)))
-    green = math.max(0, math.min(127, math.floor(green or 0)))
-    blue  = math.max(0, math.min(127, math.floor(blue or 0)))
+    local red
+    red, green, blue =
+        resolve_rgb(color_or_red, green, blue)
 
     -- Tijdens schermopbouw: alleen in framebuffer schrijven.
     -- draw_current_screen() verstuurt daarna de complete matrix in één keer.
@@ -482,6 +475,11 @@ local function send_pad_rgb(
     )
 end
 
+-- Deprecated compatibility name. It now performs RGB output only.
+local function send_pad_color(row, col, color)
+    return send_pad_rgb(row, col, color)
+end
+
 local function send_cc_color(cc, color)
     reaper.StuffMIDIMessage(LP.output_mode, 0xB0, cc, color)
 end
@@ -509,7 +507,7 @@ end
 
 local function draw_pad_state(pad)
     if pad.active then
-        send_pad_color(
+        send_pad_rgb(
             pad.row,
             pad.col,
             pad.active_color
@@ -532,7 +530,7 @@ local function draw_pad_state(pad)
             rgb[3]
         )
     else
-        send_pad_color(
+        send_pad_rgb(
             pad.row,
             pad.col,
             pad.color
@@ -737,7 +735,7 @@ local function clearscreen()
 
     for row = 1, 8 do
         for col = 1, 8 do
-            send_pad_color(row, col, COLOR.OFF)
+            send_pad_rgb(row, col, COLOR.OFF)
         end
     end
 end
@@ -1036,7 +1034,7 @@ local function handle_pad_press(pad, velocity)
     end
 
     if pad.mode == MODE_HIGHLIGHT then
-        send_pad_color(
+        send_pad_rgb(
             pad.row,
             pad.col,
             pad.active_color
@@ -1074,7 +1072,7 @@ local function handle_pad_press(pad, velocity)
 
         save_pad_state(pad)
 
-        send_pad_color(
+        send_pad_rgb(
             pad.row,
             pad.col,
             pad.active
@@ -1139,15 +1137,16 @@ local function handle_pad_press(pad, velocity)
 end
 
 local function handle_pad_release(pad)
-    if pad.mode == MODE_HIGHLIGHT then
-        send_pad_color(pad.row, pad.col, pad.color)
-    end
+    local skip_restore = false
 
     if pad.on_release then
-        pad.on_release(pad)
+        skip_restore = (pad.on_release(pad) == true)
+    end
+
+    if pad.mode == MODE_HIGHLIGHT and not skip_restore then
+        send_pad_rgb(pad.row, pad.col, pad.color)
     end
 end
-
 ------------------------------------------------------------
 -- Loop overview
 ------------------------------------------------------------
@@ -1383,10 +1382,10 @@ end
 
 local function draw_sidebar()
     for screen = 0, 7 do
-        local color = COLOR.GREY
+        local color = SIDEBAR_COLOR.GREY
 
         if screen == LP.current_screen then
-            color = SELECT_COLOR
+            color = SIDEBAR_COLOR.RED
         end
 
         send_cc_color(SCREEN_CC[screen], color)
