@@ -181,8 +181,12 @@ return function(api)
         end
     end
 
-    if current_page == 1 then
-        -- The sequencer exists only on page 1.
+    local play_state = reaper.GetPlayState()
+    local transport_active =
+        (play_state & 1) == 1 or
+        (play_state & 4) == 4
+
+    if current_page == 1 or transport_active then
         api.drawblock(
             8, 1,
             7, 8,
@@ -190,9 +194,6 @@ return function(api)
             api.MODE_NONE
         )
     else
-        -- Pages 2 through 4 replace the sequencer completely.
-        -- Each page has its own radio group so the selection state
-        -- cannot collide with another page.
         api.drawblock(
             8, 1,
             7, 8,
@@ -316,6 +317,16 @@ return function(api)
                 if api.transport then
                     api.transport.stop()
                 end
+            end,
+
+            on_release = function()
+                -- Let REAPER process the stop command first, then redraw
+                -- screen 0 so pages 2-4 immediately return to purple.
+                reaper.defer(function()
+                    api.redraw()
+                end)
+
+                return true
             end
         }
     )
@@ -334,7 +345,14 @@ return function(api)
             on_press = function(pad)
                 if api.set_page then
                     api.set_page(pad.col - 4)
-                    api.redraw()
+
+                    -- Redraw on the next defer cycle. An immediate redraw here
+                    -- can still be overwritten by the current page-button MIDI
+                    -- event, leaving the old grey sequencer background visible
+                    -- until another action triggers a redraw.
+                    reaper.defer(function()
+                        api.redraw()
+                    end)
                 end
             end
         }
@@ -459,9 +477,7 @@ return function(api)
         }
     )
 
-    -- Current-region overview belongs only to page 1.
-    -- On pages 2 through 4, rows 7 and 8 are the resize controls.
-    if current_page == 1 then
+    if current_page == 1 or transport_active then
         api.draw_loop_overview()
     end
 end

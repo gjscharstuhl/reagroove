@@ -1309,14 +1309,44 @@ local function send_loop_pad_updates(indices, length, current_bar)
     return true
 end
 
-local function draw_loop_overview()
+local function any_project_is_playing()
+    local index = 0
+
+    while true do
+        local project = reaper.EnumProjects(index, "")
+        if not project then
+            break
+        end
+
+        local play_state = reaper.GetPlayStateEx(project)
+        if (play_state & 1) == 1 or (play_state & 4) == 4 then
+            return true
+        end
+
+        index = index + 1
+    end
+
+    return false
+end
+
+local function draw_loop_overview(show_overview)
     -- Capture the original two-row colours once during the matrix build.
-    -- They remain the background whenever a pad falls outside the loop.
+    -- On page 1 this is the grey sequencer background. On pages 2 through 4
+    -- it is the purple resize background, including the selected resize pad.
     remember_loop_background()
+
+    if show_overview == false then
+        LP.loop_overview_visible = false
+        LP.loop_overview_length = 0
+        LP.loop_overview_current_bar = nil
+        LP.loop_overview_signature = "hidden"
+        return
+    end
 
     local length, current_bar = get_loop_overview_values()
     paint_loop_overview(length, current_bar)
 
+    LP.loop_overview_visible = true
     LP.loop_overview_length = length
     LP.loop_overview_current_bar = current_bar
     LP.loop_overview_signature =
@@ -1325,10 +1355,44 @@ end
 
 local function update_loop_overview()
     if LP.current_screen ~= 0
-       or LP.current_page ~= 1
+       or LP.current_page < 1
+       or LP.current_page > 4
        or not LP.matrix_screen_active
        or not LP.framebuffer
        or not Bridge then
+        return
+    end
+
+    local should_show =
+        LP.current_page == 1 or any_project_is_playing()
+
+    if should_show ~= (LP.loop_overview_visible == true) then
+        if should_show then
+            local length, current_bar = get_loop_overview_values()
+            paint_loop_overview(length, current_bar)
+            LP.loop_overview_length = length
+            LP.loop_overview_current_bar = current_bar
+            LP.loop_overview_signature =
+                tostring(length) .. ":" .. tostring(current_bar or 0)
+        else
+            -- Restore the captured purple page background without changing
+            -- the pads or callbacks underneath it.
+            paint_loop_overview(0, nil)
+            LP.loop_overview_length = 0
+            LP.loop_overview_current_bar = nil
+            LP.loop_overview_signature = "hidden"
+        end
+
+        LP.loop_overview_visible = should_show
+
+        if Bridge.set_matrix_rgb then
+            Bridge.set_matrix_rgb(LP.framebuffer)
+        end
+
+        return
+    end
+
+    if not should_show then
         return
     end
 
