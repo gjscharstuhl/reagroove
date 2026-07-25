@@ -1,7 +1,10 @@
 -- ============================================================
 -- Screen 0: main screen
+-- Version 11 - redraw immediately after page change
 -- ============================================================
 
+
+local resize_api = include("gjs - x - resize.lua")
 
 return function(api)
     local C = api.COLOR
@@ -122,18 +125,78 @@ return function(api)
         api.pattern.select(track, region)
     end
 
-    api.drawblock(
-        8, 1,
-        7, 8,
-        C.GREY,
-        api.MODE_RADIO,
-        {
-            group = "sequencer_patterns",
-            selected_row = 8,
-            selected_col = 1,
-            active_color = api.SELECT_COLOR
-        }
-    )
+    local current_page = 1
+    if api.get_page then
+        current_page = api.get_page()
+    end
+
+    local function get_resize_bars(pad)
+        if pad.row == 8 then
+            return pad.col
+        end
+
+        return pad.col + 8
+    end
+
+    local function run_resize(pad)
+        local bars = get_resize_bars(pad)
+        local track, region =
+            get_selected_track_and_region()
+
+        if current_page == 2 then
+            resize_api.resize_all_regions_all_projects(
+                bars
+            )
+        elseif current_page == 3 then
+            resize_api.resize_selected_region_all_projects(
+                region,
+                bars
+            )
+        elseif current_page == 4 then
+            resize_api.resize_selected_region_selected_project(
+                track,
+                region,
+                bars
+            )
+        end
+    end
+
+    if current_page == 1 then
+        -- The sequencer exists only on page 1.
+        api.drawblock(
+            8, 1,
+            7, 8,
+            C.GREY,
+            api.MODE_NONE
+        )
+    else
+        -- Pages 2 through 4 replace the sequencer completely.
+        -- Each page has its own radio group so the selection state
+        -- cannot collide with another page.
+        api.drawblock(
+            8, 1,
+            7, 8,
+            C.PURPLE,
+            api.MODE_RADIO,
+            {
+                group =
+                    "resize_bars_page_"
+                    .. tostring(current_page),
+
+                selected_row = 8,
+                selected_col = 1,
+                active_color = api.SELECT_COLOR,
+
+                on_press = function(pad)
+                    run_resize(pad)
+
+                    -- Redraw after the resize operation so the selected
+                    -- bar length remains visibly active.
+                    api.redraw()
+                end
+            }
+        )
+    end
 
     -- Regions 1 t/m 8
     -- Pending uses the same LIGHT_BLUE everywhere. The normal row is BLUE so
@@ -228,11 +291,6 @@ return function(api)
 
     -- Page 1 t/m 4. The selected page is also stored as a shared variable
     -- so other screens can become page-aware later without changing this UI.
-    local current_page = 1
-    if api.get_page then
-        current_page = api.get_page()
-    end
-
     api.drawstrip(
         4, 5, 8,
         C.BLUE,
@@ -245,6 +303,7 @@ return function(api)
             on_press = function(pad)
                 if api.set_page then
                     api.set_page(pad.col - 4)
+                    api.redraw()
                 end
             end
         }
@@ -356,7 +415,9 @@ return function(api)
         }
     )
 
-    -- Current-region overview on the top two rows.
-    -- This is a visual overlay only; all existing pad callbacks remain intact.
-    api.draw_loop_overview()
+    -- Current-region overview belongs only to page 1.
+    -- On pages 2 through 4, rows 7 and 8 are the resize controls.
+    if current_page == 1 then
+        api.draw_loop_overview()
+    end
 end

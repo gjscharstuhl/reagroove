@@ -1326,6 +1326,7 @@ end
 
 local function update_loop_overview()
     if LP.current_screen ~= 0
+       or LP.current_page ~= 1
        or not LP.matrix_screen_active
        or not LP.framebuffer
        or not Bridge then
