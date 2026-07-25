@@ -24,6 +24,87 @@ local lib = dofile(
 local command_cache = {}
 local current_region_number
 
+local function arm_subproject_track(track_number, page)
+
+    --------------------------------------------------------
+    -- Alle subprojecten resetten
+    --------------------------------------------------------
+
+    for subproject_index = 1, 8 do
+        local subproject =
+            reaper.EnumProjects(subproject_index)
+
+        if subproject then
+            for track_index = 0,
+                reaper.CountTracks(subproject) - 1 do
+
+                local track =
+                    reaper.GetTrack(
+                        subproject,
+                        track_index
+                    )
+
+                if track then
+                    reaper.SetMediaTrackInfo_Value(
+                        track,
+                        "I_RECARM",
+                        0
+                    )
+
+                    reaper.SetMediaTrackInfo_Value(
+                        track,
+                        "I_AUTOMODE",
+                        0
+                    )
+                end
+            end
+        end
+    end
+
+    --------------------------------------------------------
+    -- Actieve subprojecttrack
+    --------------------------------------------------------
+
+    local project =
+        reaper.EnumProjects(track_number)
+
+    if not project then
+        return false
+    end
+
+    local track =
+        reaper.GetTrack(project, 0)
+
+    if not track then
+        return false
+    end
+
+    --------------------------------------------------------
+    -- Page-filter
+    --------------------------------------------------------
+
+    if page >= 1 then
+        reaper.SetMediaTrackInfo_Value(
+            track,
+            "I_RECARM",
+            1
+        )
+    end
+
+    -- Latch wordt uitsluitend door transport.lua geregeld.
+    reaper.SetMediaTrackInfo_Value(
+        track,
+        "I_AUTOMODE",
+        0
+    )
+
+    reaper.TrackList_AdjustWindows(false)
+    reaper.UpdateArrange()
+
+    return true
+end
+
+
 local function find_region(project, region_number)
     local _, markers, regions =
         reaper.CountProjectMarkers(project)
@@ -226,7 +307,7 @@ function Pattern.select(track_number, region_number)
         track_number
     )
 
-    lib.arm(
+    arm_subproject_track(
         track_number,
         page
     )

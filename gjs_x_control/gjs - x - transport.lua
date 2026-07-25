@@ -453,15 +453,17 @@ function Transport.record()
     end
 
     local phase = get_phase()
+
     local play_state =
         reaper.GetPlayStateEx(project)
 
-    -- Tweede druk tijdens normale opname:
-    -- opname beëindigen.
-    reaper.ShowConsoleMsg(
-    "Phase = " .. tostring(get_phase()) .. "\n"
-	)
-    if phase ~= 2 and (play_state & 4) == 4 then
+    --------------------------------------------------------
+    -- Page 1: tweede druk stopt normale opname
+    --------------------------------------------------------
+
+    if phase <= 1
+    and (play_state & 4) == 4 then
+
         reaper.Main_OnCommandEx(
             CMD_RECORD,
             0,
@@ -469,20 +471,31 @@ function Transport.record()
         )
 
         state.watching_record = false
+        state.reached_time_selection = false
         state.pending_record = false
         state.last_record_led_color = nil
+
         return
     end
+
+    --------------------------------------------------------
+    -- Status bewaren voor Transport.update()
+    --------------------------------------------------------
 
     state.project = project
     state.active_track = active_track
     state.phase = phase
 
     state.reached_time_selection = false
+    state.pending_record = false
     state.last_record_led_color = nil
     state.watching_record = true
 
-    if phase == 2 then
+    --------------------------------------------------------
+    -- Page > 1: FX-automation recording
+    --------------------------------------------------------
+
+    if phase > 1 then
         reaper.SetExtState(
             "GJS_X",
             "FxRec",
@@ -490,32 +503,39 @@ function Transport.record()
             true
         )
 
-        -- Phase 2 start geen normale opname.
-        -- De watcher schakelt latch in bij de region.
-    else
-        reaper.SetExtState(
-            "GJS_X",
-            "FxRec",
-            "0",
-            true
-        )
+        -- Geen normale REAPER-opname starten.
+        -- Transport.update() schakelt latch in zodra
+        -- de actieve region bereikt wordt.
 
-        -- Als er al wordt afgespeeld buiten de gekozen region,
-        -- laat de bestaande region-queue intact en start opname
-        -- pas zodra de time-selection is bereikt.
-        if (play_state & 1) == 1
-        and not inside_time_selection(project) then
-            state.pending_record = true
-        else
-            state.pending_record = false
-
-            reaper.Main_OnCommandEx(
-                CMD_RECORD,
-                0,
-                project
-            )
-        end
+        return
     end
+
+    --------------------------------------------------------
+    -- Page 1: normale audio/MIDI-opname
+    --------------------------------------------------------
+
+    reaper.SetExtState(
+        "GJS_X",
+        "FxRec",
+        "0",
+        true
+    )
+
+    -- Wanneer playback al buiten de gekozen region loopt,
+    -- wachten tot de gequeuede region bereikt wordt.
+    if (play_state & 1) == 1
+    and not inside_time_selection(project) then
+
+        state.pending_record = true
+
+        return
+    end
+
+    reaper.Main_OnCommandEx(
+        CMD_RECORD,
+        0,
+        project
+    )
 end
 
 
@@ -553,7 +573,7 @@ function Transport.update(api)
     state.reached_time_selection =
         inside_time_selection(state.project)
 
-    if state.phase == 2 then
+    if state.phase >1  then
         local fx_record =
             tonumber(
                 reaper.GetExtState(
