@@ -20,6 +20,7 @@ local playlist_first_slot = nil
 local playlist_last_slot = nil
 local playlist_active_slot = nil
 local playlist_pending_slot = nil
+local playlist_pressed_slot = nil
 
 local SCENE_EMPTY   = { 10, 3, 0 }
 local SCENE_SAVED   = { 127, 35, 0 }
@@ -72,6 +73,7 @@ local function stop_playlist()
     playlist_last_slot = nil
     playlist_active_slot = nil
     playlist_pending_slot = nil
+    playlist_pressed_slot = nil
 end
 
 local function pending_scene_has_arrived(api)
@@ -388,6 +390,10 @@ queue_playlist_slot = function(
         playlist_active_slot = slot
         playlist_pending_slot = nil
 
+        if playlist_pressed_slot == slot then
+            playlist_pressed_slot = nil
+        end
+
         local next_slot =
             playlist_api.NextInGroup(
                 slot,
@@ -459,12 +465,11 @@ local function start_playlist(api, slot)
     playlist_last_slot = last_slot
     playlist_active_slot = nil
     playlist_pending_slot = slot
+    playlist_pressed_slot = slot
 
     clear_scene_radio(api)
 
-    if api.transport and api.transport.play then
-        api.transport.play()
-    end
+
 
     -- Alleen het aangeklikte startslot wordt onmiddellijk geladen.
     return queue_playlist_slot(
@@ -518,8 +523,7 @@ local function drawscreen4(api)
 
         if slot == playlist_active_slot then
             return PLAYLIST_ACTIVE
-        elseif operation ~= MODE_PLAY
-        and slot == playlist_pending_slot then
+        elseif slot == playlist_pressed_slot then
             return PLAYLIST_PENDING
         elseif playlist_api.IsFilled(slot) then
             return PLAYLIST_FILLED
@@ -549,6 +553,12 @@ local function drawscreen4(api)
                         api.redraw()
                     end
                 elseif operation == MODE_PLAY then
+                
+					show_playlist_pad(
+						api,
+						slot,
+						PLAYLIST_PENDING
+					)
                     start_playlist(api, slot)
                 end
             end,
