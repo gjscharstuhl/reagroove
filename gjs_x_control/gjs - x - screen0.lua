@@ -358,17 +358,41 @@ return function(api)
         }
     )
 
-    -- Tap tempo, then copy tab 1 tempo to tabs 2 through 9.
-    api.drawpad(
-        3,
-        5,
-        C.PURPLE,
-        api.MODE_HIGHLIGHT,
-        {
-            active_color = api.SELECT_COLOR,
-            on_press = tap_and_sync_tempo
-        }
-    )
+	if current_page == 1 then
+		-- Bestaande tap tempo: niets wijzigen.
+		api.drawpad(
+			3,
+			5,
+			C.PURPLE,
+			api.MODE_HIGHLIGHT,
+			{
+				active_color = api.SELECT_COLOR,
+				on_press = tap_and_sync_tempo
+			}
+		)
+
+	elseif current_page == 2 then
+		-- Metronoomstatus uit REAPER ophalen.
+		local metronome_on =
+			reaper.GetToggleCommandState(40364) == 1
+
+		local screen_state = api.get_screen_state(0)
+		screen_state.toggle[35] = metronome_on
+
+		api.drawpad(
+			3,
+			5,
+			C.PURPLE,
+			api.MODE_TOGGLE,
+			{
+				active_color = api.SELECT_COLOR,
+
+				on_press = function()
+					reaper.Main_OnCommand(40364, 0)
+				end
+			}
+		)
+	end
 
     -- Undo
     api.drawpad(

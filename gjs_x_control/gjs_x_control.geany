@@ -27,8 +27,8 @@ long_line_behaviour=1
 long_line_column=72
 
 [files]
-current_page=2
-FILE_NAME_0=7554;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20screen0.lua;0;4
+current_page=0
+FILE_NAME_0=9320;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20screen0.lua;0;4
 FILE_NAME_1=1292;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20core.lua;0;4
 FILE_NAME_2=15951;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20screen4.lua;0;4
 FILE_NAME_3=2236;Lua;0;EUTF-8;1;1;0;%2Fhome%2Fgj%2F.config%2FREAPER%2FScripts%2Fgjs%2Fgjs_x_control%2Fgjs%20-%20x%20-%20pattern.lua;0;4
