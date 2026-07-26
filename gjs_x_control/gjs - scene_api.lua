@@ -8,8 +8,7 @@ local M = {}
 
 local scene = {
 
-    current = nil,
-    next = nil,
+    active_track = 1,
 
     patternlist = {
         1,1,1,1,
@@ -68,6 +67,14 @@ function M.SaveScene(scene_nr)
         return false
     end
 
+    local active_track = tonumber(
+        reaper.GetExtState("GJS_X", "ActiveTrack")
+    )
+
+    if active_track and active_track >= 1 and active_track <= 8 then
+        scene.active_track = math.floor(active_track)
+    end
+
     scenelist[scene_nr] = copy(scene)
 
     return true
@@ -96,8 +103,7 @@ function M.Clear()
 
     scene = {
 
-        current = nil,
-        next = nil,
+        active_track = 1,
 
         patternlist = {
             1,1,1,1,
@@ -107,6 +113,20 @@ function M.Clear()
     }
 
     scenelist = {}
+
+end
+
+function M.get_active_track()
+
+    local active_track = tonumber(scene.active_track)
+
+    if not active_track or active_track < 1 or active_track > 8 then
+        active_track = tonumber(
+            reaper.GetExtState("GJS_X", "ActiveTrack")
+        ) or 1
+    end
+
+    return math.floor(active_track)
 
 end
 

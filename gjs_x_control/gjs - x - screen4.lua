@@ -204,6 +204,7 @@ local function get_scene_targets(scene_nr)
     end
 
     local targets = {}
+    local active_track = scene_api.get_active_track()
 
     for track = 1, 8 do
         local region = scene_api.get_pattern(track)
@@ -213,7 +214,7 @@ local function get_scene_targets(scene_nr)
         end
     end
 
-    return targets
+    return targets, active_track
 end
 
 local function queue_scene_now(
@@ -221,7 +222,7 @@ local function queue_scene_now(
     scene_nr,
     arrived_callback
 )
-    local targets = get_scene_targets(scene_nr)
+    local targets, active_track = get_scene_targets(scene_nr)
 
     if not targets then
         show_error(
@@ -244,6 +245,12 @@ local function queue_scene_now(
         end
     end
 
+    if active_track
+    and api.pattern
+    and type(api.pattern.activate_track) == "function" then
+        api.pattern.activate_track(active_track)
+    end
+
     show_pending_scene(api, scene_nr)
     start_pending_watch(api)
 
@@ -255,7 +262,7 @@ local function queue_scene_at_boundary(
     scene_nr,
     arrived_callback
 )
-    local targets = get_scene_targets(scene_nr)
+    local targets, active_track = get_scene_targets(scene_nr)
 
     if not targets then
         show_error(
@@ -279,6 +286,7 @@ local function queue_scene_at_boundary(
 
     return api.pattern.queue_scene(
         targets,
+        active_track,
         function()
             start_pending_watch(api)
         end

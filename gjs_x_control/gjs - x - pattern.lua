@@ -13,6 +13,7 @@ local last_update_time = 0
 
 local queued_scene_patterns = nil
 local queued_scene_callback = nil
+local queued_scene_active_track = nil
 
 local SCENE_QUEUE_LOOKAHEAD = 1.0
 
@@ -104,6 +105,30 @@ local function arm_subproject_track(track_number, page)
     return true
 end
 
+
+function Pattern.activate_track(track_number)
+    track_number = tonumber(track_number)
+
+    if not track_number or track_number < 1 or track_number > 8 then
+        return false
+    end
+
+    track_number = math.floor(track_number)
+
+    reaper.SetExtState(
+        "GJS_X",
+        "ActiveTrack",
+        tostring(track_number),
+        false
+    )
+
+    local page = tonumber(
+        reaper.GetExtState("GJS_X", "Page")
+    ) or 1
+
+    lib.SelectTrackInFolder("tracks", track_number)
+    return arm_subproject_track(track_number, page)
+end
 
 local function find_region(project, region_number)
     local _, markers, regions =
@@ -332,7 +357,7 @@ function Pattern.select(track_number, region_number)
     return true
 end
 
-function Pattern.queue_scene(patternlist, activated_callback)
+function Pattern.queue_scene(patternlist, active_track, activated_callback)
     if type(patternlist) ~= "table" then
         return false
     end
@@ -340,6 +365,7 @@ function Pattern.queue_scene(patternlist, activated_callback)
     queued_scene_patterns =
         copy_patternlist(patternlist)
 
+    queued_scene_active_track = tonumber(active_track)
     queued_scene_callback = activated_callback
 
     return true
@@ -351,9 +377,11 @@ local function activate_queued_scene(api)
     end
 
     local patternlist = queued_scene_patterns
+    local active_track = queued_scene_active_track
     local callback = queued_scene_callback
 
     queued_scene_patterns = nil
+    queued_scene_active_track = nil
     queued_scene_callback = nil
 
     for track = 1, 8 do
@@ -370,6 +398,10 @@ local function activate_queued_scene(api)
                 region
             )
         end
+    end
+
+    if active_track then
+        Pattern.activate_track(active_track)
     end
 
     if callback then

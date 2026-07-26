@@ -255,20 +255,31 @@ end
 -- ============================================================
 
 local function reset_fx_automation()
-    if not state.project then
+
+    local proj = state.project
+
+    -- geen project bekend
+    if not proj then
         return
     end
 
-    local track =
-        reaper.GetTrack(state.project, 0)
-
-    if track then
-        reaper.SetMediaTrackInfo_Value(
-            track,
-            "I_AUTOMODE",
-            0
-        )
+    -- projectpointer nog geldig?
+    local ok = pcall(reaper.CountTracks, proj)
+    if not ok then
+        state.project = nil
+        return
     end
+
+    local track = reaper.GetTrack(proj, 0)
+    if not track then
+        return
+    end
+
+    pcall(reaper.SetMediaTrackInfo_Value,
+        track,
+        "I_AUTOMODE",
+        0
+    )
 end
 
 
