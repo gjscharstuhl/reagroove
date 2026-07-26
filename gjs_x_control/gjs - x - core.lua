@@ -150,6 +150,19 @@ local function msgbox(message, title)
     )
 end
 
+function GetActiveTrackProject()
+
+    local active_track =
+        tonumber(
+            reaper.GetExtState(
+                "GJS_MULTI",
+                "ActiveTrack"
+            )
+        ) or 1
+
+    return reaper.EnumProjects(active_track, "")
+end
+
 local function table_to_string(value, indent, visited)
     indent = indent or 0
     visited = visited or {}
@@ -1828,5 +1841,5 @@ API.suspend_midi_input = suspend_midi_input
 API.get_page = get_page
 API.set_page = set_page
 API.pattern = Pattern
-
+API.GetActiveTrackProject = GetActiveTrackProject
 return API

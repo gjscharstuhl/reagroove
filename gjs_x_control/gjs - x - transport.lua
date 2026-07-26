@@ -254,21 +254,34 @@ end
 -- FX-record automation
 -- ============================================================
 
+local function get_active_track_project()
+    local active_track =
+        tonumber(
+            reaper.GetExtState(
+                "GJS_MULTI",
+                "ActiveTrack"
+            )
+        ) or 1
+
+    return reaper.EnumProjects(active_track, "")
+end
+
 local function reset_fx_automation()
-    if not state.project then
+    local proj = get_active_track_project()
+    if not proj then
         return
     end
 
-    local track =
-        reaper.GetTrack(state.project, 0)
-
-    if track then
-        reaper.SetMediaTrackInfo_Value(
-            track,
-            "I_AUTOMODE",
-            0
-        )
+    local track = reaper.GetTrack(proj, 0)
+    if not track then
+        return
     end
+
+    reaper.SetMediaTrackInfo_Value(
+        track,
+        "I_AUTOMODE",
+        0
+    )
 end
 
 

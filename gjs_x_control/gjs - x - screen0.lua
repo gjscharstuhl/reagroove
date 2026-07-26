@@ -394,6 +394,13 @@ return function(api)
 		)
 	end
 
+	local function undo_active_track()
+		local proj = api.GetActiveTrackProject()
+
+		if proj then
+			reaper.Undo_DoUndo2(proj)
+		end
+	end
     -- Undo
     api.drawpad(
         3,
@@ -403,11 +410,18 @@ return function(api)
         {
             active_color = api.SELECT_COLOR,
             on_press = function()
-                reaper.Main_OnCommand(40029, 0)
+                undo_active_track()
             end
         }
     )
 
+	local function redo_active_track()
+		local proj = api.GetActiveTrackProject()
+
+		if proj then
+			reaper.Undo_DoRedo2(proj)
+		end
+	end
     -- Redo
     api.drawpad(
         3,
@@ -417,7 +431,7 @@ return function(api)
         {
             active_color = api.SELECT_COLOR,
             on_press = function()
-                reaper.Main_OnCommand(40030, 0)
+                redo_active_track()
             end
         }
     )
