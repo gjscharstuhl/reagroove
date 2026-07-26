@@ -27,6 +27,28 @@ local scenelist = {}
 -- Helpers
 ------------------------------------------------------------
 
+local function get_current_active_track()
+
+    local active_track = tonumber(
+        reaper.GetExtState("GJS_X", "ActiveTrack")
+    )
+
+    if not active_track then
+        active_track = tonumber(
+            reaper.GetExtState("GJS_MULTI", "ActiveTrack")
+        )
+    end
+
+    if not active_track
+    or active_track < 1
+    or active_track > 8 then
+        return 1
+    end
+
+    return math.floor(active_track)
+
+end
+
 local function copy(tbl)
 
     local result = {}
@@ -67,15 +89,13 @@ function M.SaveScene(scene_nr)
         return false
     end
 
-    local active_track = tonumber(
-        reaper.GetExtState("GJS_X", "ActiveTrack")
-    )
+    local saved_scene = copy(scene)
 
-    if active_track and active_track >= 1 and active_track <= 8 then
-        scene.active_track = math.floor(active_track)
-    end
+    -- Save the track that is active at the exact moment
+    -- this scene is stored. No fixed track number is used.
+    saved_scene.active_track = get_current_active_track()
 
-    scenelist[scene_nr] = copy(scene)
+    scenelist[scene_nr] = saved_scene
 
     return true
 
@@ -120,10 +140,10 @@ function M.get_active_track()
 
     local active_track = tonumber(scene.active_track)
 
+    -- Compatibility with older scenes that do not yet contain
+    -- an active_track value.
     if not active_track or active_track < 1 or active_track > 8 then
-        active_track = tonumber(
-            reaper.GetExtState("GJS_X", "ActiveTrack")
-        ) or 1
+        return get_current_active_track()
     end
 
     return math.floor(active_track)

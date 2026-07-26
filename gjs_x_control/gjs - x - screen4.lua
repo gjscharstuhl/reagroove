@@ -551,6 +551,13 @@ local function drawscreen4(api)
                 elseif operation == MODE_PLAY then
                     start_playlist(api, slot)
                 end
+            end,
+
+            -- De redraw hierboven zet al de juiste playlistkleur.
+            -- Voorkom dat MODE_HIGHLIGHT bij loslaten daarna
+            -- alsnog de oude pad.color (meestal OFF) terugzet.
+            on_release = function()
+                return true
             end
         }
     )
