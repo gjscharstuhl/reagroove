@@ -1,0 +1,341 @@
+desc:GJS - X - SysEx Bridge
+options:gmem=GJS_X_BRIDGE
+
+// ============================================================
+// gmem-indeling
+//
+// gmem[0] = sequence
+// gmem[1] = command
+// gmem[2] = laatst bevestigde sequence
+//
+// Command 3:
+// gmem[3] = LED-index / MIDI-noot
+// gmem[4] = rood   0-127
+// gmem[5] = groen  0-127
+// gmem[6] = blauw  0-127
+// ============================================================
+
+
+@init
+
+last_sequence = -1;
+
+// Twee losse geheugenbuffers voor SysEx
+buf_midi = 0;
+buf_daw = 128;
+
+
+@block
+
+sequence = floor(gmem[0]);
+
+sequence != last_sequence ? (
+    last_sequence = sequence;
+    command = floor(gmem[1]);
+
+
+    // ========================================================
+    // Command 1: Programmer Mode
+    // ========================================================
+
+    command == 1 ? (
+
+        // Normale MIDI-interface:
+        // F0 00 20 29 02 0D 0E 01 F7
+
+        buf_midi[0] = $xF0;
+        buf_midi[1] = $x00;
+        buf_midi[2] = $x20;
+        buf_midi[3] = $x29;
+        buf_midi[4] = $x02;
+        buf_midi[5] = $x0D;
+        buf_midi[6] = $x0E;
+        buf_midi[7] = $x01;
+        buf_midi[8] = $xF7;
+
+        midisend_buf(0, buf_midi, 9);
+
+
+        // DAW-interface:
+        // F0 00 20 29 02 0C 0E 01 F7
+
+        buf_daw[0] = $xF0;
+        buf_daw[1] = $x00;
+        buf_daw[2] = $x20;
+        buf_daw[3] = $x29;
+        buf_daw[4] = $x02;
+        buf_daw[5] = $x0C;
+        buf_daw[6] = $x0E;
+        buf_daw[7] = $x01;
+        buf_daw[8] = $xF7;
+
+        midisend_buf(0, buf_daw, 9);
+
+        gmem[2] = sequence;
+    );
+
+
+    // ========================================================
+    // Command 2: Live Mode
+    // ========================================================
+
+    command == 2 ? (
+
+        // Normale MIDI-interface:
+        // F0 00 20 29 02 0D 0E 00 F7
+
+        buf_midi[0] = $xF0;
+        buf_midi[1] = $x00;
+        buf_midi[2] = $x20;
+        buf_midi[3] = $x29;
+        buf_midi[4] = $x02;
+        buf_midi[5] = $x0D;
+        buf_midi[6] = $x0E;
+        buf_midi[7] = $x00;
+        buf_midi[8] = $xF7;
+
+        midisend_buf(0, buf_midi, 9);
+
+
+        // DAW-interface:
+        // F0 00 20 29 02 0C 0E 00 F7
+
+        buf_daw[0] = $xF0;
+        buf_daw[1] = $x00;
+        buf_daw[2] = $x20;
+        buf_daw[3] = $x29;
+        buf_daw[4] = $x02;
+        buf_daw[5] = $x0C;
+        buf_daw[6] = $x0E;
+        buf_daw[7] = $x00;
+        buf_daw[8] = $xF7;
+
+        midisend_buf(0, buf_daw, 9);
+
+        gmem[2] = sequence;
+    );
+
+
+    // ========================================================
+    // Command 3: één LED instellen met RGB
+    // ========================================================
+
+    command == 3 ? (
+
+        led_index = floor(gmem[3]);
+        red       = floor(gmem[4]);
+        green     = floor(gmem[5]);
+        blue      = floor(gmem[6]);
+
+        // Veilig begrenzen
+        led_index = max(0, min(127, led_index));
+        red       = max(0, min(127, red));
+        green     = max(0, min(127, green));
+        blue      = max(0, min(127, blue));
+
+
+        // ----------------------------------------------------
+        // Normale MIDI-interface:
+        //
+        // F0 00 20 29 02 0D 03
+        // 03 <led> <r> <g> <b>
+        // F7
+        // ----------------------------------------------------
+
+        buf_midi[0]  = $xF0;
+        buf_midi[1]  = $x00;
+        buf_midi[2]  = $x20;
+        buf_midi[3]  = $x29;
+        buf_midi[4]  = $x02;
+        buf_midi[5]  = $x0D;
+        buf_midi[6]  = $x03;
+
+        // Colourspec
+        buf_midi[7]  = $x03;      // RGB lighting type
+        buf_midi[8]  = led_index;
+        buf_midi[9]  = red;
+        buf_midi[10] = green;
+        buf_midi[11] = blue;
+
+        buf_midi[12] = $xF7;
+
+        midisend_buf(0, buf_midi, 13);
+
+
+        // ----------------------------------------------------
+        // DAW-interface:
+        //
+        // F0 00 20 29 02 0C 03
+        // 03 <led> <r> <g> <b>
+        // F7
+        // ----------------------------------------------------
+
+        buf_daw[0]  = $xF0;
+        buf_daw[1]  = $x00;
+        buf_daw[2]  = $x20;
+        buf_daw[3]  = $x29;
+        buf_daw[4]  = $x02;
+        buf_daw[5]  = $x0C;
+        buf_daw[6]  = $x03;
+
+        // Colourspec
+        buf_daw[7]  = $x03;
+        buf_daw[8]  = led_index;
+        buf_daw[9]  = red;
+        buf_daw[10] = green;
+        buf_daw[11] = blue;
+
+        buf_daw[12] = $xF7;
+
+        midisend_buf(0, buf_daw, 13);
+
+        gmem[2] = sequence;
+    );
+    
+    // ========================================================
+    // Command 4: volledige fader van 8 RGB-leds
+    // ========================================================
+    
+    command == 4 ? (
+    
+        led_count = floor(gmem[10]);
+    
+        // Normale MIDI-interface
+        buf_midi[0] = $xF0;
+        buf_midi[1] = $x00;
+        buf_midi[2] = $x20;
+        buf_midi[3] = $x29;
+        buf_midi[4] = $x02;
+        buf_midi[5] = $x0D;
+        buf_midi[6] = $x03;
+    
+        // DAW-interface
+        buf_daw[0] = $xF0;
+        buf_daw[1] = $x00;
+        buf_daw[2] = $x20;
+        buf_daw[3] = $x29;
+        buf_daw[4] = $x02;
+        buf_daw[5] = $x0C;
+        buf_daw[6] = $x03;
+    
+        i = 0;
+    
+        loop(led_count,
+            source = 11 + (i * 4);
+            target = 7 + (i * 5);
+    
+            led_index = floor(gmem[source + 0]);
+            red       = floor(gmem[source + 1]);
+            green     = floor(gmem[source + 2]);
+            blue      = floor(gmem[source + 3]);
+    
+            // Eén RGB colourspec
+            buf_midi[target + 0] = $x03;
+            buf_midi[target + 1] = led_index;
+            buf_midi[target + 2] = red;
+            buf_midi[target + 3] = green;
+            buf_midi[target + 4] = blue;
+    
+            buf_daw[target + 0] = $x03;
+            buf_daw[target + 1] = led_index;
+            buf_daw[target + 2] = red;
+            buf_daw[target + 3] = green;
+            buf_daw[target + 4] = blue;
+    
+            i += 1;
+        );
+    
+        message_length = 8 + (led_count * 5);
+    
+        buf_midi[message_length - 1] = $xF7;
+        buf_daw[message_length - 1]  = $xF7;
+    
+        midisend_buf(0, buf_midi, message_length);
+        midisend_buf(0, buf_daw, message_length);
+    
+        gmem[2] = sequence;
+    );
+    
+
+
+    // ========================================================
+    // Command 5: volledige 8x8 RGB-matrix (maximaal 64 leds)
+    //
+    // gmem[10] = aantal leds (0-64)
+    // Vanaf gmem[11], per led vier waarden:
+    //   led-index, rood, groen, blauw
+    //
+    // Deze uitbreiding verandert de bestaande commands 1-4 niet.
+    // ========================================================
+
+    command == 5 ? (
+
+        led_count = floor(gmem[10]);
+        led_count = max(0, min(64, led_count));
+
+        // Aparte grote buffers. Een matrixbericht kan 328 bytes zijn.
+        buf_matrix_midi = 256;
+        buf_matrix_daw  = 768;
+
+        // Normale MIDI-interface
+        buf_matrix_midi[0] = $xF0;
+        buf_matrix_midi[1] = $x00;
+        buf_matrix_midi[2] = $x20;
+        buf_matrix_midi[3] = $x29;
+        buf_matrix_midi[4] = $x02;
+        buf_matrix_midi[5] = $x0D;
+        buf_matrix_midi[6] = $x03;
+
+        // DAW-interface
+        buf_matrix_daw[0] = $xF0;
+        buf_matrix_daw[1] = $x00;
+        buf_matrix_daw[2] = $x20;
+        buf_matrix_daw[3] = $x29;
+        buf_matrix_daw[4] = $x02;
+        buf_matrix_daw[5] = $x0C;
+        buf_matrix_daw[6] = $x03;
+
+        i = 0;
+
+        loop(led_count,
+            source = 11 + (i * 4);
+            target = 7 + (i * 5);
+
+            led_index = floor(gmem[source + 0]);
+            red       = floor(gmem[source + 1]);
+            green     = floor(gmem[source + 2]);
+            blue      = floor(gmem[source + 3]);
+
+            led_index = max(0, min(127, led_index));
+            red       = max(0, min(127, red));
+            green     = max(0, min(127, green));
+            blue      = max(0, min(127, blue));
+
+            buf_matrix_midi[target + 0] = $x03;
+            buf_matrix_midi[target + 1] = led_index;
+            buf_matrix_midi[target + 2] = red;
+            buf_matrix_midi[target + 3] = green;
+            buf_matrix_midi[target + 4] = blue;
+
+            buf_matrix_daw[target + 0] = $x03;
+            buf_matrix_daw[target + 1] = led_index;
+            buf_matrix_daw[target + 2] = red;
+            buf_matrix_daw[target + 3] = green;
+            buf_matrix_daw[target + 4] = blue;
+
+            i += 1;
+        );
+
+        message_length = 8 + (led_count * 5);
+
+        buf_matrix_midi[message_length - 1] = $xF7;
+        buf_matrix_daw[message_length - 1]  = $xF7;
+
+        midisend_buf(0, buf_matrix_midi, message_length);
+        midisend_buf(0, buf_matrix_daw, message_length);
+
+        gmem[2] = sequence;
+    );
+
+);
+

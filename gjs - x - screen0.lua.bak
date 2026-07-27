@@ -1,25 +1,14 @@
 -- ============================================================
--- Main screen content for screen 0
--- Version 18 - restore exact palette colors after matrix draw
+-- Screen 0: main screen
+-- Version 13 - preserve original colors for pads 35-38
 -- ============================================================
 
 
 local resize_api = include("gjs - x - resize.lua")
 local clear_api = include("gjs - x - clear.lua")
 
-return function(api, navigation)
+return function(api)
     local C = api.COLOR
-
-    if api.set_screen0_main_active then
-        api.set_screen0_main_active(true)
-    end
-
-    if api.set_navigation then
-        api.set_navigation(
-            nil,
-            navigation and navigation.open_edit or nil
-        )
-    end
 
     local function normalized_name(name)
         return (name or "")
@@ -134,11 +123,6 @@ return function(api, navigation)
             api.set_screen1_track_and_region(track, region)
         end
 
-        -- Only screen 0 may change the active REAPER track.
-        if type(api.pattern.activate_track) == "function" then
-            api.pattern.activate_track(track)
-        end
-
         api.pattern.select(track, region)
     end
 
@@ -196,12 +180,8 @@ return function(api, navigation)
         end
     end
 
-    local play_state = reaper.GetPlayState()
-    local transport_active =
-        (play_state & 1) == 1 or
-        (play_state & 4) == 4
-
-    if current_page == 1 or transport_active then
+    if current_page == 1 then
+        -- The sequencer exists only on page 1.
         api.drawblock(
             8, 1,
             7, 8,
@@ -209,6 +189,9 @@ return function(api, navigation)
             api.MODE_NONE
         )
     else
+        -- Pages 2 through 4 replace the sequencer completely.
+        -- Each page has its own radio group so the selection state
+        -- cannot collide with another page.
         api.drawblock(
             8, 1,
             7, 8,
@@ -268,31 +251,22 @@ return function(api, navigation)
         }
     )
 
-	-- Play
-	api.drawpad(
-		4,
-		1,
-		C.DARK_GREEN,
-		api.MODE_HIGHLIGHT,
-		{
-			active_color = api.SELECT_COLOR,
+    -- Play
+    api.drawpad(
+        4,
+        1,
+        C.GREEN,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = api.SELECT_COLOR,
 
-			on_press = function()
-				if api.transport then
-					api.transport.play()
-				end
-			end,
-
-		on_release = function()
-			if api.transport then
-				api.transport.invalidate_transport_leds()
-				api.transport.update(api)
-			end
-
-			return true
-		end
-		}
-	)
+            on_press = function()
+                if api.transport then
+                    api.transport.play()
+                end
+            end
+        }
+    )
 
     -- Record
     api.drawpad(
@@ -309,13 +283,11 @@ return function(api, navigation)
                 end
             end,
 
-		on_release = function()
-			if api.transport then
-				api.transport.invalidate_transport_leds()
-				api.transport.update(api)
-			end
-			return true
-		end
+            on_release = function()
+                if api.transport then
+                    api.transport.invalidate_record_led()
+                end
+            end
         }
     )
 
@@ -332,16 +304,6 @@ return function(api, navigation)
                 if api.transport then
                     api.transport.stop()
                 end
-            end,
-
-            on_release = function()
-                -- Let REAPER process the stop command first, then redraw
-                -- screen 0 so pages 2-4 immediately return to purple.
-                reaper.defer(function()
-                    api.redraw()
-                end)
-
-                return true
             end
         }
     )
@@ -360,62 +322,24 @@ return function(api, navigation)
             on_press = function(pad)
                 if api.set_page then
                     api.set_page(pad.col - 4)
-
-                    -- Redraw on the next defer cycle. An immediate redraw here
-                    -- can still be overwritten by the current page-button MIDI
-                    -- event, leaving the old grey sequencer background visible
-                    -- until another action triggers a redraw.
-                    reaper.defer(function()
-                        api.redraw()
-                    end)
+                    api.redraw()
                 end
             end
         }
     )
 
-	if current_page == 1 then
-		-- Bestaande tap tempo: niets wijzigen.
-		api.drawpad(
-			3,
-			5,
-			C.PURPLE,
-			api.MODE_HIGHLIGHT,
-			{
-				active_color = api.SELECT_COLOR,
-				on_press = tap_and_sync_tempo
-			}
-		)
+    -- Tap tempo, then copy tab 1 tempo to tabs 2 through 9.
+    api.drawpad(
+        3,
+        5,
+        C.PURPLE,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.PURPLE,
+            on_press = tap_and_sync_tempo
+        }
+    )
 
-	elseif current_page == 2 then
-		-- Metronoomstatus uit REAPER ophalen.
-		local metronome_on =
-			reaper.GetToggleCommandState(40364) == 1
-
-		local screen_state = api.get_screen_state(0)
-		screen_state.toggle[35] = metronome_on
-
-		api.drawpad(
-			3,
-			5,
-			C.PURPLE,
-			api.MODE_TOGGLE,
-			{
-				active_color = api.SELECT_COLOR,
-
-				on_press = function()
-					reaper.Main_OnCommand(40364, 0)
-				end
-			}
-		)
-	end
-
-	local function undo_active_track()
-		local proj = api.GetActiveTrackProject()
-
-		if proj then
-			reaper.Undo_DoUndo2(proj)
-		end
-	end
     -- Undo
     api.drawpad(
         3,
@@ -423,20 +347,13 @@ return function(api, navigation)
         C.LIGHT_PURPLE,
         api.MODE_HIGHLIGHT,
         {
-            active_color = api.SELECT_COLOR,
+            active_color = C.LIGHT_PURPLE,
             on_press = function()
-                undo_active_track()
+                reaper.Main_OnCommand(40029, 0)
             end
         }
     )
 
-	local function redo_active_track()
-		local proj = api.GetActiveTrackProject()
-
-		if proj then
-			reaper.Undo_DoRedo2(proj)
-		end
-	end
     -- Redo
     api.drawpad(
         3,
@@ -444,22 +361,22 @@ return function(api, navigation)
         C.LIGHT_PURPLE,
         api.MODE_HIGHLIGHT,
         {
-            active_color = api.SELECT_COLOR,
+            active_color = C.LIGHT_PURPLE,
             on_press = function()
-                redo_active_track()
+                reaper.Main_OnCommand(40030, 0)
             end
         }
     )
 
-    -- Pad 38 keeps the original LIGHT_BLUE -> SELECT_COLOR highlight.
-    -- Only the page-aware clear callback is new.
+    -- Pad 38: page-aware clear command.
+    -- Page 1 remains reserved; pages 2 through 4 clear regions.
     api.drawpad(
         3,
         8,
         C.LIGHT_BLUE,
         api.MODE_HIGHLIGHT,
         {
-            active_color = api.SELECT_COLOR,
+            active_color = C.LIGHT_BLUE,
 
             on_press = function()
                 if current_page >= 2
@@ -469,8 +386,6 @@ return function(api, navigation)
             end
         }
     )
-
-
 
     -- Record-arm buttons for the first eight direct children of folder
     -- "tracks". Load REAPER's current state before drawing each toggle.
@@ -530,7 +445,9 @@ return function(api, navigation)
         }
     )
 
-    if current_page == 1 or transport_active then
+    -- Current-region overview belongs only to page 1.
+    -- On pages 2 through 4, rows 7 and 8 are the resize controls.
+    if current_page == 1 then
         api.draw_loop_overview()
     end
 end
