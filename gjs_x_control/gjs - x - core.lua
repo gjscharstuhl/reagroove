@@ -106,6 +106,12 @@ local SCREEN_CC = {
     [7] = 19
 }
 
+-- Launchpad X top-row navigation buttons used by screen 0.
+local NAV_CC = {
+    LEFT = 93,
+    RIGHT = 94
+}
+
 ------------------------------------------------------------
 -- State
 ------------------------------------------------------------
@@ -135,7 +141,12 @@ local LP = {
     loop_overview_last_update = 0,
     loop_overview_length = nil,
     loop_overview_current_bar = nil,
-    loop_overview_background = nil
+    loop_overview_background = nil,
+
+    -- Navigation callbacks for the screen-0 main/edit container.
+    screen0_main_active = false,
+    navigation_left = nil,
+    navigation_right = nil
 }
 
 ------------------------------------------------------------
@@ -202,6 +213,15 @@ end
 
 local function get_current_screen()
     return LP.current_screen
+end
+
+local function set_screen0_main_active(active)
+    LP.screen0_main_active = active == true
+end
+
+local function set_navigation(left_callback, right_callback)
+    LP.navigation_left = left_callback
+    LP.navigation_right = right_callback
 end
 
 local function get_screen_state(screen)
@@ -1367,7 +1387,8 @@ local function draw_loop_overview(show_overview)
 end
 
 local function update_loop_overview()
-    if LP.current_screen ~= 0
+    if not LP.screen0_main_active
+       or LP.current_screen ~= 0
        or LP.current_page < 1
        or LP.current_page > 4
        or not LP.matrix_screen_active
@@ -1453,6 +1474,18 @@ local function update_loop_overview()
         tostring(length) .. ":" .. tostring(current_bar or 0)
 end
 
+local function draw_navigation()
+    send_cc_color(
+        NAV_CC.LEFT,
+        LP.navigation_left and SIDEBAR_COLOR.GREY or 0
+    )
+
+    send_cc_color(
+        NAV_CC.RIGHT,
+        LP.navigation_right and SIDEBAR_COLOR.GREY or 0
+    )
+end
+
 ------------------------------------------------------------
 -- Screens
 ------------------------------------------------------------
@@ -1471,6 +1504,9 @@ end
 
 local function draw_current_screen()
     LP.loop_overview_signature = nil
+    LP.navigation_left = nil
+    LP.navigation_right = nil
+    LP.screen0_main_active = false
 
     local draw_screen = LP.screens[LP.current_screen]
 
@@ -1522,12 +1558,14 @@ local function draw_current_screen()
     end
 
     draw_sidebar()
+    draw_navigation()
 
     -- A complete screen redraw sends the whole 8x8 matrix, including the
     -- yellow base colour of the record pad. Apply the live transport LEDs
     -- only after that matrix has been sent, so pages 1 through 4 cannot
     -- overwrite the actual play/record state.
-    if Transport and Transport.invalidate_transport_leds
+    if LP.screen0_main_active
+       and Transport and Transport.invalidate_transport_leds
        and Transport.update then
         Transport.invalidate_transport_leds()
         Transport.update(API)
@@ -1552,7 +1590,6 @@ local function select_screen(screen)
     draw_current_screen()
     reaper.ShowConsoleMsg("Screen " .. screen .. "\n")
 end
-
 ------------------------------------------------------------
 -- MIDI input processing
 ------------------------------------------------------------
@@ -1589,6 +1626,18 @@ local function process_midi_message(message)
 
     elseif msg_type == 0xB0 then
         if data2 == 0 then
+            return
+        end
+
+        if data1 == NAV_CC.LEFT then
+            if LP.navigation_left then
+                LP.navigation_left()
+            end
+            return
+        elseif data1 == NAV_CC.RIGHT then
+            if LP.navigation_right then
+                LP.navigation_right()
+            end
             return
         end
 
@@ -1835,6 +1884,8 @@ API.draw_horizontal_fader = draw_horizontal_fader
 API.render_horizontal_fader = render_horizontal_fader
 API.transport = Transport
 API.get_current_screen = get_current_screen
+API.set_screen0_main_active = set_screen0_main_active
+API.set_navigation = set_navigation
 API.get_active_slot = get_active_slot
 API.set_active_slot = set_active_slot
 API.suspend_midi_input = suspend_midi_input
