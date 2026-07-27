@@ -17,10 +17,60 @@ local queued_scene_active_track = nil
 
 local SCENE_QUEUE_LOOKAHEAD = 1.0
 
-local lib = dofile(
-    reaper.GetResourcePath() ..
-    "/Scripts/gjs/gjs - lib.lua"
-)
+local function select_track_in_folder(folder_name, track_number)
+    track_number = tonumber(track_number)
+
+    if not folder_name or not track_number then
+        return nil
+    end
+
+    local folder_track
+    local folder_index
+
+    for i = 0, reaper.CountTracks(0) - 1 do
+        local track = reaper.GetTrack(0, i)
+        local _, name = reaper.GetTrackName(track)
+
+        if name == folder_name then
+            folder_track = track
+            folder_index = i
+            break
+        end
+    end
+
+    if not folder_track then
+        return nil
+    end
+
+    local folder_depth = reaper.GetTrackDepth(folder_track)
+    local found = 0
+    local target_track
+
+    for i = folder_index + 1, reaper.CountTracks(0) - 1 do
+        local track = reaper.GetTrack(0, i)
+        local depth = reaper.GetTrackDepth(track)
+
+        if depth <= folder_depth then
+            break
+        end
+
+        reaper.SetTrackSelected(track, false)
+
+        if depth == folder_depth + 1 then
+            found = found + 1
+
+            if found == track_number then
+                target_track = track
+            end
+        end
+    end
+
+    if target_track then
+        reaper.SetTrackSelected(target_track, true)
+    end
+
+    return target_track
+end
 
 local command_cache = {}
 local current_region_number
@@ -126,7 +176,7 @@ function Pattern.activate_track(track_number)
         reaper.GetExtState("GJS_X", "Page")
     ) or 1
 
-    lib.SelectTrackInFolder("tracks", track_number)
+    select_track_in_folder("tracks", track_number)
     return arm_subproject_track(track_number, page)
 end
 
@@ -327,7 +377,7 @@ function Pattern.select(track_number, region_number)
             )
         ) or 1
 
-    lib.SelectTrackInFolder(
+    select_track_in_folder(
         "tracks",
         track_number
     )
