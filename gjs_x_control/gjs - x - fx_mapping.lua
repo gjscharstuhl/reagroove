@@ -117,11 +117,24 @@ function M.load(path, wanted_track_number)
     return mappings
 end
 
-local script_path = debug.getinfo(1, "S").source:sub(2)
-local script_dir = script_path:match("(.*[\\/])") or ""
+local OUTPUT_FILENAME = "fx_mapping.ini"
 
 function M.default_path()
-    return script_dir .. "gjs_page3_fx_mapping.ini"
+    local _, project_file = reaper.EnumProjects(-1, "")
+
+    if not project_file or project_file == "" then
+        return nil
+    end
+
+    -- ReaGroove runs on Linux, so project paths use '/'.
+    -- Avoid a backslash character class here; it caused a Lua escape error.
+    local project_dir = project_file:match("^(.*)/")
+
+    if not project_dir or project_dir == "" then
+        return nil
+    end
+
+    return project_dir .. "/" .. OUTPUT_FILENAME
 end
 
 return M
