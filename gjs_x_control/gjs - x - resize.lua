@@ -1,5 +1,6 @@
 -- ============================================================
 -- Screen 0 resize engine
+-- Version 02 - select resized region after operation
 -- ============================================================
 --
 -- Page 2: resize all 8 regions in all 8 subprojects
@@ -47,6 +48,54 @@ local function get_all_regions(proj)
     end)
 
     return regions
+end
+
+
+local function select_region(track_number, region_number)
+    track_number = tonumber(track_number) or 1
+    region_number = tonumber(region_number) or 1
+
+    local proj = reaper.EnumProjects(track_number, "")
+    if not proj then
+        return false
+    end
+
+    local region = get_all_regions(proj)[region_number]
+    if not region then
+        return false
+    end
+
+    reaper.GetSet_LoopTimeRange2(
+        proj,
+        true,
+        false,
+        region.start_pos,
+        region.end_pos,
+        false
+    )
+
+    reaper.SetEditCurPos2(
+        proj,
+        region.start_pos,
+        false,
+        false
+    )
+
+    reaper.SetExtState(
+        "GJS_MULTI",
+        "Region",
+        tostring(region_number),
+        false
+    )
+
+    reaper.SetExtState(
+        "GJS_X",
+        "Region",
+        tostring(region_number),
+        false
+    )
+
+    return true
 end
 
 local function get_qn_per_bar_at_time(proj, time)
@@ -327,7 +376,11 @@ local function end_project_undo(proj, description)
     reaper.Undo_EndBlock2(proj, description, -1)
 end
 
-function M.resize_all_regions_all_projects(bars)
+function M.resize_all_regions_all_projects(
+    bars,
+    selected_track,
+    selected_region
+)
     bars = tonumber(bars)
 
     if not bars or bars < 1 or bars > 16 then
@@ -377,6 +430,16 @@ function M.resize_all_regions_all_projects(bars)
     end
 
     reaper.PreventUIRefresh(-1)
+
+    select_region(
+        tonumber(selected_track)
+            or tonumber(reaper.GetExtState("GJS_MULTI", "ActiveTrack"))
+            or 1,
+        tonumber(selected_region)
+            or tonumber(reaper.GetExtState("GJS_MULTI", "Region"))
+            or 1
+    )
+
     reaper.UpdateArrange()
 
     return true
@@ -384,7 +447,8 @@ end
 
 function M.resize_selected_region_all_projects(
     region_number,
-    bars
+    bars,
+    selected_track
 )
     region_number = tonumber(region_number)
     bars = tonumber(bars)
@@ -441,6 +505,14 @@ function M.resize_selected_region_all_projects(
     end
 
     reaper.PreventUIRefresh(-1)
+
+    select_region(
+        tonumber(selected_track)
+            or tonumber(reaper.GetExtState("GJS_MULTI", "ActiveTrack"))
+            or 1,
+        region_number
+    )
+
     reaper.UpdateArrange()
 
     return true
@@ -511,6 +583,9 @@ function M.resize_selected_region_selected_project(
     end
 
     reaper.PreventUIRefresh(-1)
+
+    select_region(active_track, region_number)
+
     reaper.UpdateArrange()
 
     return true
