@@ -1187,7 +1187,7 @@ end
 -- Loop overview
 ------------------------------------------------------------
 
-local LOOP_OVERVIEW_UPDATE_INTERVAL = 0.01
+local LOOP_OVERVIEW_UPDATE_INTERVAL = 0.05
 local LOOP_LENGTH_RGB = { 83, 20, 20 } -- halfway between grey and red
 local LOOP_CURRENT_RGB = { 127, 0, 0 }
 
@@ -1400,21 +1400,36 @@ local function update_loop_overview()
         return
     end
 
+    -- Beperk ook de controles op afspelen tot het update-interval.
+    local now = reaper.time_precise()
+
+    if now - LP.loop_overview_last_update
+       < LOOP_OVERVIEW_UPDATE_INTERVAL then
+        return
+    end
+
+    LP.loop_overview_last_update = now
+
     local should_show =
         LP.current_page == 1 or any_project_is_playing()
 
     if should_show ~= (LP.loop_overview_visible == true) then
         if should_show then
-            local length, current_bar = get_loop_overview_values()
+            local length, current_bar =
+                get_loop_overview_values()
+
             paint_loop_overview(length, current_bar)
+
             LP.loop_overview_length = length
             LP.loop_overview_current_bar = current_bar
             LP.loop_overview_signature =
-                tostring(length) .. ":" .. tostring(current_bar or 0)
+                tostring(length) .. ":" ..
+                tostring(current_bar or 0)
         else
-            -- Restore the captured purple page background without changing
-            -- the pads or callbacks underneath it.
+            -- Herstel de paarse pagina-achtergrond zonder de
+            -- onderliggende pads en callbacks opnieuw op te bouwen.
             paint_loop_overview(0, nil)
+
             LP.loop_overview_length = 0
             LP.loop_overview_current_bar = nil
             LP.loop_overview_signature = "hidden"
@@ -1433,48 +1448,54 @@ local function update_loop_overview()
         return
     end
 
-    local now = reaper.time_precise()
-    if now - LP.loop_overview_last_update < LOOP_OVERVIEW_UPDATE_INTERVAL then
-        return
-    end
+    local length, current_bar =
+        get_loop_overview_values()
 
-    LP.loop_overview_last_update = now
+    local old_length =
+        LP.loop_overview_length
 
-    local length, current_bar = get_loop_overview_values()
-    local old_length = LP.loop_overview_length
-    local old_current = LP.loop_overview_current_bar
+    local old_current =
+        LP.loop_overview_current_bar
 
-    if length == old_length and current_bar == old_current then
+    if length == old_length
+       and current_bar == old_current then
         return
     end
 
     if length ~= old_length then
-        -- Loop length changes are rare. Repaint the complete overlay so pads
-        -- that leave the loop correctly recover their original background.
+        -- Een gewijzigde looplengte vereist een volledige repaint
+        -- van de zestien overview-pads.
         paint_loop_overview(length, current_bar)
+
         if Bridge.set_matrix_rgb then
             Bridge.set_matrix_rgb(LP.framebuffer)
         end
     else
-        -- Normal playback update: restore only the previous cursor pad and
-        -- light only the new cursor pad, both inside one compact SysEx packet.
+        -- Tijdens normaal afspelen veranderen alleen de oude en
+        -- nieuwe cursorpositie.
         local indices = {}
 
         if old_current then
             indices[#indices + 1] = old_current
         end
 
-        if current_bar and current_bar ~= old_current then
+        if current_bar
+           and current_bar ~= old_current then
             indices[#indices + 1] = current_bar
         end
 
-        send_loop_pad_updates(indices, length, current_bar)
+        send_loop_pad_updates(
+            indices,
+            length,
+            current_bar
+        )
     end
 
     LP.loop_overview_length = length
     LP.loop_overview_current_bar = current_bar
     LP.loop_overview_signature =
-        tostring(length) .. ":" .. tostring(current_bar or 0)
+        tostring(length) .. ":" ..
+        tostring(current_bar or 0)
 end
 
 local function draw_navigation()
