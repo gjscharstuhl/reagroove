@@ -115,7 +115,8 @@ local function execute_merge()
     else
         ok, error_message = merge.merge_all_projects(
             merge_sequence,
-            selected_region
+            selected_region,
+            selected_track
         )
     end
 
