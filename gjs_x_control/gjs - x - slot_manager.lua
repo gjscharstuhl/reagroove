@@ -19,6 +19,8 @@ local JAMS_DIR = HOME and (HOME .. "/jams") or nil
 local EXT_SECTION = "GJS_X"
 local EXT_ACTIVE_SLOT = "ActiveSlotSession"
 
+local FX_MAPPING_FILENAME = "fx_mapping.ini"
+
 local function valid_slot(slot)
     slot = tonumber(slot)
 
@@ -438,6 +440,35 @@ local function normalize_path(path)
     return (path or ""):gsub("\\", "/")
 end
 
+local function directory_name(path)
+    path = normalize_path(path)
+    return path:match("^(.*)/[^/]+$")
+end
+
+local function find_fx_mapping_source(projects)
+    -- Zoek het mappingbestand in de oorspronkelijke projectmap.
+    -- Dit moet gebeuren voordat Main_SaveProjectEx() de projecten naar
+    -- de nieuwe slotmap verplaatst.
+    for index = 1, #projects do
+        local project_path = projects[index].original_path
+
+        if project_path and project_path ~= "" then
+            local project_directory = directory_name(project_path)
+
+            if project_directory then
+                local candidate =
+                    project_directory .. "/" .. FX_MAPPING_FILENAME
+
+                if file_exists(candidate) then
+                    return candidate
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
 local function copy_file(source_path, destination_path)
     local source = io.open(source_path, "rb")
 
@@ -542,8 +573,13 @@ function M.save(slot)
             "Er zijn geen geopende projecten om op te slaan."
     end
 
+    -- Bewaar de bron voordat Main_SaveProjectEx() de projectpaden wijzigt.
+    local fx_mapping_source = find_fx_mapping_source(projects)
+
     local directory = slot_dir_path(slot)
     local media_directory = directory .. "/media"
+    local fx_mapping_destination =
+        directory .. "/" .. FX_MAPPING_FILENAME
 
     reaper.RecursiveCreateDirectory(JAMS_DIR, 0)
     reaper.RecursiveCreateDirectory(directory, 0)
@@ -553,6 +589,26 @@ function M.save(slot)
     -- verwijder oude .rpp-bestanden en schrijf alleen de huidige tabs.
     -- .rpp-bak blijft behouden.
     remove_old_project_files(directory)
+
+    -- Neem de Page 3 FX-mapping mee naar het nieuwe slot.
+    -- Bij opslaan over hetzelfde slot staat bron en bestemming al gelijk.
+    if fx_mapping_source then
+        if normalize_path(fx_mapping_source)
+            ~= normalize_path(fx_mapping_destination) then
+            if not copy_file(
+                fx_mapping_source,
+                fx_mapping_destination
+            ) then
+                return false,
+                    "Kon FX-mapping niet kopieren:\n"
+                    .. fx_mapping_source
+            end
+        end
+    else
+        -- Geen mapping in de bron: voorkom dat een oude mapping uit een
+        -- eerder opgeslagen inhoud van dit doelslot blijft rondhangen.
+        os.remove(fx_mapping_destination)
+    end
 
     local saved_paths = {}
     local copied_sources = {}

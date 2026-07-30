@@ -28,4 +28,7 @@ return function(api)
     else
         draw_main(api, navigation)
     end
+    
+    reaper.gmem_attach("GJS_X_BRIDGE")
+	reaper.gmem_write(1000, 1)
 end

@@ -1,10 +1,15 @@
 -- ============================================================
 -- gjs - x - core.lua
 -- Shared Launchpad X API, state, input, output and screen system
--- Version 16 - add RGB DARK_GREEN transport idle colour
+-- Version 17 - initialise performance gate and restore normal screen 7 input
 -- ============================================================
 local scene_api = include("gjs - scene_api.lua")
+local GMEM_NAME = "GJS_X_BRIDGE"
+local PERFORMANCE_MODE_SLOT = 100
 
+local PERFORMANCE_SCREENS = {
+    [7] = true
+}
 ------------------------------------------------------------
 -- Dependencies
 ------------------------------------------------------------
@@ -1606,13 +1611,32 @@ local function screen_from_cc(cc)
     return nil
 end
 
+local function update_performance_mode()
+    reaper.gmem_attach(GMEM_NAME)
+
+    local enabled =
+        PERFORMANCE_SCREENS[LP.current_screen] == true
+
+    reaper.gmem_write(
+        PERFORMANCE_MODE_SLOT,
+        enabled and 1 or 0
+    )
+end
+
 local function select_screen(screen)
-    if screen < 0 or screen > 7 then return end
-    if screen == LP.current_screen then return end
+    if screen < 0 or screen > 7 then
+        return
+    end
+
+    if screen == LP.current_screen then
+        update_performance_mode()
+        return
+    end
 
     LP.current_screen = screen
+
+    update_performance_mode()
     draw_current_screen()
-    reaper.ShowConsoleMsg("Screen " .. screen .. "\n")
 end
 ------------------------------------------------------------
 -- MIDI input processing
@@ -1628,6 +1652,10 @@ local function process_midi_message(message)
     local data2 = message:byte(3)
     local msg_type = status & 0xF0
 
+    --------------------------------------------------------
+    -- Matrix pads: Note On / Note Off
+    --------------------------------------------------------
+
     if msg_type == 0x90 or msg_type == 0x80 then
         local pad = LP.pads[data1]
 
@@ -1642,11 +1670,26 @@ local function process_midi_message(message)
             msg_type == 0x80 or
             (msg_type == 0x90 and data2 == 0)
 
+        ----------------------------------------------------
+        -- Pad interaction for every screen
+        ----------------------------------------------------
+        --
+        -- The performance gate on the instrument track decides
+        -- whether Launchpad notes may reach an instrument. The
+        -- core keeps processing pads normally for visual feedback
+        -- and screen callbacks.
+        ----------------------------------------------------
+
         if note_on then
             handle_pad_press(pad, data2)
+
         elseif note_off then
             handle_pad_release(pad)
         end
+
+    --------------------------------------------------------
+    -- Sidebar en navigatie: Control Change
+    --------------------------------------------------------
 
     elseif msg_type == 0xB0 then
         if data2 == 0 then
@@ -1658,6 +1701,7 @@ local function process_midi_message(message)
                 LP.navigation_left()
             end
             return
+
         elseif data1 == NAV_CC.RIGHT then
             if LP.navigation_right then
                 LP.navigation_right()
@@ -1840,6 +1884,7 @@ local function start(screens)
             return
         end
 
+		update_performance_mode()
 		draw_current_screen()
 
 		discard_existing_midi_events()

@@ -78,7 +78,10 @@ local current_region_number
 local function arm_subproject_track(track_number, page)
 
     --------------------------------------------------------
-    -- Alle subprojecten resetten
+    -- Alleen track 1 van ieder subproject resetten.
+    --
+    -- Andere tracks kunnen vaste MIDI-inputs, audio-inputs
+    -- of routing bevatten en moeten hun eigen armstatus houden.
     --------------------------------------------------------
 
     for subproject_index = 1, 8 do
@@ -86,34 +89,27 @@ local function arm_subproject_track(track_number, page)
             reaper.EnumProjects(subproject_index)
 
         if subproject then
-            for track_index = 0,
-                reaper.CountTracks(subproject) - 1 do
+            local first_track =
+                reaper.GetTrack(subproject, 0)
 
-                local track =
-                    reaper.GetTrack(
-                        subproject,
-                        track_index
-                    )
+            if first_track then
+                reaper.SetMediaTrackInfo_Value(
+                    first_track,
+                    "I_RECARM",
+                    0
+                )
 
-                if track then
-                    reaper.SetMediaTrackInfo_Value(
-                        track,
-                        "I_RECARM",
-                        0
-                    )
-
-                    reaper.SetMediaTrackInfo_Value(
-                        track,
-                        "I_AUTOMODE",
-                        0
-                    )
-                end
+                reaper.SetMediaTrackInfo_Value(
+                    first_track,
+                    "I_AUTOMODE",
+                    0
+                )
             end
         end
     end
 
     --------------------------------------------------------
-    -- Actieve subprojecttrack
+    -- Track 1 van het actieve subproject
     --------------------------------------------------------
 
     local project =
@@ -123,10 +119,10 @@ local function arm_subproject_track(track_number, page)
         return false
     end
 
-    local track =
+    local first_track =
         reaper.GetTrack(project, 0)
 
-    if not track then
+    if not first_track then
         return false
     end
 
@@ -136,7 +132,7 @@ local function arm_subproject_track(track_number, page)
 
     if page >= 1 then
         reaper.SetMediaTrackInfo_Value(
-            track,
+            first_track,
             "I_RECARM",
             1
         )
@@ -144,7 +140,7 @@ local function arm_subproject_track(track_number, page)
 
     -- Latch wordt uitsluitend door transport.lua geregeld.
     reaper.SetMediaTrackInfo_Value(
-        track,
+        first_track,
         "I_AUTOMODE",
         0
     )
@@ -154,7 +150,6 @@ local function arm_subproject_track(track_number, page)
 
     return true
 end
-
 
 function Pattern.activate_track(track_number)
     track_number = tonumber(track_number)

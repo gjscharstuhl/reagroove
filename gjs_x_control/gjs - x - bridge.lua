@@ -117,6 +117,7 @@ local function enqueue(packet)
 end
 
 function Bridge.init()
+	
     reaper.gmem_attach(GMEM_NAME)
 
     local written = math.floor(reaper.gmem_read(0) or 0)

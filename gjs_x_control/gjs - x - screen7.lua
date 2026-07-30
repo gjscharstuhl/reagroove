@@ -40,6 +40,9 @@ local function drawscreen7(api)
     -- Rood
     api.drawpad(1,4,C.RED,H)
     api.drawpad(1,5,C.RED,H)
+    
+    reaper.gmem_attach("GJS_X_BRIDGE")
+	reaper.gmem_write(1000, 0)
 end
 
 return drawscreen7
