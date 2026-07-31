@@ -1,6 +1,7 @@
 -- gjs - x - pattern.lua
 
 local Pattern = {}
+local subproject_track = include("gjs - x - subproject_track.lua")
 
 -- Eén actieve/queued pattern per track/projecttab.
 -- Voorbeeld:
@@ -90,7 +91,7 @@ local function arm_subproject_track(track_number, page)
 
         if subproject then
             local first_track =
-                reaper.GetTrack(subproject, 0)
+                subproject_track.get_selected_track(subproject)
 
             if first_track then
                 reaper.SetMediaTrackInfo_Value(
@@ -120,7 +121,7 @@ local function arm_subproject_track(track_number, page)
     end
 
     local first_track =
-        reaper.GetTrack(project, 0)
+        subproject_track.get_selected_track(project)
 
     if not first_track then
         return false

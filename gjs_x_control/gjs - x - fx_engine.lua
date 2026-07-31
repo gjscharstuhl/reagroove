@@ -5,6 +5,7 @@
 -- ============================================================
 
 local M = {}
+local subproject_track = include("gjs - x - subproject_track.lua")
 
 local main_project = reaper.EnumProjects(-1, "")
 
@@ -47,10 +48,10 @@ local function get_target_track(mapping)
     end
 
     if reaper.CountTracks(project) < 1 then
-        return project, nil, "subproject has no first track"
+        return project, nil, "subproject has no tracks"
     end
 
-    return project, reaper.GetTrack(project, 0)
+    return project, subproject_track.get_selected_track(project)
 end
 
 function M.resolve(mapping)

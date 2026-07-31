@@ -1,6 +1,6 @@
 -- ============================================================
 -- gjs - x - edit.lua
--- Version 06 - time-signature mode on action pad 4
+-- Version 07 - subproject track selector on action pad 5
 -- ============================================================
 
 local source = debug.getinfo(1, "S").source
@@ -12,6 +12,9 @@ local clear = dofile(script_dir .. "gjs - x - clear.lua")
 local merge = dofile(script_dir .. "gjs - x - merge.lua")
 local time_signature = dofile(
     script_dir .. "gjs - x - time_signature.lua"
+)
+local subproject_track = dofile(
+    script_dir .. "gjs - x - subproject_track.lua"
 )
 
 local SCOPE_SELECTED_TRACK = 1
@@ -25,6 +28,7 @@ local ACTION_RESIZE_COL = 1
 local ACTION_CLEAR_COL = 2
 local ACTION_MERGE_COL = 3
 local ACTION_TIME_SIGNATURE_COL = 4
+local ACTION_TRACK_SELECT_COL = 5
 
 local selected_bars = 1
 local selected_track = nil
@@ -32,6 +36,7 @@ local selected_region = nil
 local selected_scope = SCOPE_SELECTED_TRACK
 
 local time_signature_mode = false
+local track_select_mode = false
 
 local merge_mode = false
 local merge_scope = MERGE_SELECTED_PROJECT
@@ -290,6 +295,14 @@ return function(api, navigation)
         return
     end
 
+    if track_select_mode then
+        subproject_track.draw(
+            api, C, selected_track,
+            function() track_select_mode = false end
+        )
+        return
+    end
+
     if merge_mode then
         draw_merge_mode(api, C)
         return
@@ -378,7 +391,7 @@ return function(api, navigation)
     )
 
     api.drawstrip(
-        1, 1, 4,
+        1, 1, 5,
         C.BLUE,
         api.MODE_HIGHLIGHT,
         {
@@ -394,6 +407,8 @@ return function(api, navigation)
                 elseif pad.col == ACTION_TIME_SIGNATURE_COL then
                     time_signature.open()
                     time_signature_mode = true
+                elseif pad.col == ACTION_TRACK_SELECT_COL then
+                    track_select_mode = true
                 end
 
                 api.redraw()

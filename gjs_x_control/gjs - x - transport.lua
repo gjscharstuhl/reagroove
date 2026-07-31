@@ -1,5 +1,6 @@
 -- ============================================================
 -- gjs - x - transport.lua
+local subproject_track = include("gjs - x - subproject_track.lua")
 --
 -- Transport- en recordlogica voor de actieve GJS_X-projecttab
 -- ============================================================
@@ -272,7 +273,7 @@ local function reset_fx_automation()
         return
     end
 
-    local track = reaper.GetTrack(proj, 0)
+    local track = subproject_track.get_selected_track(proj)
     if not track then
         return
     end
@@ -291,7 +292,7 @@ local function enable_fx_latch()
     end
 
     local track =
-        reaper.GetTrack(state.project, 0)
+        subproject_track.get_selected_track(state.project)
 
     if track then
         reaper.SetMediaTrackInfo_Value(

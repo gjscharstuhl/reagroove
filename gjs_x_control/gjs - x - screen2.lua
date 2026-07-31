@@ -9,6 +9,7 @@
 local script_path = debug.getinfo(1, "S").source:sub(2)
 local script_dir = script_path:match("(.*[\\/])") or ""
 local page3 = dofile(script_dir .. "gjs - x - page3.lua")
+local subproject_mixer = dofile(script_dir .. "gjs - x - subproject_mixer.lua")
 
 return function(api)
     local page = api.get_page and api.get_page() or 1
@@ -152,6 +153,14 @@ return function(api)
 
     local children = find_direct_children(FOLDER_NAME, 8)
     local state = api.get_screen_state(2)
+    local subproject_tracks = {}
+    local subproject_number = nil
+
+    if page == 4 then
+        local _, tracks, number = subproject_mixer.get_active_tracks(8)
+        subproject_tracks = tracks
+        subproject_number = number
+    end
 
     -- Page 1 follows the actual track volumes whenever the mixer is opened.
     if page == 1 then
@@ -207,6 +216,20 @@ return function(api)
                         step = step
                     }
                 end
+            end
+        end
+    end
+
+    -- Page 4 is the internal volume mixer of the active subproject.
+    if page == 4 then
+        for col = 1, 8 do
+            local track = subproject_tracks[col]
+            local group = "mixer_page_4_fader_" .. col
+
+            if track then
+                local volume = reaper.GetMediaTrackInfo_Value(track, "D_VOL")
+                local row, step = subproject_mixer.volume_to_fader(volume)
+                state.fader[group] = { row = row, step = step }
             end
         end
     end
@@ -282,6 +305,11 @@ return function(api)
                             "D_VOL",
                             volume
                         )
+
+                    elseif page == 4 then
+                        local track = subproject_tracks[col]
+                        if not track then return end
+                        reaper.SetMediaTrackInfo_Value(track, "D_VOL", volume)
                     end
 
                     reaper.TrackList_AdjustWindows(false)
@@ -352,6 +380,18 @@ return function(api)
                 else
                     volume = 0
                 end
+            end
+
+        elseif page == 4 then
+            local current_number = subproject_mixer.get_active_subproject_number()
+            if current_number ~= subproject_number then
+                api.redraw()
+                return
+            end
+
+            local track = subproject_tracks[sync_col]
+            if track then
+                volume = reaper.GetMediaTrackInfo_Value(track, "D_VOL")
             end
         end
 

@@ -13,6 +13,7 @@ local script_dir = script_path:match("(.*[\\/])") or ""
 
 local fx_mapping = dofile(script_dir .. "gjs - x - fx_mapping.lua")
 local fx_engine = dofile(script_dir .. "gjs - x - fx_engine.lua")
+local subproject_mixer = dofile(script_dir .. "gjs - x - subproject_mixer.lua")
 
 local TRACK_RGB = {
     {127,   0,   0}, -- Track 1: red
@@ -383,14 +384,102 @@ local function render_pan_page(api)
     end
 end
 
+-- Page 4: pan submix for the first eight top-level tracks in the
+-- currently active subproject. Child tracks are deliberately ignored.
+local function render_subproject_pan_page(api)
+    runtime.generation = runtime.generation + 1
+    local generation = runtime.generation
+
+    local _, tracks, subproject_number = subproject_mixer.get_active_tracks(8)
+    local state = api.get_screen_state(3)
+
+    for index = 1, 8 do
+        local track = tracks[index]
+        local group = "subproject_pan_" .. index
+
+        if track then
+            local pan = reaper.GetMediaTrackInfo_Value(track, "D_PAN")
+            state.balance[group] = subproject_mixer.pan_to_balance(pan)
+        else
+            state.balance[group] = subproject_mixer.pan_to_balance(0)
+        end
+    end
+
+    for index = 1, 8 do
+        local track = tracks[index]
+        local group = "subproject_pan_" .. index
+
+        api.draw_horizontal_fader(
+            9 - index,
+            TRACK_RGB[index],
+            {
+                group = group,
+                on_press = function()
+                    if not track then return end
+                    local balance = state.balance[group]
+                    reaper.SetMediaTrackInfo_Value(
+                        track,
+                        "D_PAN",
+                        subproject_mixer.balance_to_pan(balance)
+                    )
+                    reaper.TrackList_AdjustWindows(false)
+                    reaper.UpdateArrange()
+                end
+            }
+        )
+    end
+
+    local sync_index = 1
+    local last_sync = 0
+    local sync_interval = 0.03
+
+    local function sync_next_pan()
+        if generation ~= runtime.generation then return end
+        if api.get_current_screen and api.get_current_screen() ~= 3 then return end
+        if api.get_page and api.get_page() ~= 4 then return end
+
+        if subproject_mixer.get_active_subproject_number() ~= subproject_number then
+            runtime.generation = runtime.generation + 1
+            api.redraw()
+            return
+        end
+
+        local now = reaper.time_precise()
+        if now - last_sync < sync_interval then
+            reaper.defer(sync_next_pan)
+            return
+        end
+        last_sync = now
+
+        local track = tracks[sync_index]
+        if track then
+            local group = "subproject_pan_" .. sync_index
+            local pan = reaper.GetMediaTrackInfo_Value(track, "D_PAN")
+            local wanted = subproject_mixer.pan_to_balance(pan)
+
+            if not subproject_mixer.same_balance(state.balance[group], wanted) then
+                state.balance[group] = wanted
+                api.render_horizontal_fader(group)
+            end
+        end
+
+        sync_index = (sync_index % 8) + 1
+        reaper.defer(sync_next_pan)
+    end
+
+    reaper.defer(sync_next_pan)
+end
+
+
 return function(api)
     local page = api.get_page and api.get_page() or 1
 
     if page == 3 then
         render_fx_page(api)
+    elseif page == 4 then
+        render_subproject_pan_page(api)
     else
-        -- Pages 1 and 2 use the original track-pan screen.
-        -- Page 4 also falls back to pan until it receives its own layout.
+        -- Pages 1 and 2 use the original main-project pan screen.
         runtime.generation = runtime.generation + 1
         render_pan_page(api)
     end
