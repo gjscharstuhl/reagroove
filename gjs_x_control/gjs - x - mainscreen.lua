@@ -474,7 +474,13 @@ return function(api, navigation)
 
     -- Record-arm buttons for the first eight direct children of folder
     -- "tracks". Load REAPER's current state before drawing each toggle.
-    local arm_tracks = find_direct_children("tracks", 8)
+    -- Project 0 is now the central mixer.
+    -- The mute row controls its first eight tracks directly.
+    local arm_tracks = {}
+
+    for index = 0, 7 do
+        arm_tracks[#arm_tracks + 1] = reaper.GetTrack(0, index)
+    end
     local screen_state = api.get_screen_state(0)
 
     for col = 1, 8 do
