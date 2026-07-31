@@ -1,6 +1,6 @@
 -- ============================================================
 -- gjs - x - edit.lua
--- Version 05 - pattern merge mode on action pad 3
+-- Version 06 - time-signature mode on action pad 4
 -- ============================================================
 
 local source = debug.getinfo(1, "S").source
@@ -10,6 +10,9 @@ local script_dir = script_path:match("^(.*[/\\])") or ""
 local resize = dofile(script_dir .. "gjs - x - resize.lua")
 local clear = dofile(script_dir .. "gjs - x - clear.lua")
 local merge = dofile(script_dir .. "gjs - x - merge.lua")
+local time_signature = dofile(
+    script_dir .. "gjs - x - time_signature.lua"
+)
 
 local SCOPE_SELECTED_TRACK = 1
 local SCOPE_ALL_TRACKS = 2
@@ -21,11 +24,14 @@ local MERGE_ALL_PROJECTS = 2
 local ACTION_RESIZE_COL = 1
 local ACTION_CLEAR_COL = 2
 local ACTION_MERGE_COL = 3
+local ACTION_TIME_SIGNATURE_COL = 4
 
 local selected_bars = 1
 local selected_track = nil
 local selected_region = nil
 local selected_scope = SCOPE_SELECTED_TRACK
+
+local time_signature_mode = false
 
 local merge_mode = false
 local merge_scope = MERGE_SELECTED_PROJECT
@@ -273,6 +279,17 @@ return function(api, navigation)
 
     api.drawblock(8, 1, 1, 8, C.OFF, api.MODE_NONE)
 
+    if time_signature_mode then
+        time_signature.draw(
+            api,
+            C,
+            function()
+                time_signature_mode = false
+            end
+        )
+        return
+    end
+
     if merge_mode then
         draw_merge_mode(api, C)
         return
@@ -361,7 +378,7 @@ return function(api, navigation)
     )
 
     api.drawstrip(
-        1, 1, 3,
+        1, 1, 4,
         C.BLUE,
         api.MODE_HIGHLIGHT,
         {
@@ -374,6 +391,9 @@ return function(api, navigation)
                 elseif pad.col == ACTION_MERGE_COL then
                     merge_mode = true
                     merge_sequence = {}
+                elseif pad.col == ACTION_TIME_SIGNATURE_COL then
+                    time_signature.open()
+                    time_signature_mode = true
                 end
 
                 api.redraw()
