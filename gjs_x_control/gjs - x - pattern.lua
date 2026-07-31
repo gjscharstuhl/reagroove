@@ -18,56 +18,40 @@ local queued_scene_active_track = nil
 
 local SCENE_QUEUE_LOOKAHEAD = 1.0
 
-local function select_track_in_folder(folder_name, track_number)
+local function select_track_in_main_project(track_number)
     track_number = tonumber(track_number)
 
-    if not folder_name or not track_number then
+    if not track_number then
         return nil
     end
 
-    local folder_track
-    local folder_index
+    track_number = math.floor(track_number)
 
-    for i = 0, reaper.CountTracks(0) - 1 do
-        local track = reaper.GetTrack(0, i)
-        local _, name = reaper.GetTrackName(track)
-
-        if name == folder_name then
-            folder_track = track
-            folder_index = i
-            break
-        end
-    end
-
-    if not folder_track then
+    if track_number < 1 or track_number > 8 then
         return nil
     end
 
-    local folder_depth = reaper.GetTrackDepth(folder_track)
-    local found = 0
-    local target_track
+    -- Project 0 is now the central mixer ("Other").
+    -- Its first eight physical REAPER tracks correspond directly
+    -- to ActiveTrack 1..8.
+    local target_track = reaper.GetTrack(0, track_number - 1)
 
-    for i = folder_index + 1, reaper.CountTracks(0) - 1 do
-        local track = reaper.GetTrack(0, i)
-        local depth = reaper.GetTrackDepth(track)
-
-        if depth <= folder_depth then
-            break
-        end
-
-        reaper.SetTrackSelected(track, false)
-
-        if depth == folder_depth + 1 then
-            found = found + 1
-
-            if found == track_number then
-                target_track = track
-            end
-        end
+    if not target_track then
+        return nil
     end
 
-    if target_track then
-        reaper.SetTrackSelected(target_track, true)
+    -- Only the first eight central mixer tracks participate
+    -- in this selection. Tracks after them (master FX etc.)
+    -- keep their existing selection state untouched.
+    for index = 0, 7 do
+        local track = reaper.GetTrack(0, index)
+
+        if track then
+            reaper.SetTrackSelected(
+                track,
+                track == target_track
+            )
+        end
     end
 
     return target_track
@@ -172,7 +156,7 @@ function Pattern.activate_track(track_number)
         reaper.GetExtState("GJS_X", "Page")
     ) or 1
 
-    select_track_in_folder("tracks", track_number)
+    select_track_in_main_project(track_number)
     return arm_subproject_track(track_number, page)
 end
 
