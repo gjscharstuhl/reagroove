@@ -371,10 +371,10 @@ local function render_pan_page(api)
                     end
 
                     local balance = state.balance[group]
-                    reaper.SetMediaTrackInfo_Value(
+                    reaper.CSurf_OnPanChange(
                         track,
-                        "D_PAN",
-                        balance_to_pan(balance)
+                        balance_to_pan(balance),
+                        false
                     )
                     reaper.TrackList_AdjustWindows(false)
                     reaper.UpdateArrange()
@@ -444,10 +444,10 @@ local function render_subproject_pan_page(api)
                 on_press = function()
                     if not track then return end
                     local balance = state.balance[group]
-                    reaper.SetMediaTrackInfo_Value(
+                    reaper.CSurf_OnPanChange(
                         track,
-                        "D_PAN",
-                        subproject_mixer.balance_to_pan(balance)
+                        subproject_mixer.balance_to_pan(balance),
+                        false
                     )
                     reaper.TrackList_AdjustWindows(false)
                     reaper.UpdateArrange()

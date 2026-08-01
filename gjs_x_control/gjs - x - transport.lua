@@ -15,7 +15,7 @@ local CMD_STOP   = 1016
 
 local state = {
     watching_record = false,
-    phase = 0,
+    record_mode = "normal",
     active_track = nil,
     project = nil,
     reached_time_selection = false,
@@ -44,13 +44,11 @@ local function get_active_project()
         return nil, nil
     end
 
-    local project_index = active_track
-
-    -- ActiveTrack 8 is the central mixer in project 0.
-    if active_track == 8 then
-        project_index = 0
-    end
-
+    -- Natural tab flow:
+    -- ActiveTrack 1 -> REAPER project 0
+    -- ...
+    -- ActiveTrack 8 -> REAPER project 7
+    local project_index = active_track - 1
     local project = reaper.EnumProjects(project_index)
 
     if not project then
@@ -61,13 +59,15 @@ local function get_active_project()
 end
 
 
-local function get_phase()
-    return tonumber(
-        reaper.GetExtState(
-            "GJS_X",
-            "Page"
-        )
-    ) or 0
+local function get_record_mode()
+    local mode =
+        reaper.GetExtState("GJS_X", "RecordMode")
+
+    if mode == "latch" then
+        return "latch"
+    end
+
+    return "normal"
 end
 
 
@@ -271,11 +271,7 @@ local function get_active_track_project()
             )
         ) or 1
 
-    if active_track == 8 then
-        return reaper.EnumProjects(0, "")
-    end
-
-    return reaper.EnumProjects(active_track, "")
+    return reaper.EnumProjects(active_track - 1, "")
 end
 
 local function reset_fx_automation()
@@ -411,6 +407,24 @@ function Transport.invalidate_transport_leds()
 end
 
 
+function Transport.cancel_record_watch()
+    state.watching_record = false
+    state.reached_time_selection = false
+    state.pending_record = false
+    state.record_mode = get_record_mode()
+    state.last_record_led_color = nil
+
+    reaper.SetExtState(
+        "GJS_X",
+        "FxRec",
+        "0",
+        true
+    )
+
+    reset_fx_automation()
+end
+
+
 -- ============================================================
 -- Bedieningsfuncties
 -- ============================================================
@@ -505,16 +519,15 @@ function Transport.record()
         return
     end
 
-    local phase = get_phase()
-
+    local record_mode = get_record_mode()
     local play_state =
         reaper.GetPlayStateEx(project)
 
     --------------------------------------------------------
-    -- Page 1: tweede druk stopt normale opname
+    -- Normal mode: second press stops normal recording
     --------------------------------------------------------
 
-    if phase <= 1
+    if record_mode == "normal"
     and (play_state & 4) == 4 then
 
         reaper.Main_OnCommandEx(
@@ -532,12 +545,12 @@ function Transport.record()
     end
 
     --------------------------------------------------------
-    -- Status bewaren voor Transport.update()
+    -- Store state for Transport.update()
     --------------------------------------------------------
 
     state.project = project
     state.active_track = active_track
-    state.phase = phase
+    state.record_mode = record_mode
 
     state.reached_time_selection = false
     state.pending_record = false
@@ -545,10 +558,10 @@ function Transport.record()
     state.watching_record = true
 
     --------------------------------------------------------
-    -- Page > 1: FX-automation recording
+    -- Latch mode: automation recording on every page
     --------------------------------------------------------
 
-    if phase > 1 then
+    if record_mode == "latch" then
         reaper.SetExtState(
             "GJS_X",
             "FxRec",
@@ -556,15 +569,13 @@ function Transport.record()
             true
         )
 
-        -- Geen normale REAPER-opname starten.
-        -- Transport.update() schakelt latch in zodra
-        -- de actieve region bereikt wordt.
-
+        -- Do not start normal REAPER recording.
+        -- Transport.update() enables latch when the active region starts.
         return
     end
 
     --------------------------------------------------------
-    -- Page 1: normale audio/MIDI-opname
+    -- Normal mode: audio/MIDI recording
     --------------------------------------------------------
 
     reaper.SetExtState(
@@ -574,13 +585,10 @@ function Transport.record()
         true
     )
 
-    -- Wanneer playback al buiten de gekozen region loopt,
-    -- wachten tot de gequeuede region bereikt wordt.
     if (play_state & 1) == 1
     and not inside_time_selection(project) then
 
         state.pending_record = true
-
         return
     end
 
@@ -626,7 +634,7 @@ function Transport.update(api)
     state.reached_time_selection =
         inside_time_selection(state.project)
 
-    if state.phase >1  then
+    if state.record_mode == "latch" then
         local fx_record =
             tonumber(
                 reaper.GetExtState(

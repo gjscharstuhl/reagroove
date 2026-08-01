@@ -292,10 +292,10 @@ return function(api)
                             return
                         end
 
-                        reaper.SetMediaTrackInfo_Value(
+                        reaper.CSurf_OnVolumeChange(
                             track,
-                            "D_VOL",
-                            volume
+                            volume,
+                            false
                         )
 
                     elseif page == 2 then
@@ -339,7 +339,11 @@ return function(api)
                     elseif page == 4 then
                         local track = subproject_tracks[col]
                         if not track then return end
-                        reaper.SetMediaTrackInfo_Value(track, "D_VOL", volume)
+                        reaper.CSurf_OnVolumeChange(
+                            track,
+                            volume,
+                            false
+                        )
                     end
 
                     reaper.TrackList_AdjustWindows(false)

@@ -17,12 +17,15 @@ local function get_project(subproject_number)
 
     subproject_number = math.floor(subproject_number)
 
-    -- ActiveTrack 8 is the central mixer (project 0).
-    if subproject_number == 8 then
-        return reaper.EnumProjects(0, "")
+    if subproject_number < 1 or subproject_number > 8 then
+        return nil
     end
 
-    return reaper.EnumProjects(subproject_number, "")
+    -- Natural visible-tab flow:
+    -- ActiveTrack 1 -> REAPER project 0
+    -- ...
+    -- ActiveTrack 8 -> REAPER project 7
+    return reaper.EnumProjects(subproject_number - 1, "")
 end
 
 -- Return tracks whose folder depth before the track is zero.

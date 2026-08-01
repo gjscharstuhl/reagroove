@@ -346,35 +346,35 @@ return function(api, navigation)
         }
     )
 
-    -- Only the physical page buttons are reordered for now.
-    -- Button 1 opens internal page 4; button 4 opens internal page 1.
-    -- Pages 2 and 3 remain unchanged.
+    -- Three page buttons plus a dedicated record-mode toggle.
+    -- Physical buttons:
+    --   col 5 = mixer (internal page 4)
+    --   col 6 = sends (page 2)
+    --   col 7 = FX (page 3)
+    --   col 8 = normal/latch recording toggle
     local page_button_to_internal = {
         [5] = 4,
         [6] = 2,
-        [7] = 3,
-        [8] = 1
+        [7] = 3
     }
 
     local internal_to_page_button = {
-        [1] = 8,
         [2] = 6,
         [3] = 7,
         [4] = 5
     }
 
-    -- core.set_page() still stores the old page-to-pad mapping.
-    -- Override the saved radio note with the new physical button position
-    -- before drawing, otherwise drawstrip highlights the old button.
-    local page_screen_state = api.get_screen_state(0)
+    -- Old saved page 1 is no longer exposed as a physical page.
+    -- Show the mixer button until another page is selected.
     local selected_page_col =
         internal_to_page_button[current_page] or 5
 
+    local page_screen_state = api.get_screen_state(0)
     page_screen_state.radio["page_selector"] =
         40 + selected_page_col
 
     api.drawstrip(
-        4, 5, 8,
+        4, 5, 7,
         C.BLUE,
         api.MODE_RADIO,
         {
@@ -391,13 +391,56 @@ return function(api, navigation)
                         api.set_page(internal_page)
                     end
 
-                    -- Redraw on the next defer cycle. An immediate redraw here
-                    -- can still be overwritten by the current page-button MIDI
-                    -- event.
                     reaper.defer(function()
                         api.redraw()
                     end)
                 end
+            end
+        }
+    )
+
+    -- Record mode toggle on the old physical page-4 button.
+    local record_mode =
+        reaper.GetExtState("GJS_X", "RecordMode")
+
+    if record_mode ~= "latch" then
+        record_mode = "normal"
+    end
+
+    api.drawpad(
+        4,
+        8,
+        record_mode == "latch" and C.PURPLE or C.YELLOW,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color =
+                record_mode == "latch" and C.PURPLE or C.YELLOW,
+
+            on_press = function()
+                local new_mode =
+                    record_mode == "latch"
+                    and "normal"
+                    or "latch"
+
+                reaper.SetExtState(
+                    "GJS_X",
+                    "RecordMode",
+                    new_mode,
+                    true
+                )
+
+                if api.transport
+                and api.transport.cancel_record_watch then
+                    api.transport.cancel_record_watch()
+                end
+
+                reaper.defer(function()
+                    api.redraw()
+                end)
+            end,
+
+            on_release = function()
+                return true
             end
         }
     )

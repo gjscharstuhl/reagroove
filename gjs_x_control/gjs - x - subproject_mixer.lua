@@ -19,8 +19,17 @@ end
 
 function M.get_project(subproject_number)
     local number = tonumber(subproject_number)
-    if not number then return nil end
-    return reaper.EnumProjects(math.floor(number), "")
+    if not number then
+        return nil
+    end
+
+    number = clamp(math.floor(number), 1, 8)
+
+    -- Natural visible-tab flow:
+    -- ActiveTrack 1 -> REAPER project 0
+    -- ...
+    -- ActiveTrack 8 -> REAPER project 7
+    return reaper.EnumProjects(number - 1, "")
 end
 
 function M.get_top_level_tracks(project, maximum)
