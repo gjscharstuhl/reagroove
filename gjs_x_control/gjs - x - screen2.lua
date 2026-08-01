@@ -151,7 +151,19 @@ return function(api)
         return nil
     end
 
-    local children = find_direct_children(FOLDER_NAME, 8)
+    -- Project 0 is the central mixer.
+    -- Its first eight tracks correspond directly to ActiveTrack 1..8
+    -- and are the source tracks for the master FX sends on page 2.
+    local children = {}
+
+    for index = 0, 7 do
+        local track = reaper.GetTrack(0, index)
+
+        if track then
+            children[#children + 1] = track
+        end
+    end
+
     local state = api.get_screen_state(2)
     local subproject_tracks = {}
     local subproject_number = nil
@@ -292,10 +304,10 @@ return function(api)
                             return
                         end
 
-                        reaper.CSurf_OnVolumeChange(
+                        reaper.SetMediaTrackInfo_Value(
                             track,
-                            volume,
-                            false
+                            "D_VOL",
+                            volume
                         )
 
                     elseif page == 2 then
@@ -339,11 +351,7 @@ return function(api)
                     elseif page == 4 then
                         local track = subproject_tracks[col]
                         if not track then return end
-                        reaper.CSurf_OnVolumeChange(
-                            track,
-                            volume,
-                            false
-                        )
+                        reaper.SetMediaTrackInfo_Value(track, "D_VOL", volume)
                     end
 
                     reaper.TrackList_AdjustWindows(false)

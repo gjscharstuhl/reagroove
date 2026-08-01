@@ -4,9 +4,6 @@
 -- ============================================================
 
 
-local resize_api = include("gjs - x - resize.lua")
-local clear_api = include("gjs - x - clear.lua")
-
 return function(api, navigation)
     local C = api.COLOR
 
@@ -71,39 +68,52 @@ return function(api, navigation)
     end
 
     local function tap_and_sync_tempo()
-        -- REAPER: Transport: Tap tempo
+        -- REAPER's Tap Tempo action works on the currently active
+        -- project tab. Use that tab only as the tempo source.
         reaper.Main_OnCommand(1134, 0)
 
-        local main_proj = reaper.EnumProjects(0, "")
-        if not main_proj then
+        local source_project = reaper.EnumProjects(-1, "")
+        if not source_project then
             return
         end
 
-        local tempo = reaper.Master_GetTempo(main_proj)
-
-        reaper.Undo_BeginBlock()
-
-        for index = 1, 9 do
-            local project = reaper.EnumProjects(index, "")
-
-            if project then
-                reaper.SetTempoTimeSigMarker(
-                    project,
-                    -1,
-                    0,
-                    -1,
-                    -1,
-                    tempo,
-                    0,
-                    0,
-                    false
-                )
-            end
+        local tempo = reaper.Master_GetTempo(source_project)
+        if not tempo or tempo <= 0 then
+            return
         end
 
-        reaper.Undo_EndBlock("Sync tempo tabs 2-9 to tab 1", -1)
+        -- Apply the newly tapped tempo explicitly to every open project,
+        -- including visible Tab 1 / project index 0.
+        reaper.PreventUIRefresh(1)
+
+        local project_index = 0
+
+        while true do
+            local project = reaper.EnumProjects(project_index, "")
+            if not project then
+                break
+            end
+
+            reaper.SetTempoTimeSigMarker(
+                project,
+                -1,
+                0,
+                -1,
+                -1,
+                tempo,
+                0,
+                0,
+                false
+            )
+
+            project_index = project_index + 1
+        end
+
+        reaper.PreventUIRefresh(-1)
         reaper.UpdateTimeline()
+        reaper.UpdateArrange()
     end
+
 
     local function get_selected_track_and_region()
         local state = api.get_screen_state(0)
@@ -147,92 +157,20 @@ return function(api, navigation)
         current_page = api.get_page()
     end
 
-    local function get_resize_bars(pad)
-        if pad.row == 8 then
-            return pad.col
-        end
-
-        return pad.col + 8
-    end
-
-    local function run_resize(pad)
-        local bars = get_resize_bars(pad)
-        local track, region =
-            get_selected_track_and_region()
-
-        if current_page == 2 then
-            resize_api.resize_all_regions_all_projects(
-                bars
-            )
-        elseif current_page == 3 then
-            resize_api.resize_selected_region_all_projects(
-                region,
-                bars
-            )
-        elseif current_page == 4 then
-            resize_api.resize_selected_region_selected_project(
-                track,
-                region,
-                bars
-            )
-        end
-    end
-
-    local function run_clear()
-        local track, region =
-            get_selected_track_and_region()
-
-        if current_page == 2 then
-            clear_api.clear_all_regions_all_projects()
-        elseif current_page == 3 then
-            clear_api.clear_selected_region_all_projects(
-                region
-            )
-        elseif current_page == 4 then
-            clear_api.clear_selected_region_selected_project(
-                track,
-                region
-            )
-        end
-    end
 
     local play_state = reaper.GetPlayState()
     local transport_active =
         (play_state & 1) == 1 or
         (play_state & 4) == 4
 
-    if current_page == 1 or transport_active then
-        api.drawblock(
-            8, 1,
-            7, 8,
-            C.GREY,
-            api.MODE_NONE
-        )
-    else
-        api.drawblock(
-            8, 1,
-            7, 8,
-            C.PURPLE,
-            api.MODE_RADIO,
-            {
-                group =
-                    "resize_bars_page_"
-                    .. tostring(current_page),
-
-                selected_row = 8,
-                selected_col = 1,
-                active_color = api.SELECT_COLOR,
-
-                on_press = function(pad)
-                    run_resize(pad)
-
-                    -- Redraw after the resize operation so the selected
-                    -- bar length remains visibly active.
-                    api.redraw()
-                end
-            }
-        )
-    end
+    -- The sequencer area is always visible.
+    -- Resize and Clear now live exclusively on the Edit screen.
+    api.drawblock(
+        8, 1,
+        7, 8,
+        C.GREY,
+        api.MODE_NONE
+    )
 
     -- Regions 1 t/m 8
     -- Pending uses the same LIGHT_BLUE everywhere. The normal row is BLUE so
@@ -532,24 +470,7 @@ return function(api, navigation)
         }
     )
 
-    -- Pad 38 keeps the original LIGHT_BLUE -> SELECT_COLOR highlight.
-    -- Only the page-aware clear callback is new.
-    api.drawpad(
-        3,
-        8,
-        C.LIGHT_BLUE,
-        api.MODE_HIGHLIGHT,
-        {
-            active_color = api.SELECT_COLOR,
 
-            on_press = function()
-                if current_page >= 2
-                and current_page <= 4 then
-                    run_clear()
-                end
-            end
-        }
-    )
 
 
 
@@ -617,7 +538,5 @@ return function(api, navigation)
         }
     )
 
-    if current_page == 1 or transport_active then
-        api.draw_loop_overview()
-    end
+    api.draw_loop_overview()
 end
