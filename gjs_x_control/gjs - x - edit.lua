@@ -37,6 +37,9 @@ local selected_scope = SCOPE_SELECTED_TRACK
 
 local time_signature_mode = false
 local track_select_mode = false
+local clear_mode = false
+local clear_items = false
+local clear_fx = false
 
 local merge_mode = false
 local merge_scope = MERGE_SELECTED_PROJECT
@@ -94,20 +97,147 @@ local function execute_resize()
 end
 
 local function execute_clear()
+    if not clear_items and not clear_fx then
+        return false
+    end
+
+    local options = {
+        items = clear_items,
+        fx = clear_fx
+    }
+
     if selected_scope == SCOPE_SELECTED_TRACK then
         clear.clear_selected_region_selected_project(
-            selected_track, selected_region
+            selected_track,
+            selected_region,
+            options
         )
         return true
     elseif selected_scope == SCOPE_ALL_TRACKS then
-        clear.clear_selected_region_all_projects(selected_region)
+        clear.clear_selected_region_all_projects(
+            selected_region,
+            options
+        )
         return true
     elseif selected_scope == SCOPE_ALL_REGIONS then
-        clear.clear_all_regions_all_projects()
+        clear.clear_all_regions_all_projects(options)
         return true
     end
 
     return false
+end
+
+local function draw_clear_mode(api, C)
+    local off_items = { 30, 20, 0 }
+    local off_fx = { 24, 0, 30 }
+
+    -- Items toggle.
+    api.drawpad(
+        8,
+        1,
+        clear_items and C.YELLOW or off_items,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+            on_press = function()
+                clear_items = not clear_items
+                api.redraw()
+            end
+        }
+    )
+
+    -- FX/automation toggle.
+    api.drawpad(
+        8,
+        2,
+        clear_fx and C.PURPLE or off_fx,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+            on_press = function()
+                clear_fx = not clear_fx
+                api.redraw()
+            end
+        }
+    )
+
+    -- Keep scope, region and project visible/editable in this subscreen.
+    api.drawstrip(
+        6, 1, 8,
+        C.LIGHT_BLUE,
+        api.MODE_RADIO,
+        {
+            group = "edit_clear_region",
+            selected_row = 6,
+            selected_col = selected_region,
+            active_color = C.WHITE,
+            on_press = function(pad)
+                selected_region = pad.col
+                api.redraw()
+            end
+        }
+    )
+
+    api.drawstrip(
+        4, 6, 8,
+        C.GREEN,
+        api.MODE_RADIO,
+        {
+            group = "edit_clear_scope",
+            selected_col = 5 + selected_scope,
+            active_color = C.WHITE,
+            on_press = function(pad)
+                selected_scope = pad.col - 5
+                api.redraw()
+            end
+        }
+    )
+
+    api.drawstrip(
+        2, 1, 8,
+        C.ORANGE,
+        api.MODE_RADIO,
+        {
+            group = "edit_clear_track",
+            selected_col = selected_track,
+            active_color = C.WHITE,
+            on_press = function(pad)
+                selected_track = pad.col
+                api.redraw()
+            end
+        }
+    )
+
+    -- Pad 2 confirms; pad 5 closes without clearing.
+    api.drawpad(
+        1,
+        ACTION_CLEAR_COL,
+        C.BLUE,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+            on_press = function()
+                if execute_clear() then
+                    clear_mode = false
+                end
+                api.redraw()
+            end
+        }
+    )
+
+    api.drawpad(
+        1,
+        ACTION_TRACK_SELECT_COL,
+        C.BLUE,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+            on_press = function()
+                clear_mode = false
+                api.redraw()
+            end
+        }
+    )
 end
 
 local function execute_merge()
@@ -303,6 +433,11 @@ return function(api, navigation)
         return
     end
 
+    if clear_mode then
+        draw_clear_mode(api, C)
+        return
+    end
+
     if merge_mode then
         draw_merge_mode(api, C)
         return
@@ -400,7 +535,10 @@ return function(api, navigation)
                 if pad.col == ACTION_RESIZE_COL then
                     execute_resize()
                 elseif pad.col == ACTION_CLEAR_COL then
-                    execute_clear()
+                    -- Start every Clear session with both actions disabled.
+                    clear_items = false
+                    clear_fx = false
+                    clear_mode = true
                 elseif pad.col == ACTION_MERGE_COL then
                     merge_mode = true
                     merge_sequence = {}
