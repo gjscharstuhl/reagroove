@@ -11,7 +11,23 @@ local REGION_COUNT = 8
 local SUBPROJECT_COUNT = 8
 
 local function get_project(track_number)
-    return reaper.EnumProjects(track_number, "")
+    track_number = tonumber(track_number)
+
+    if not track_number then
+        return nil
+    end
+
+    track_number = math.floor(track_number)
+
+    if track_number < 1 or track_number > SUBPROJECT_COUNT then
+        return nil
+    end
+
+    -- Natural visible-tab flow:
+    -- Tab/track 1 -> REAPER project 0
+    -- ...
+    -- Tab/track 8 -> REAPER project 7
+    return reaper.EnumProjects(track_number - 1, "")
 end
 
 local function get_regions(project)
@@ -351,7 +367,8 @@ end
 local function get_scene_length_in_bars(region_number)
     local longest = nil
 
-    for project_index = 1, SUBPROJECT_COUNT do
+    -- Scan visible tabs 1..8, which are REAPER projects 0..7.
+    for project_index = 0, SUBPROJECT_COUNT - 1 do
         local project =
             reaper.EnumProjects(project_index, "")
 

@@ -293,9 +293,7 @@ local function append_merge_region(region_number)
 end
 
 local function draw_merge_sequence(api, C)
-    -- All sixteen pads are sequence feedback. Their column also acts
-    -- as the source-region number, so repeatedly pressing the upper
-    -- left pad appends region 1 repeatedly.
+    -- Top two rows are display-only.
     for row = 8, 7, -1 do
         for col = 1, 8 do
             local sequence_index = (8 - row) * 8 + col
@@ -304,10 +302,19 @@ local function draw_merge_sequence(api, C)
                 and region_colour(C, source_region)
                 or C.OFF
 
+            api.drawpad(row, col, colour, api.MODE_NONE)
+        end
+    end
+end
+
+local function draw_merge_source_selection(api, C)
+    -- Rows 6 and 5 are source-region selectors.
+    for row = 6, 5, -1 do
+        for col = 1, 8 do
             api.drawpad(
                 row,
                 col,
-                colour,
+                region_colour(C, col),
                 api.MODE_HIGHLIGHT,
                 {
                     active_color = C.WHITE,
@@ -323,15 +330,15 @@ end
 
 local function draw_merge_mode(api, C)
     draw_merge_sequence(api, C)
+    draw_merge_source_selection(api, C)
 
-    -- Target region.
     api.drawstrip(
-        6, 1, 8,
+        4, 1, 8,
         C.LIGHT_BLUE,
         api.MODE_RADIO,
         {
             group = "edit_merge_target_region",
-            selected_row = 6,
+            selected_row = 4,
             selected_col = selected_region,
             active_color = C.WHITE,
             on_press = function(pad)
@@ -341,13 +348,13 @@ local function draw_merge_mode(api, C)
         }
     )
 
-    -- Merge scope: selected project or all eight subprojects.
     api.drawstrip(
-        4, 1, 2,
+        3, 1, 2,
         C.GREEN,
         api.MODE_RADIO,
         {
             group = "edit_merge_scope",
+            selected_row = 3,
             selected_col = merge_scope,
             active_color = C.WHITE,
             on_press = function(pad)
@@ -357,13 +364,13 @@ local function draw_merge_mode(api, C)
         }
     )
 
-    -- Project/track selection. This never changes the live instrument.
     api.drawstrip(
         2, 1, 8,
         C.ORANGE,
         api.MODE_RADIO,
         {
             group = "edit_track",
+            selected_row = 2,
             selected_col = selected_track,
             active_color = C.WHITE,
             on_press = function(pad)
@@ -373,21 +380,31 @@ local function draw_merge_mode(api, C)
         }
     )
 
-    -- Pad 3 confirms. Pad 2 removes the last entered step.
-    api.drawstrip(
-        1, 2, 3,
-        C.BLUE,
+    api.drawpad(
+        1,
+        ACTION_CLEAR_COL,
+        C.RED,
         api.MODE_HIGHLIGHT,
         {
             active_color = C.WHITE,
-            on_press = function(pad)
-                if pad.col == ACTION_CLEAR_COL then
-                    merge_sequence[#merge_sequence] = nil
-                elseif pad.col == ACTION_MERGE_COL then
-                    if execute_merge() then
-                        merge_mode = false
-                        merge_sequence = {}
-                    end
+            on_press = function()
+                merge_sequence[#merge_sequence] = nil
+                api.redraw()
+            end
+        }
+    )
+
+    api.drawpad(
+        1,
+        ACTION_MERGE_COL,
+        C.GREEN,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+            on_press = function()
+                if execute_merge() then
+                    merge_mode = false
+                    merge_sequence = {}
                 end
 
                 api.redraw()
