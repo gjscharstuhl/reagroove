@@ -346,25 +346,54 @@ return function(api, navigation)
         }
     )
 
-    -- Page 1 t/m 4. The selected page is also stored as a shared variable
-    -- so other screens can become page-aware later without changing this UI.
+    -- Only the physical page buttons are reordered for now.
+    -- Button 1 opens internal page 4; button 4 opens internal page 1.
+    -- Pages 2 and 3 remain unchanged.
+    local page_button_to_internal = {
+        [5] = 4,
+        [6] = 2,
+        [7] = 3,
+        [8] = 1
+    }
+
+    local internal_to_page_button = {
+        [1] = 8,
+        [2] = 6,
+        [3] = 7,
+        [4] = 5
+    }
+
+    -- core.set_page() still stores the old page-to-pad mapping.
+    -- Override the saved radio note with the new physical button position
+    -- before drawing, otherwise drawstrip highlights the old button.
+    local page_screen_state = api.get_screen_state(0)
+    local selected_page_col =
+        internal_to_page_button[current_page] or 5
+
+    page_screen_state.radio["page_selector"] =
+        40 + selected_page_col
+
     api.drawstrip(
         4, 5, 8,
         C.BLUE,
         api.MODE_RADIO,
         {
             group = "page_selector",
-            selected_col = current_page + 4,
+            selected_col = selected_page_col,
             active_color = api.SELECT_COLOR,
 
             on_press = function(pad)
                 if api.set_page then
-                    api.set_page(pad.col - 4)
+                    local internal_page =
+                        page_button_to_internal[pad.col]
+
+                    if internal_page then
+                        api.set_page(internal_page)
+                    end
 
                     -- Redraw on the next defer cycle. An immediate redraw here
                     -- can still be overwritten by the current page-button MIDI
-                    -- event, leaving the old grey sequencer background visible
-                    -- until another action triggers a redraw.
+                    -- event.
                     reaper.defer(function()
                         api.redraw()
                     end)
@@ -406,6 +435,15 @@ return function(api, navigation)
 					reaper.Main_OnCommand(40364, 0)
 				end
 			}
+		)
+
+	else
+		-- Keep the tap-tempo/metronome position visible on pages 3 and 4.
+		api.drawpad(
+			3,
+			5,
+			C.PURPLE,
+			api.MODE_NONE
 		)
 	end
 

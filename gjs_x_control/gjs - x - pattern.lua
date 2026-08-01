@@ -8,20 +8,23 @@ local subproject_track = include("gjs - x - subproject_track.lua")
 -- selections[3] = { region = 5, visual_state = "queued" }
 local selections = {}
 
--- Resolve the project that belongs to a Reagroove track.
--- Tracks 1..7 use their matching subproject tab.
--- Track 8 is the central mixer and therefore uses project 0.
+-- Resolve the project that belongs to the visible Reagroove tab.
+-- Natural flow:
+-- Track/Tab 1 -> REAPER project 0
+-- Track/Tab 2 -> REAPER project 1
+-- ...
+-- Track/Tab 8 -> REAPER project 7
 local function get_pattern_project(track_number)
     track_number = tonumber(track_number)
     if not track_number then return nil end
 
     track_number = math.floor(track_number)
 
-    if track_number == 8 then
-        return reaper.EnumProjects(0, "")
+    if track_number < 1 or track_number > 8 then
+        return nil
     end
 
-    return reaper.EnumProjects(track_number, "")
+    return reaper.EnumProjects(track_number - 1, "")
 end
 
 -- Beperk de statuscontrole tot 20 keer per seconde.
