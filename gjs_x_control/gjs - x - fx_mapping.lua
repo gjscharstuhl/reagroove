@@ -1,12 +1,12 @@
--- FX_MAPPING_ACTIVE_TRACK_V5
 -- ============================================================
 -- gjs - x - fx_mapping.lua
 --
--- Leest gjs_page3_fx_mapping.ini.
--- load(path, track_number) geeft alleen F1..F8 mappings terug
--- die bij de gekozen TrackN-secties horen.
--- B1..B8 worden nog wel herkend voor compatibiliteit, maar
--- Page 3 gebruikt ze niet.
+-- Reads fx_mapping.ini sections in natural visible-tab order:
+--   [TabN.TrackM.FXK]
+--   [TabN.Master.FXK]
+--
+-- load(path, tab_number) returns F1..F8 and B1..B8 mappings
+-- belonging to the requested visible tab.
 -- ============================================================
 
 local M = {}
@@ -21,23 +21,58 @@ local function valid_control(value)
 end
 
 local function parse_section(section_name)
-    local track_number, fx_number =
-        section_name:match("^Track(%d+)%.FX(%d+)$")
+    local tab_number, track_number, fx_number =
+        section_name:match(
+            "^Tab(%d+)%.Track(%d+)%.FX(%d+)$"
+        )
 
-    if track_number and fx_number then
+    if tab_number and track_number and fx_number then
         return {
-            track_number = tonumber(track_number),
+            tab_number = tonumber(tab_number),
+            reaper_track_number = tonumber(track_number),
             is_master = false,
             fx_index = tonumber(fx_number) - 1
         }
     end
 
-    track_number, fx_number =
-        section_name:match("^Track(%d+)%.Master%.FX(%d+)$")
+    tab_number, fx_number =
+        section_name:match(
+            "^Tab(%d+)%.Master%.FX(%d+)$"
+        )
 
-    if track_number and fx_number then
+    if tab_number and fx_number then
         return {
-            track_number = tonumber(track_number),
+            tab_number = tonumber(tab_number),
+            reaper_track_number = nil,
+            is_master = true,
+            fx_index = tonumber(fx_number) - 1
+        }
+    end
+
+    -- Backwards compatibility with old TrackN mappings.
+    local old_track_number
+    old_track_number, fx_number =
+        section_name:match("^Track(%d+)%.FX(%d+)$")
+
+    if old_track_number and fx_number then
+        return {
+            tab_number = tonumber(old_track_number),
+            reaper_track_number = nil,
+            is_master = false,
+            fx_index = tonumber(fx_number) - 1,
+            legacy_selected_track = true
+        }
+    end
+
+    old_track_number, fx_number =
+        section_name:match(
+            "^Track(%d+)%.Master%.FX(%d+)$"
+        )
+
+    if old_track_number and fx_number then
+        return {
+            tab_number = tonumber(old_track_number),
+            reaper_track_number = nil,
             is_master = true,
             fx_index = tonumber(fx_number) - 1
         }
@@ -46,13 +81,16 @@ local function parse_section(section_name)
     return nil
 end
 
-function M.load(path, wanted_track_number)
+function M.load(path, wanted_tab_number)
     local file, error_message = io.open(path, "r")
+
     if not file then
-        return nil, error_message or "Mappingbestand kon niet worden geopend."
+        return nil,
+            error_message
+            or "Mappingbestand kon niet worden geopend."
     end
 
-    wanted_track_number = tonumber(wanted_track_number)
+    wanted_tab_number = tonumber(wanted_tab_number)
 
     local mappings = {}
     local current_section = nil
@@ -63,16 +101,20 @@ function M.load(path, wanted_track_number)
         local line = trim(raw_line)
 
         if line == "" then
-            -- lege regel
+            -- Empty line.
 
         elseif line:sub(1, 1) == ";" then
-            local fx_name = line:match("^;%s*FX:%s*(.-)%s*$")
+            local fx_name =
+                line:match("^;%s*FX:%s*(.-)%s*$")
+
             if fx_name then
                 current_fx_name = fx_name
             end
 
         elseif line:match("^%[.-%]$") then
-            local section_name = line:match("^%[(.-)%]$")
+            local section_name =
+                line:match("^%[(.-)%]$")
+
             current_section = parse_section(section_name)
             current_fx_name = nil
             parameter_index = 0
@@ -87,26 +129,43 @@ function M.load(path, wanted_track_number)
 
             if parameter_name then
                 parameter_name = trim(parameter_name)
-                assigned_control = trim(assigned_control):upper()
+                assigned_control =
+                    trim(assigned_control):upper()
 
-                local this_parameter_index = parameter_index
+                local this_parameter_index =
+                    parameter_index
+
                 parameter_index = parameter_index + 1
 
-                local track_matches =
-                    wanted_track_number == nil
-                    or current_section.track_number == wanted_track_number
+                local tab_matches =
+                    wanted_tab_number == nil
+                    or current_section.tab_number
+                        == wanted_tab_number
 
-                if track_matches and valid_control(assigned_control) then
+                if tab_matches
+                and valid_control(assigned_control) then
                     mappings[assigned_control] = {
                         control = assigned_control,
-                        track_number = current_section.track_number,
-                        is_master = current_section.is_master,
-                        fx_index = current_section.fx_index,
-                        fx_number = current_section.fx_index + 1,
-                        fx_name = current_fx_name,
-                        parameter_index = this_parameter_index,
-                        parameter_name = parameter_name,
-                        section_name = current_section.section_name
+                        tab_number =
+                            current_section.tab_number,
+                        reaper_track_number =
+                            current_section.reaper_track_number,
+                        is_master =
+                            current_section.is_master,
+                        legacy_selected_track =
+                            current_section.legacy_selected_track,
+                        fx_index =
+                            current_section.fx_index,
+                        fx_number =
+                            current_section.fx_index + 1,
+                        fx_name =
+                            current_fx_name,
+                        parameter_index =
+                            this_parameter_index,
+                        parameter_name =
+                            parameter_name,
+                        section_name =
+                            current_section.section_name
                     }
                 end
             end
@@ -120,21 +179,22 @@ end
 local OUTPUT_FILENAME = "fx_mapping.ini"
 
 function M.default_path()
-    local _, project_file = reaper.EnumProjects(-1, "")
+    -- Always resolve beside visible Tab1 / REAPER project index 0.
+    local _, project_file = reaper.EnumProjects(0, "")
 
     if not project_file or project_file == "" then
         return nil
     end
 
-    -- ReaGroove runs on Linux, so project paths use '/'.
-    -- Avoid a backslash character class here; it caused a Lua escape error.
-    local project_dir = project_file:match("^(.*)/")
+    local project_dir =
+        project_file:match("^(.*)[/\\]")
 
     if not project_dir or project_dir == "" then
         return nil
     end
 
-    return project_dir .. "/" .. OUTPUT_FILENAME
+    local separator = package.config:sub(1, 1)
+    return project_dir .. separator .. OUTPUT_FILENAME
 end
 
 return M

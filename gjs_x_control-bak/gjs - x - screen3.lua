@@ -392,30 +392,27 @@ local function render_subproject_pan_page(api)
 
     local active_track = get_active_track()
     local tracks = {}
-    local subproject_number = active_track - 1
-    local project = reaper.EnumProjects(subproject_number, "")
+    local subproject_number
 
-    if project then
-        local depth = 0
-
-        for index = 0, reaper.CountTracks(project) - 1 do
-            local track = reaper.GetTrack(project, index)
-
-            if track and depth == 0 then
-                tracks[#tracks + 1] = track
-                if #tracks >= 8 then break end
-            end
+    if active_track == 8 then
+        -- ActiveTrack 8 is the central master mixer in project 0.
+        -- Page 4 controls pan for its first eight REAPER tracks.
+        for index = 0, 7 do
+            local track = reaper.GetTrack(0, index)
 
             if track then
-                depth = depth + math.floor(
-                    reaper.GetMediaTrackInfo_Value(
-                        track,
-                        "I_FOLDERDEPTH"
-                    )
-                )
-                if depth < 0 then depth = 0 end
+                tracks[#tracks + 1] = track
             end
         end
+
+        subproject_number = 0
+    else
+        -- ActiveTrack 1..7 keep their normal internal subproject pan mixer.
+        local _, loaded_tracks, number =
+            subproject_mixer.get_active_tracks(8)
+
+        tracks = loaded_tracks
+        subproject_number = number
     end
 
     local state = api.get_screen_state(3)
@@ -466,7 +463,14 @@ local function render_subproject_pan_page(api)
         if api.get_page and api.get_page() ~= 4 then return end
 
         local current_active_track = get_active_track()
-        local current_number = current_active_track - 1
+        local current_number
+
+        if current_active_track == 8 then
+            current_number = 0
+        else
+            current_number =
+                subproject_mixer.get_active_subproject_number()
+        end
 
         if current_number ~= subproject_number then
             runtime.generation = runtime.generation + 1

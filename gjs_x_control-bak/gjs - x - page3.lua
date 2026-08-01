@@ -2,9 +2,9 @@
 -- ============================================================
 -- gjs - x - page3.lua
 --
--- Page 3 toont F1..F8 voor de huidige zichtbare Tab/ActiveTrack.
+-- Page 3 toont F1..F8 voor de huidige GJS_X/ActiveTrack.
 -- Track 1 = rood, Track 2 = oranje, Track 3 = groen, enz.
--- Elke actieve tab laadt uitsluitend zijn eigen TabN mappings.
+-- Elke actieve track laadt uitsluitend zijn eigen TrackN mappings.
 -- B1..B8 horen bij screen3 en worden hier volledig genegeerd.
 -- ============================================================
 
@@ -69,7 +69,7 @@ local function get_active_track()
     return math.max(1, math.min(8, math.floor(value)))
 end
 
-local function load_tab_mappings(active_track)
+local function load_track_mappings(active_track)
     local mappings, error_message =
         fx_mapping.load(mapping_path, active_track)
 
@@ -110,7 +110,7 @@ function M.render(api, requested_track)
     active_track = math.max(1, math.min(8, math.floor(active_track)))
 
     runtime.active_track = active_track
-    runtime.mappings = load_tab_mappings(active_track)
+    runtime.mappings = load_track_mappings(active_track)
 
     local mappings = runtime.mappings
     local state = api.get_screen_state(2)

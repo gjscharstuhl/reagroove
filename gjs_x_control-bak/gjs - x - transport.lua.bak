@@ -1,6 +1,5 @@
 -- ============================================================
 -- gjs - x - transport.lua
-local subproject_track = include("gjs - x - subproject_track.lua")
 --
 -- Transport- en recordlogica voor de actieve GJS_X-projecttab
 -- ============================================================
@@ -23,7 +22,8 @@ local state = {
     pending_cleanup_project = nil,
     pending_cleanup_time = nil,
     last_play_led_color = nil,
-    last_record_led_color = nil
+    last_record_led_color = nil,
+    reclampje=nil
 }
 
 
@@ -44,14 +44,7 @@ local function get_active_project()
         return nil, nil
     end
 
-    local project_index = active_track
-
-    -- ActiveTrack 8 is the central mixer in project 0.
-    if active_track == 8 then
-        project_index = 0
-    end
-
-    local project = reaper.EnumProjects(project_index)
+    local project = reaper.EnumProjects(active_track)
 
     if not project then
         return nil, nil
@@ -262,38 +255,21 @@ end
 -- FX-record automation
 -- ============================================================
 
-local function get_active_track_project()
-    local active_track =
-        tonumber(
-            reaper.GetExtState(
-                "GJS_MULTI",
-                "ActiveTrack"
-            )
-        ) or 1
-
-    if active_track == 8 then
-        return reaper.EnumProjects(0, "")
-    end
-
-    return reaper.EnumProjects(active_track, "")
-end
-
 local function reset_fx_automation()
-    local proj = get_active_track_project()
-    if not proj then
+    if not state.project then
         return
     end
 
-    local track = subproject_track.get_selected_track(proj)
-    if not track then
-        return
-    end
+    local track =
+        reaper.GetTrack(state.project, 0)
 
-    reaper.SetMediaTrackInfo_Value(
-        track,
-        "I_AUTOMODE",
-        0
-    )
+    if track then
+        reaper.SetMediaTrackInfo_Value(
+            track,
+            "I_AUTOMODE",
+            0
+        )
+    end
 end
 
 
@@ -303,7 +279,7 @@ local function enable_fx_latch()
     end
 
     local track =
-        subproject_track.get_selected_track(state.project)
+        reaper.GetTrack(state.project, 0)
 
     if track then
         reaper.SetMediaTrackInfo_Value(
@@ -336,34 +312,7 @@ local function desired_play_led_color(api)
     return api.COLOR.DARK_GREEN
 end
 
-local function any_project_is_recording()
-    local index = 0
-
-    while true do
-        local project = reaper.EnumProjects(index, "")
-        if not project then
-            break
-        end
-
-        local play_state = reaper.GetPlayStateEx(project)
-        if (play_state & 4) == 4 then
-            return true
-        end
-
-        index = index + 1
-    end
-
-    return false
-end
-
 local function desired_record_led_color(api)
-    -- In de multi-tab-opzet kan de opname lopen in een andere
-    -- projecttab dan de actieve controller-tab. Controleer daarom
-    -- alle geopende projecten in plaats van alleen state.project.
-    if any_project_is_recording() then
-        return api.COLOR.RED
-    end
-
     if not state.watching_record then
         return api.COLOR.YELLOW
     end
@@ -372,11 +321,24 @@ local function desired_record_led_color(api)
         return api.COLOR.ORANGE
     end
 
-    -- FX-recording gebruikt geen normale REAPER-recordstatus.
     return api.COLOR.RED
 end
 
 local function update_transport_leds(api)
+    if not api or not api.get_current_screen then
+        return
+    end
+		if api.get_current_screen() ~= 0 then
+		state.last_play_led_color = nil
+		state.last_record_led_color = nil
+	return
+	end
+	api.send_pad_rgb(4, 2, state.reclampje)
+	
+end
+
+local function update_transport_leds_oud(api)
+
     if not api or not api.get_current_screen then
         return
     end
@@ -391,12 +353,12 @@ local function update_transport_leds(api)
     local record_color = desired_record_led_color(api)
 
     if play_color ~= state.last_play_led_color then
-        api.send_pad_color(4, 1, play_color)
+        api.send_pad_rgb(4, 1, play_color)
         state.last_play_led_color = play_color
     end
 
     if record_color ~= state.last_record_led_color then
-        api.send_pad_color(4, 2, record_color)
+        api.send_pad_rgb(4, 2, record_color)
         state.last_record_led_color = record_color
     end
 end
@@ -465,7 +427,7 @@ function Transport.play()
 end
 
 function Transport.stop()
-
+	state.reclampje = { 127, 127,  0   }
     -- Stop hoofdproject plus alle acht subprojecten.
     for project_index = 0, 9 do
         local project = reaper.EnumProjects(project_index)
@@ -509,7 +471,7 @@ function Transport.record()
 
     local play_state =
         reaper.GetPlayStateEx(project)
-
+	
     --------------------------------------------------------
     -- Page 1: tweede druk stopt normale opname
     --------------------------------------------------------
@@ -522,7 +484,7 @@ function Transport.record()
             0,
             project
         )
-
+		state.reclampje = { 127,127,  0   }
         state.watching_record = false
         state.reached_time_selection = false
         state.pending_record = false
@@ -559,7 +521,7 @@ function Transport.record()
         -- Geen normale REAPER-opname starten.
         -- Transport.update() schakelt latch in zodra
         -- de actieve region bereikt wordt.
-
+		
         return
     end
 
@@ -573,7 +535,7 @@ function Transport.record()
         "0",
         true
     )
-
+	
     -- Wanneer playback al buiten de gekozen region loopt,
     -- wachten tot de gequeuede region bereikt wordt.
     if (play_state & 1) == 1
@@ -645,6 +607,9 @@ function Transport.update(api)
 
         if state.reached_time_selection then
             enable_fx_latch()
+            state.reclampje={127,0,0}
+        else
+			state.reclampje={127,40,0}
         end
     else
         local play_state =
@@ -659,6 +624,7 @@ function Transport.update(api)
                 state.watching_record = false
                 state.reached_time_selection = false
                 state.pending_record = false
+                state.reclampje={127,40,0}
                 update_transport_leds(api)
                 return
             end
@@ -669,7 +635,7 @@ function Transport.update(api)
                     0,
                     state.project
                 )
-
+				state.reclampje={127,0,0}
                 state.pending_record = false
             end
         elseif (play_state & 4) ~= 4 then

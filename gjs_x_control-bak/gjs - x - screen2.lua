@@ -163,33 +163,26 @@ return function(api)
 
         active_track = math.max(1, math.min(8, math.floor(active_track)))
 
-        local project_number = active_track - 1
-        local project = reaper.EnumProjects(project_number, "")
-
-        if project then
-            local depth = 0
-
-            for index = 0, reaper.CountTracks(project) - 1 do
-                local track = reaper.GetTrack(project, index)
-
-                if track and depth == 0 then
-                    subproject_tracks[#subproject_tracks + 1] = track
-                    if #subproject_tracks >= 8 then break end
-                end
+        if active_track == 8 then
+            -- ActiveTrack 8 is the central master mixer in project 0.
+            -- Page 4 controls its first eight REAPER tracks.
+            for index = 0, 7 do
+                local track = reaper.GetTrack(0, index)
 
                 if track then
-                    depth = depth + math.floor(
-                        reaper.GetMediaTrackInfo_Value(
-                            track,
-                            "I_FOLDERDEPTH"
-                        )
-                    )
-                    if depth < 0 then depth = 0 end
+                    subproject_tracks[#subproject_tracks + 1] = track
                 end
             end
-        end
 
-        subproject_number = project_number
+            subproject_number = 0
+        else
+            -- ActiveTrack 1..7 keep their normal internal subproject mixer.
+            local _, tracks, number =
+                subproject_mixer.get_active_tracks(8)
+
+            subproject_tracks = tracks
+            subproject_number = number
+        end
     end
 
     -- Page 1 follows the actual track volumes whenever the mixer is opened.
@@ -420,7 +413,13 @@ return function(api)
             current_active =
                 math.max(1, math.min(8, math.floor(current_active)))
 
-            local current_number = current_active - 1
+            local current_number
+            if current_active == 8 then
+                current_number = 0
+            else
+                current_number =
+                    subproject_mixer.get_active_subproject_number()
+            end
 
             if current_number ~= subproject_number then
                 api.redraw()
