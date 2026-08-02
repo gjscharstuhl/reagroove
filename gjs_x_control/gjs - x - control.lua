@@ -83,7 +83,30 @@ for screen = 0, 7 do
 end
 
 ------------------------------------------------------------
+-- Startup helpers
+------------------------------------------------------------
+
+local function startup_clear()
+
+    local clear = include("gjs - x - clear.lua")
+    if not clear then
+        return
+    end
+
+    clear.clear_all_regions_all_projects({
+        items = true,
+        fx = true,
+        track_mode = "all"
+    })
+
+end
+
+-- Comment this line if you want to keep the current jam.
+startup_clear()
+
+------------------------------------------------------------
 -- Start
 ------------------------------------------------------------
 
 core.start(screens)
+
