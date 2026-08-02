@@ -3,20 +3,21 @@
 -- Version 02 - select resized region after operation
 -- ============================================================
 --
--- Page 2: resize all 8 regions in all 8 subprojects
--- Page 3: resize selected region in all 8 subprojects
+-- Page 2: resize all 8 regions in all subprojects
+-- Page 3: resize selected region in all subprojects
 -- Page 4: resize selected region in selected subproject
 --
--- After every operation, the matching region(s) in the main
--- project are resized to the scene length: the longest matching
--- region found in subprojects 1 through 8.
+-- Project 0 is the main project. Projects 1 through 7 are subprojects.
+-- The chosen bar count is applied to subprojects only. Afterwards the
+-- matching main-project region is resized to the scene length: the
+-- longest matching region found across projects 1 through 7.
 -- ============================================================
 
 local M = {}
 
 local TOLERANCE = 0.000001
 local REGION_COUNT = 8
-local SUBPROJECT_COUNT = 8
+local LAST_SUBPROJECT_INDEX = 7
 
 local function almost_equal(a, b)
     return math.abs(a - b) <= TOLERANCE
@@ -55,7 +56,8 @@ local function select_region(track_number, region_number)
     track_number = tonumber(track_number) or 1
     region_number = tonumber(region_number) or 1
 
-    local proj = reaper.EnumProjects(track_number, "")
+    local project_index = math.floor(track_number) - 1
+    local proj = reaper.EnumProjects(project_index, "")
     if not proj then
         return false
     end
@@ -326,7 +328,7 @@ end
 local function get_scene_length(region_number)
     local longest = nil
 
-    for project_index = 1, SUBPROJECT_COUNT do
+    for project_index = 1, LAST_SUBPROJECT_INDEX do
         local proj = reaper.EnumProjects(project_index, "")
 
         if proj then
@@ -389,7 +391,7 @@ function M.resize_all_regions_all_projects(
 
     reaper.PreventUIRefresh(1)
 
-    for project_index = 1, SUBPROJECT_COUNT do
+    for project_index = 1, LAST_SUBPROJECT_INDEX do
         local proj = reaper.EnumProjects(project_index, "")
 
         if proj then
@@ -465,7 +467,7 @@ function M.resize_selected_region_all_projects(
 
     reaper.PreventUIRefresh(1)
 
-    for project_index = 1, SUBPROJECT_COUNT do
+    for project_index = 1, LAST_SUBPROJECT_INDEX do
         local proj = reaper.EnumProjects(project_index, "")
 
         if proj then
@@ -529,7 +531,7 @@ function M.resize_selected_region_selected_project(
 
     if not active_track
     or active_track < 1
-    or active_track > SUBPROJECT_COUNT
+    or active_track > 8
     or not region_number
     or region_number < 1
     or region_number > REGION_COUNT
@@ -540,8 +542,16 @@ function M.resize_selected_region_selected_project(
         return false
     end
 
+    local project_index = active_track - 1
+
+    -- Project 0 is the main project. A selected-project resize is meant
+    -- for subprojects only; the main region is derived from their maximum.
+    if project_index < 1 or project_index > LAST_SUBPROJECT_INDEX then
+        return false
+    end
+
     local proj =
-        reaper.EnumProjects(active_track, "")
+        reaper.EnumProjects(project_index, "")
 
     if not proj then
         return false
