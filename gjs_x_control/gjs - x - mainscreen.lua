@@ -284,50 +284,27 @@ return function(api, navigation)
         }
     )
 
-    -- Three page buttons plus a dedicated record-mode toggle.
-    -- Physical buttons:
-    --   col 5 = mixer (internal page 4)
-    --   col 6 = sends (page 2)
-    --   col 7 = FX (page 3)
-    --   col 8 = normal/latch recording toggle
-    local page_button_to_internal = {
-        [5] = 4,
-        [6] = 2,
-        [7] = 3
-    }
-
-    local internal_to_page_button = {
-        [2] = 6,
-        [3] = 7,
-        [4] = 5
-    }
-
-    -- Old saved page 1 is no longer exposed as a physical page.
-    -- Show the mixer button until another page is selected.
-    local selected_page_col =
-        internal_to_page_button[current_page] or 5
-
+    -- Four natural page buttons.
+    --   col 5 = page 1: master mixer
+    --   col 6 = page 2: master sends
+    --   col 7 = page 3: FX
+    --   col 8 = page 4: selected subproject mixer
     local page_screen_state = api.get_screen_state(0)
     page_screen_state.radio["page_selector"] =
-        40 + selected_page_col
+        40 + current_page + 4
 
     api.drawstrip(
-        4, 5, 7,
+        4, 5, 8,
         C.BLUE,
         api.MODE_RADIO,
         {
             group = "page_selector",
-            selected_col = selected_page_col,
+            selected_col = current_page + 4,
             active_color = api.SELECT_COLOR,
 
             on_press = function(pad)
                 if api.set_page then
-                    local internal_page =
-                        page_button_to_internal[pad.col]
-
-                    if internal_page then
-                        api.set_page(internal_page)
-                    end
+                    api.set_page(pad.col - 4)
 
                     reaper.defer(function()
                         api.redraw()
@@ -337,7 +314,7 @@ return function(api, navigation)
         }
     )
 
-    -- Record mode toggle on the old physical page-4 button.
+    -- Record-mode toggle moved one row down to pad 38.
     local record_mode =
         reaper.GetExtState("GJS_X", "RecordMode")
 
@@ -346,7 +323,7 @@ return function(api, navigation)
     end
 
     api.drawpad(
-        4,
+        3,
         8,
         record_mode == "latch" and C.PURPLE or C.YELLOW,
         api.MODE_HIGHLIGHT,

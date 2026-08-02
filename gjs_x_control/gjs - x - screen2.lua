@@ -169,9 +169,17 @@ return function(api)
     local subproject_number = nil
 
     if page == 4 then
-        -- The main mixer always controls project 0, regardless of which
-        -- Reagroove instrument/ActiveTrack is selected.
-        local project = reaper.EnumProjects(0, "")
+        local active_track = tonumber(
+            reaper.GetExtState("GJS_X", "ActiveTrack")
+        ) or 1
+
+        active_track =
+            math.max(1, math.min(8, math.floor(active_track)))
+
+        subproject_number = active_track - 1
+
+        local project =
+            reaper.EnumProjects(subproject_number, "")
 
         if project then
             local depth = 0
@@ -181,28 +189,17 @@ return function(api)
 
                 if track and depth == 0 then
                     subproject_tracks[#subproject_tracks + 1] = track
-
-                    if #subproject_tracks >= 8 then
-                        break
-                    end
+                    if #subproject_tracks >= 8 then break end
                 end
 
                 if track then
                     depth = depth + math.floor(
-                        reaper.GetMediaTrackInfo_Value(
-                            track,
-                            "I_FOLDERDEPTH"
-                        )
+                        reaper.GetMediaTrackInfo_Value(track, "I_FOLDERDEPTH")
                     )
-
-                    if depth < 0 then
-                        depth = 0
-                    end
+                    if depth < 0 then depth = 0 end
                 end
             end
         end
-
-        subproject_number = 0
     end
 
     -- Page 1 follows the actual track volumes whenever the mixer is opened.
@@ -305,10 +302,10 @@ return function(api)
                             return
                         end
 
-                        reaper.SetMediaTrackInfo_Value(
+                        reaper.CSurf_OnVolumeChange(
                             track,
-                            "D_VOL",
-                            volume
+                            volume,
+                            false
                         )
 
                     elseif page == 2 then
@@ -352,7 +349,11 @@ return function(api)
                     elseif page == 4 then
                         local track = subproject_tracks[col]
                         if not track then return end
-                        reaper.SetMediaTrackInfo_Value(track, "D_VOL", volume)
+                        reaper.CSurf_OnVolumeChange(
+                            track,
+                            volume,
+                            false
+                        )
                     end
 
                     reaper.TrackList_AdjustWindows(false)
@@ -426,7 +427,20 @@ return function(api)
             end
 
         elseif page == 4 then
-            -- Main mixer remains on project 0 while ActiveTrack changes.
+            local current_active = tonumber(
+                reaper.GetExtState("GJS_X", "ActiveTrack")
+            ) or 1
+
+            current_active =
+                math.max(1, math.min(8, math.floor(current_active)))
+
+            local current_number = current_active - 1
+
+            if current_number ~= subproject_number then
+                api.redraw()
+                return
+            end
+
             local track = subproject_tracks[sync_col]
             if track then
                 volume = reaper.GetMediaTrackInfo_Value(track, "D_VOL")

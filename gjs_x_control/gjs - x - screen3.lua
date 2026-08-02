@@ -343,7 +343,26 @@ local function render_pan_page(api)
         return (index / 9) - 1
     end
 
-    local children = find_direct_children(FOLDER_NAME, 8)
+    local children = {}
+    local main_project = reaper.EnumProjects(0, "")
+
+    if main_project then
+        local depth = 0
+        for index = 0, reaper.CountTracks(main_project) - 1 do
+            local track = reaper.GetTrack(main_project, index)
+            if track and depth == 0 then
+                children[#children + 1] = track
+                if #children >= 8 then break end
+            end
+            if track then
+                depth = depth + math.floor(
+                    reaper.GetMediaTrackInfo_Value(track, "I_FOLDERDEPTH")
+                )
+                if depth < 0 then depth = 0 end
+            end
+        end
+    end
+
     local state = api.get_screen_state(3)
 
     for row = 1, 8 do
@@ -390,36 +409,24 @@ local function render_subproject_pan_page(api)
     runtime.generation = runtime.generation + 1
     local generation = runtime.generation
 
-    -- The main pan mixer always controls project 0, regardless of which
-    -- Reagroove instrument/ActiveTrack is currently selected.
+    local active_track = get_active_track()
+    local subproject_number = active_track - 1
     local tracks = {}
-    local project = reaper.EnumProjects(0, "")
+    local project = reaper.EnumProjects(subproject_number, "")
 
     if project then
         local depth = 0
-
         for index = 0, reaper.CountTracks(project) - 1 do
             local track = reaper.GetTrack(project, index)
-
             if track and depth == 0 then
                 tracks[#tracks + 1] = track
-
-                if #tracks >= 8 then
-                    break
-                end
+                if #tracks >= 8 then break end
             end
-
             if track then
                 depth = depth + math.floor(
-                    reaper.GetMediaTrackInfo_Value(
-                        track,
-                        "I_FOLDERDEPTH"
-                    )
+                    reaper.GetMediaTrackInfo_Value(track, "I_FOLDERDEPTH")
                 )
-
-                if depth < 0 then
-                    depth = 0
-                end
+                if depth < 0 then depth = 0 end
             end
         end
     end
@@ -429,42 +436,30 @@ local function render_subproject_pan_page(api)
     for index = 1, 8 do
         local track = tracks[index]
         local group = "subproject_pan_" .. index
-
         if track then
-            local pan =
-                reaper.GetMediaTrackInfo_Value(track, "D_PAN")
-
-            state.balance[group] =
-                subproject_mixer.pan_to_balance(pan)
+            local pan = reaper.GetMediaTrackInfo_Value(track, "D_PAN")
+            state.balance[group] = subproject_mixer.pan_to_balance(pan)
         else
-            state.balance[group] =
-                subproject_mixer.pan_to_balance(0)
+            state.balance[group] = subproject_mixer.pan_to_balance(0)
         end
     end
 
     for index = 1, 8 do
         local track = tracks[index]
         local group = "subproject_pan_" .. index
-
         api.draw_horizontal_fader(
             9 - index,
             TRACK_RGB[index],
             {
                 group = group,
-
                 on_press = function()
-                    if not track then
-                        return
-                    end
-
+                    if not track then return end
                     local balance = state.balance[group]
-
                     reaper.CSurf_OnPanChange(
                         track,
                         subproject_mixer.balance_to_pan(balance),
                         false
                     )
-
                     reaper.TrackList_AdjustWindows(false)
                     reaper.UpdateArrange()
                 end
@@ -477,43 +472,30 @@ local function render_subproject_pan_page(api)
     local sync_interval = 0.03
 
     local function sync_next_pan()
-        if generation ~= runtime.generation then
-            return
-        end
+        if generation ~= runtime.generation then return end
+        if api.get_current_screen and api.get_current_screen() ~= 3 then return end
+        if api.get_page and api.get_page() ~= 4 then return end
 
-        if api.get_current_screen
-        and api.get_current_screen() ~= 3 then
-            return
-        end
-
-        if api.get_page
-        and api.get_page() ~= 4 then
+        local current_number = get_active_track() - 1
+        if current_number ~= subproject_number then
+            runtime.generation = runtime.generation + 1
+            api.redraw()
             return
         end
 
         local now = reaper.time_precise()
-
         if now - last_sync < sync_interval then
             reaper.defer(sync_next_pan)
             return
         end
-
         last_sync = now
 
         local track = tracks[sync_index]
-
         if track then
             local group = "subproject_pan_" .. sync_index
-            local pan =
-                reaper.GetMediaTrackInfo_Value(track, "D_PAN")
-
-            local wanted =
-                subproject_mixer.pan_to_balance(pan)
-
-            if not subproject_mixer.same_balance(
-                state.balance[group],
-                wanted
-            ) then
+            local pan = reaper.GetMediaTrackInfo_Value(track, "D_PAN")
+            local wanted = subproject_mixer.pan_to_balance(pan)
+            if not subproject_mixer.same_balance(state.balance[group], wanted) then
                 state.balance[group] = wanted
                 api.render_horizontal_fader(group)
             end
