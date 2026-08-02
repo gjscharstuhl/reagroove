@@ -176,7 +176,7 @@ function GetActiveTrackProject()
             )
         ) or 1
 
-    return reaper.EnumProjects(active_track, "")
+    return reaper.EnumProjects(active_track - 1, "")
 end
 
 local function table_to_string(value, indent, visited)
@@ -1205,7 +1205,9 @@ local function get_loop_overview_values()
         return 0, nil
     end
 
-    local project = reaper.EnumProjects(active_track)
+    local project =
+        reaper.EnumProjects(active_track - 1, "")
+
     if not project then
         return 0, nil
     end

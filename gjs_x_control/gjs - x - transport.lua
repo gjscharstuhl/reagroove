@@ -158,42 +158,36 @@ local function item_covers_time_selection(
 end
 
 
-local function get_armed_track(project)
+local function get_armed_tracks(project)
+    local tracks = {}
+
+    if not project then
+        return tracks
+    end
+
     for index = 0, reaper.CountTracks(project) - 1 do
         local track = reaper.GetTrack(project, index)
 
-        if reaper.GetMediaTrackInfo_Value(
+        if track
+        and reaper.GetMediaTrackInfo_Value(
             track,
             "I_RECARM"
-        ) == 1 then
-
-            return track
+        ) > 0.5 then
+            tracks[#tracks + 1] = track
         end
     end
 
-    return nil
+    return tracks
 end
 
 
-local function clean_time_selection_keep_last_complete(project)
-    local track = get_armed_track(project)
-
+local function clean_track_keep_last_complete(
+    track,
+    start_time,
+    end_time
+)
     if not track then
-        return
-    end
-
-    local start_time, end_time =
-        reaper.GetSet_LoopTimeRange2(
-            project,
-            false,
-            false,
-            0,
-            0,
-            false
-        )
-
-    if start_time == end_time then
-        return
+        return false
     end
 
     local overlapping_items = {}
@@ -213,46 +207,80 @@ local function clean_time_selection_keep_last_complete(project)
             start_time,
             end_time
         ) then
-            overlapping_items[
-                #overlapping_items + 1
-            ] = item
+            overlapping_items[#overlapping_items + 1] = item
 
             if item_covers_time_selection(
                 item,
                 start_time,
                 end_time
             ) then
-                complete_items[
-                    #complete_items + 1
-                ] = item
+                complete_items[#complete_items + 1] = item
             end
         end
     end
 
     if #complete_items == 0 then
-        return
+        return false
     end
 
-    local keep_item =
-        complete_items[#complete_items]
-
-    reaper.Undo_BeginBlock()
-    reaper.PreventUIRefresh(1)
+    local keep_item = complete_items[#complete_items]
+    local changed = false
 
     for _, item in ipairs(overlapping_items) do
         if item ~= keep_item then
-            reaper.DeleteTrackMediaItem(
-                track,
-                item
-            )
+            reaper.DeleteTrackMediaItem(track, item)
+            changed = true
+        end
+    end
+
+    return changed
+end
+
+
+local function clean_time_selection_keep_last_complete(project)
+    local armed_tracks = get_armed_tracks(project)
+
+    if #armed_tracks == 0 then
+        return
+    end
+
+    local start_time, end_time =
+        reaper.GetSet_LoopTimeRange2(
+            project,
+            false,
+            false,
+            0,
+            0,
+            false
+        )
+
+    if start_time == end_time then
+        return
+    end
+
+    reaper.Undo_BeginBlock2(project)
+    reaper.PreventUIRefresh(1)
+
+    local changed = false
+
+    for _, track in ipairs(armed_tracks) do
+        if clean_track_keep_last_complete(
+            track,
+            start_time,
+            end_time
+        ) then
+            changed = true
         end
     end
 
     reaper.PreventUIRefresh(-1)
     reaper.UpdateArrange()
 
-    reaper.Undo_EndBlock(
-        "Keep last complete item and remove incomplete takes",
+    reaper.Undo_EndBlock2(
+        project,
+        changed
+            and "Keep last complete takes on armed tracks"
+            or "Keep last complete takes - nothing found",
         -1
     )
 end
