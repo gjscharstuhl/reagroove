@@ -1,9 +1,9 @@
 -- ============================================================
 -- gjs - x - subproject_track.lua
--- Selects the active top-level instrument track inside a subproject.
+-- Selects and record-arms top-level tracks inside a subproject.
 -- Only tracks on folder layer 0 are shown and selectable.
 -- Child tracks are ignored and do not consume one of the 16 pads.
--- The REAPER track selection is the source of truth.
+-- Multiple tracks may be armed; REAPER selection remains the control/FX target.
 -- ============================================================
 
 local M = {}
@@ -82,7 +82,7 @@ function M.get_for_subproject(subproject_number)
     return project, M.get_selected_track(project)
 end
 
-function M.select(subproject_number, track_number)
+function M.select(subproject_number, track_number, armed)
     local project = get_project(subproject_number)
     track_number = math.floor(tonumber(track_number) or 0)
 
@@ -91,76 +91,123 @@ function M.select(subproject_number, track_number)
     end
 
     local top_level_tracks = get_top_level_tracks(project)
-    local new_track = top_level_tracks[track_number]
-    if not new_track then return false end
+    local track = top_level_tracks[track_number]
 
-    local old_track = M.get_selected_track(project)
-
-    if old_track and old_track ~= new_track then
-        reaper.SetMediaTrackInfo_Value(old_track, "I_RECARM", 0)
-        reaper.SetMediaTrackInfo_Value(old_track, "I_AUTOMODE", 0)
+    if not track then
+        return false
     end
 
+    -- Keep one selected track as the control/FX target, but do not
+    -- disarm any of the other top-level tracks.
     for index = 0, reaper.CountTracks(project) - 1 do
-        local track = reaper.GetTrack(project, index)
-        if track then
-            reaper.SetTrackSelected(track, false)
+        local candidate = reaper.GetTrack(project, index)
+
+        if candidate then
+            reaper.SetTrackSelected(candidate, false)
         end
     end
 
-    reaper.SetTrackSelected(new_track, true)
-    reaper.SetMediaTrackInfo_Value(new_track, "I_RECARM", 1)
-    reaper.SetMediaTrackInfo_Value(new_track, "I_AUTOMODE", 0)
+    reaper.SetTrackSelected(track, true)
+
+    if armed == nil then
+        armed =
+            reaper.GetMediaTrackInfo_Value(track, "I_RECARM") < 0.5
+    end
+
+    reaper.SetMediaTrackInfo_Value(
+        track,
+        "I_RECARM",
+        armed and 1 or 0
+    )
+
+    -- Selecting/arming tracks must not leave an old automation mode active.
+    reaper.SetMediaTrackInfo_Value(
+        track,
+        "I_AUTOMODE",
+        0
+    )
 
     reaper.TrackList_AdjustWindows(false)
     reaper.UpdateArrange()
+
     return true
 end
+
 
 function M.draw(api, C, subproject_number, close_callback)
     local project = get_project(subproject_number)
     local top_level_tracks = get_top_level_tracks(project)
     local track_count = #top_level_tracks
-    local selected_number = nil
-
-    if project then
-        local selected_track
-        selected_track, selected_number = M.get_selected_track(project)
-    end
 
     local available_colour = C.LIGHT_BLUE
     local unavailable_colour = { 0, 18, 32 }
+    local state = api.get_screen_state(0)
 
     for number = 1, MAX_VISIBLE_TRACKS do
         local row = number <= 8 and 8 or 7
         local col = number <= 8 and number or number - 8
-        local available = number <= track_count
-        local colour = unavailable_colour
+        local note = row * 10 + col
+        local track = top_level_tracks[number]
+        local available = track ~= nil
 
         if available then
-            colour = number == selected_number and C.WHITE
-                or available_colour
-        end
+            local armed =
+                reaper.GetMediaTrackInfo_Value(
+                    track,
+                    "I_RECARM"
+                ) > 0.5
 
-        api.drawpad(row, col, colour, api.MODE_HIGHLIGHT, {
-            active_color = C.WHITE,
-            on_press = function()
-                if available then
-                    M.select(subproject_number, number)
-                    api.redraw()
-                end
-            end
-        })
+            state.toggle[note] = armed
+
+            api.drawpad(
+                row,
+                col,
+                available_colour,
+                api.MODE_TOGGLE,
+                {
+                    active_color = C.WHITE,
+
+                    on_press = function(pad)
+                        M.select(
+                            subproject_number,
+                            number,
+                            pad.active
+                        )
+
+                        api.redraw()
+                    end
+                }
+            )
+        else
+            state.toggle[note] = false
+
+            api.drawpad(
+                row,
+                col,
+                unavailable_colour,
+                api.MODE_NONE
+            )
+        end
     end
 
     -- Action pad 5 closes this mode.
-    api.drawpad(1, 5, C.BLUE, api.MODE_HIGHLIGHT, {
-        active_color = C.WHITE,
-        on_press = function()
-            if close_callback then close_callback() end
-            api.redraw()
-        end
-    })
+    api.drawpad(
+        1,
+        5,
+        C.BLUE,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+
+            on_press = function()
+                if close_callback then
+                    close_callback()
+                end
+
+                api.redraw()
+            end
+        }
+    )
 end
 
 return M

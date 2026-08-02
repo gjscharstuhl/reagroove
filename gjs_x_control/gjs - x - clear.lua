@@ -37,12 +37,21 @@ local function get_all_regions(proj)
     return regions
 end
 
+local function should_clear_track(track, target_tracks)
+    return target_tracks ~= nil
+       and target_tracks[track] == true
+end
+
 local function delete_items_inside_region(
     proj,
     region,
-    target_track
+    target_tracks
 )
     local deleted = false
+
+    if not target_tracks then
+        return false
+    end
 
     for index = reaper.CountMediaItems(proj) - 1, 0, -1 do
         local item = reaper.GetMediaItem(proj, index)
@@ -62,7 +71,7 @@ local function delete_items_inside_region(
         if overlaps then
             local track = reaper.GetMediaItem_Track(item)
 
-            if not target_track or track == target_track then
+            if should_clear_track(track, target_tracks) then
                 reaper.DeleteTrackMediaItem(track, item)
                 deleted = true
             end
@@ -155,26 +164,18 @@ end
 local function delete_all_automation(
     proj,
     region,
-    target_track
+    target_tracks
 )
     local deleted = false
 
-    if target_track then
-        return delete_track_automation(target_track, region)
+    if not target_tracks then
+        return false
     end
 
-    for index = 0, reaper.CountTracks(proj) - 1 do
-        local track = reaper.GetTrack(proj, index)
-
+    for track in pairs(target_tracks) do
         if delete_track_automation(track, region) then
             deleted = true
         end
-    end
-
-    local master = reaper.GetMasterTrack(proj)
-
-    if master and delete_track_automation(master, region) then
-        deleted = true
     end
 
     return deleted
@@ -186,7 +187,7 @@ local function clear_region(
     undo_text,
     clear_items,
     clear_fx,
-    target_track
+    target_tracks
 )
     if not proj or not region then
         return false
@@ -204,7 +205,7 @@ local function clear_region(
             delete_items_inside_region(
                 proj,
                 region,
-                target_track
+                target_tracks
             )
     end
 
@@ -216,7 +217,7 @@ local function clear_region(
             delete_all_automation(
                 proj,
                 region,
-                target_track
+                target_tracks
             )
     end
 
@@ -234,19 +235,33 @@ local function clear_region(
     return changed
 end
 
-local function get_selected_top_level_track(project)
+local function get_top_level_track_set(project, track_mode)
     if not project then
         return nil
     end
 
+    local targets = {}
     local depth = 0
 
     for index = 0, reaper.CountTracks(project) - 1 do
         local track = reaper.GetTrack(project, index)
 
-        if track and depth == 0
-        and reaper.IsTrackSelected(track) then
-            return track
+        if track and depth == 0 then
+            local include = false
+
+            if track_mode == "all" then
+                include = true
+            elseif track_mode == "armed" then
+                include =
+                    reaper.GetMediaTrackInfo_Value(
+                        track,
+                        "I_RECARM"
+                    ) > 0.5
+            end
+
+            if include then
+                targets[track] = true
+            end
         end
 
         if track then
@@ -263,19 +278,30 @@ local function get_selected_top_level_track(project)
         end
     end
 
-    return nil
+    if next(targets) == nil then
+        return nil
+    end
+
+    return targets
 end
 
 local function read_options(options)
     if type(options) ~= "table" then
-        return true, true
+        return true, true, "armed"
     end
 
-    return options.items == true, options.fx == true
+    local track_mode =
+        options.track_mode == "all"
+        and "all"
+        or "armed"
+
+    return options.items == true,
+           options.fx == true,
+           track_mode
 end
 
 function M.clear_all_regions_all_projects(options)
-    local clear_items, clear_fx = read_options(options)
+    local clear_items, clear_fx, track_mode = read_options(options)
 
     if not clear_items and not clear_fx then
         return false
@@ -291,6 +317,8 @@ function M.clear_all_regions_all_projects(options)
         end
 
         local regions = get_all_regions(proj)
+        local target_tracks =
+            get_top_level_track_set(proj, track_mode)
 
         for region_number = 1, REGION_COUNT do
             local region = regions[region_number]
@@ -301,7 +329,8 @@ function M.clear_all_regions_all_projects(options)
                     region,
                     "gjs - Clear all regions in all projects",
                     clear_items,
-                    clear_fx
+                    clear_fx,
+                    target_tracks
                 )
             end
         end
@@ -317,7 +346,7 @@ function M.clear_selected_region_all_projects(
     region_number,
     options
 )
-    local clear_items, clear_fx = read_options(options)
+    local clear_items, clear_fx, track_mode = read_options(options)
 
     if not clear_items and not clear_fx then
         return false
@@ -341,7 +370,10 @@ function M.clear_selected_region_all_projects(
         local region =
             get_all_regions(proj)[region_number]
 
-        if region then
+        local target_tracks =
+            get_top_level_track_set(proj, track_mode)
+
+        if region and target_tracks then
             clear_region(
                 proj,
                 region,
@@ -349,7 +381,8 @@ function M.clear_selected_region_all_projects(
                     .. tostring(region_number)
                     .. " in all projects",
                 clear_items,
-                clear_fx
+                clear_fx,
+                target_tracks
             )
         end
 
@@ -365,7 +398,7 @@ function M.clear_selected_region_selected_project(
     region_number,
     options
 )
-    local clear_items, clear_fx = read_options(options)
+    local clear_items, clear_fx, track_mode = read_options(options)
 
     if not clear_items and not clear_fx then
         return false
@@ -394,10 +427,10 @@ function M.clear_selected_region_selected_project(
         return
     end
 
-    local target_track =
-        get_selected_top_level_track(proj)
+    local target_tracks =
+        get_top_level_track_set(proj, track_mode)
 
-    if not target_track then
+    if not target_tracks then
         return false
     end
 
@@ -406,13 +439,13 @@ function M.clear_selected_region_selected_project(
     clear_region(
         proj,
         region,
-        "gjs - Clear selected track in region "
+        "gjs - Clear chosen tracks in region "
             .. tostring(region_number)
             .. " in project tab "
             .. tostring(track_number),
         clear_items,
         clear_fx,
-        target_track
+        target_tracks
     )
 
     reaper.PreventUIRefresh(-1)

@@ -40,6 +40,7 @@ local track_select_mode = false
 local clear_mode = false
 local clear_items = false
 local clear_fx = false
+local clear_track_mode = 1 -- 1 = armed, 2 = all top-level tracks
 
 local merge_mode = false
 local merge_scope = MERGE_SELECTED_PROJECT
@@ -103,7 +104,9 @@ local function execute_clear()
 
     local options = {
         items = clear_items,
-        fx = clear_fx
+        fx = clear_fx,
+        track_mode =
+            clear_track_mode == 2 and "all" or "armed"
     }
 
     if selected_scope == SCOPE_SELECTED_TRACK then
@@ -173,6 +176,24 @@ local function draw_clear_mode(api, C)
             active_color = C.WHITE,
             on_press = function(pad)
                 selected_region = pad.col
+                api.redraw()
+            end
+        }
+    )
+
+    -- Track target: armed tracks or all top-level tracks.
+    api.drawstrip(
+        4, 1, 2,
+        C.GREEN,
+        api.MODE_RADIO,
+        {
+            group = "edit_clear_track_mode",
+            selected_row = 4,
+            selected_col = clear_track_mode,
+            active_color = C.WHITE,
+
+            on_press = function(pad)
+                clear_track_mode = pad.col
                 api.redraw()
             end
         }
@@ -555,6 +576,7 @@ return function(api, navigation)
                     -- Start every Clear session with both actions disabled.
                     clear_items = false
                     clear_fx = false
+                    clear_track_mode = 1
                     clear_mode = true
                 elseif pad.col == ACTION_MERGE_COL then
                     merge_mode = true
