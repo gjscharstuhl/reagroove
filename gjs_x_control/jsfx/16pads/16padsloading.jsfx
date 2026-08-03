@@ -1,0 +1,57 @@
+desc:16pads_test
+
+
+
+
+import gfx.jsfx-inc
+import tools.jsfx-inc
+import globalinit.jsfx-inc
+
+
+
+slider1:tchannel=1;<1,16,1>Channel
+slider2:tlev=0;<0,7,1>Level
+
+
+@init
+
+str1="E:/music/test/mpdjam/solo1.wav";
+
+str2="E:/music/test/mpdjam/solo2.wav";
+loadfase=0;
+
+// local mem
+chid=50;
+sloaded=100;
+loadfase=200;
+handle=300;
+
+@serialize
+ 
+@slider
+
+@block
+
+
+
+@sample
+
+function loadsample()
+(
+
+  //a=a+1;
+  getfile3(str1,0,1);
+  getfile3(str2,1,1);
+  getfile3(str1,2,1);
+  getfile3(str2,3,1);
+  
+  //loadfase==3 ? (loadfase=
+
+);
+
+loadsample();
+
+@gfx 400 300
+
+//memset( bufstart,1,bfs);
+gdrawwav(10,10,300,150,bufstart+(bfs*tlev),bfs,0);

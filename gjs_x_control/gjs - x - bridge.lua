@@ -110,7 +110,42 @@ local function ensure_pump()
     end
 end
 
+local function same_entry_notes(left, right)
+    local left_entries = left and left.entries or nil
+    local right_entries = right and right.entries or nil
+
+    if type(left_entries) ~= "table"
+    or type(right_entries) ~= "table"
+    or #left_entries ~= #right_entries then
+        return false
+    end
+
+    for index = 1, #left_entries do
+        if left_entries[index][1] ~= right_entries[index][1] then
+            return false
+        end
+    end
+
+    return true
+end
+
 local function enqueue(packet)
+    -- Faderbewegingen can arrive faster than the JSFX acknowledges them.
+    -- Keep only the newest pending update for the same row/column, otherwise
+    -- the LEDs visibly walk through an obsolete queue after the user presses.
+    if packet.command == COMMAND_SET_FADER_RGB then
+        for index = #Bridge.queue, 1, -1 do
+            local queued = Bridge.queue[index]
+
+            if queued.command == COMMAND_SET_FADER_RGB
+            and same_entry_notes(queued, packet) then
+                Bridge.queue[index] = packet
+                ensure_pump()
+                return true
+            end
+        end
+    end
+
     Bridge.queue[#Bridge.queue + 1] = packet
     ensure_pump()
     return true

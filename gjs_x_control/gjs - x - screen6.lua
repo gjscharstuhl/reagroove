@@ -1,28 +1,249 @@
 -- ============================================================
--- Screen 6: temporary color test
+-- gjs - x - screen6.lua
+-- Drum sequencer screen
+-- Interface only; MIDI logic lives in sequencer_engine.lua.
 -- ============================================================
+
+local script_path = debug.getinfo(1, "S").source:sub(2)
+local script_dir = script_path:match("(.*[\\/])") or ""
+
+local sequencer = dofile(
+    script_dir .. "gjs - x - sequencer_engine.lua"
+)
+
+local MODE_BACKGROUND_GREEN = { 0, 10, 0 }
+local ITEM_INACTIVE_GREEN = { 0, 10, 0 }
+local NOTE_EMPTY_BLUE = { 0, 0, 10 }
+local NOTE_SELECTED_BLUE = { 0, 0, 127 }
+
+local function sequencer_step_from_pad(pad)
+    if pad.row == 8 then
+        return pad.col
+    end
+
+    if pad.row == 7 then
+        return 8 + pad.col
+    end
+
+    return nil
+end
+
+local function report_error(message)
+    reaper.ShowConsoleMsg(
+        "Screen 6: " .. tostring(message) .. "\n"
+    )
+end
+
+local function horizontal_fader_to_velocity(fader)
+    if not fader then return 127 end
+
+    local col = math.max(1, math.min(8, tonumber(fader.col) or 8))
+    local step = math.max(1, math.min(4, tonumber(fader.step) or 4))
+    local index = ((col - 1) * 4) + (step - 1)
+
+    return math.floor((index * 127 / 31) + 0.5)
+end
 
 return function(api)
     local C = api.COLOR
-    local colors = {
-        C.RED,
+    local state = api.get_screen_state(6)
+
+    if state.radio["screen6_mode"] == nil then
+        state.radio["screen6_mode"] = 58
+    end
+
+    if state.radio["screen6_note"] == nil then
+        state.radio["screen6_note"] = 23
+    end
+
+    if state.sequencer_bar == nil then
+        state.sequencer_bar = 1
+    end
+
+    if state.sequencer_velocity == nil then
+        state.sequencer_velocity = 127
+    end
+
+    local velocity_group = "screen6_velocity"
+    if state.horizontal_fader == nil then
+        state.horizontal_fader = {}
+    end
+
+    if state.horizontal_fader[velocity_group] == nil then
+        state.horizontal_fader[velocity_group] = {
+            col = 8,
+            step = 4
+        }
+    end
+
+    state.sequencer_item_exists = sequencer.item_exists()
+
+    ------------------------------------------------------------
+    -- Bottom row: velocity for newly inserted notes.
+    -- Default is maximum velocity (127).
+    ------------------------------------------------------------
+
+    api.draw_horizontal_value_fader(
+        1,
         C.ORANGE,
-        C.YELLOW,
-        C.GREEN,
-        C.LIGHT_BLUE,
-        C.BLUE,
-        C.LIGHT_PURPLE,
-        C.PURPLE
+        {
+            group = velocity_group,
+            default_col = 8,
+            default_step = 4,
+            on_press = function()
+                state.sequencer_velocity =
+                    horizontal_fader_to_velocity(
+                        state.horizontal_fader[velocity_group]
+                    )
+            end
+        }
+    )
+
+    ------------------------------------------------------------
+    -- Row 2: microtune balance strip
+    ------------------------------------------------------------
+
+    api.draw_horizontal_fader(
+        2,
+        C.PURPLE,
+        {
+            group = "screen6_microtune",
+            on_press = function()
+                -- Connected when microtune mode is implemented.
+            end
+        }
+    )
+
+    ------------------------------------------------------------
+    -- Drum-note selection: MIDI notes 23 through 56.
+    ------------------------------------------------------------
+
+    api.drawblock(
+        3, 3,
+        6, 6,
+        C.OFF,
+        api.MODE_RADIO,
+        {
+            group = "screen6_note",
+            background_rgb = NOTE_EMPTY_BLUE,
+            active_color = NOTE_SELECTED_BLUE
+        }
+    )
+
+    ------------------------------------------------------------
+    -- Pattern item controls
+    ------------------------------------------------------------
+
+    api.drawpad(
+        4,
+        1,
+        C.RED,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+            on_press = function()
+                -- Item deletion is connected next.
+            end
+        }
+    )
+
+    api.drawpad(
+        5,
+        1,
+        ITEM_INACTIVE_GREEN,
+        api.MODE_HIGHLIGHT,
+        {
+            active = state.sequencer_item_exists,
+            active_color = C.GREEN,
+
+            on_press = function()
+                local success, result = sequencer.create_item()
+
+                if not success then
+                    report_error(result)
+                    return
+                end
+
+                state.sequencer_item_exists = true
+                api.send_pad_rgb(5, 1, C.GREEN)
+            end,
+
+            on_release = function()
+                api.send_pad_rgb(
+                    5,
+                    1,
+                    state.sequencer_item_exists
+                        and C.GREEN
+                        or ITEM_INACTIVE_GREEN
+                )
+                return true
+            end
+        }
+    )
+
+    ------------------------------------------------------------
+    -- Edit modes: microtune, delete note, insert note (38, 48, 58)
+    ------------------------------------------------------------
+
+    local mode_buttons = {
+        { row = 3, col = 8 },
+        { row = 4, col = 8 },
+        { row = 5, col = 8 }
     }
 
-    for row = 1, 8 do
-        local color_index = ((row + 6 - 2) % 8) + 1
-
-        api.drawstrip(
-            row, 1, 8,
-            colors[color_index],
-            api.MODE_HIGHLIGHT,
-            { active_color = api.SELECT_COLOR }
+    for _, button in ipairs(mode_buttons) do
+        api.drawpad(
+            button.row,
+            button.col,
+            MODE_BACKGROUND_GREEN,
+            api.MODE_RADIO,
+            {
+                group = "screen6_mode",
+                active_color = C.GREEN
+            }
         )
     end
+
+    ------------------------------------------------------------
+    -- Sixteen drum steps. Row 8 = 1..8, row 7 = 9..16.
+    ------------------------------------------------------------
+
+    api.drawblock(
+        7, 1,
+        8, 8,
+        C.GREY,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+
+            on_press = function(pad)
+                local active_mode = state.radio["screen6_mode"]
+
+                -- Pad 58 is insert mode.
+                if active_mode ~= 58 then
+                    return
+                end
+
+                local step = sequencer_step_from_pad(pad)
+                local pitch = state.radio["screen6_note"]
+
+                if not step or not pitch then
+                    return
+                end
+
+                local success, result = sequencer.insert_note({
+                    pitch = pitch,
+                    step = step,
+                    bar = state.sequencer_bar,
+                    velocity = state.sequencer_velocity,
+                    channel = 0,
+                    gate = 0.5
+                })
+
+                if not success then
+                    report_error(result)
+                end
+            end
+        }
+    )
 end

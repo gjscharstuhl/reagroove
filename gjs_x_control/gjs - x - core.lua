@@ -31,6 +31,7 @@ local MODE_RADIO     = 2
 local MODE_TOGGLE    = 3
 local MODE_FADER     = 4
 local MODE_BALANCE   = 5
+local MODE_HORIZONTAL_FADER = 6
 
 -- RGB colours used by every pad in the 8x8 matrix.
 -- Existing screen code can keep using C.RED, C.LIGHT_BLUE, etc.
@@ -235,7 +236,8 @@ local function get_screen_state(screen)
             radio = {},
             toggle = {},
             fader = {},
-            balance = {}
+            balance = {},
+            horizontal_fader = {}
         }
     end
 
@@ -614,6 +616,7 @@ local function drawpad(row, col, color, mode, options)
 
 		fader_group = options.fader_group,
 		balance_group = options.balance_group,
+		horizontal_fader_group = options.horizontal_fader_group,
 		rgb = options.rgb,
 
 		on_press = options.on_press,
@@ -812,6 +815,19 @@ local function get_balance_state(group)
     return state.balance[group]
 end
 
+local function get_horizontal_fader_state(group)
+    local state = get_screen_state(LP.current_screen)
+
+    if not state.horizontal_fader[group] then
+        state.horizontal_fader[group] = {
+            col = 8,
+            step = 4
+        }
+    end
+
+    return state.horizontal_fader[group]
+end
+
 local function render_fader(group)
     local fader = get_fader_state(group)
 
@@ -987,6 +1003,93 @@ local function render_horizontal_fader(group)
     end
 end
 
+local function render_horizontal_value_fader(group)
+    local fader = get_horizontal_fader_state(group)
+    local brightness = { 0.00, 0.34, 0.67, 1.00 }
+    local fader_row = nil
+    local base_rgb = nil
+
+    for _, pad in pairs(LP.pads) do
+        if pad.mode == MODE_HORIZONTAL_FADER
+           and pad.horizontal_fader_group == group then
+            fader_row = pad.row
+            base_rgb = pad.rgb
+            break
+        end
+    end
+
+    if not fader_row or not base_rgb then return end
+
+    local colors = {}
+    for col = 1, 8 do
+        if col < fader.col then
+            colors[col] = { base_rgb[1], base_rgb[2], base_rgb[3] }
+        elseif col == fader.col then
+            local factor = brightness[fader.step] or 1.0
+            colors[col] = {
+                math.floor(base_rgb[1] * factor),
+                math.floor(base_rgb[2] * factor),
+                math.floor(base_rgb[3] * factor)
+            }
+        else
+            colors[col] = { 0, 0, 0 }
+        end
+    end
+
+    if LP.building_matrix and LP.framebuffer then
+        for col = 1, 8 do
+            LP.framebuffer[fader_row][col] = colors[col]
+        end
+        return
+    end
+
+    if Bridge then
+        -- Velocity-fader feedback must follow rapid pad presses immediately.
+        -- Write the complete row directly as one command, like the fast
+        -- sequencer/playhead updates, instead of waiting in the bridge queue.
+        reaper.gmem_attach(GMEM_NAME)
+        reaper.gmem_write(10, 8)
+
+        for col = 1, 8 do
+            local color = colors[col] or { 0, 0, 0 }
+            local base = 11 + ((col - 1) * 4)
+
+            reaper.gmem_write(base + 0, fader_row * 10 + col)
+            reaper.gmem_write(base + 1, color[1] or 0)
+            reaper.gmem_write(base + 2, color[2] or 0)
+            reaper.gmem_write(base + 3, color[3] or 0)
+        end
+
+        Bridge.sequence = (Bridge.sequence or 0) + 1
+        reaper.gmem_write(1, 4)
+        reaper.gmem_write(0, Bridge.sequence)
+    end
+end
+
+local function draw_horizontal_value_fader(row, rgb, options)
+    options = options or {}
+    local group = options.group or ('horizontal_fader_' .. row)
+    local state = get_screen_state(LP.current_screen)
+
+    if not state.horizontal_fader[group] then
+        state.horizontal_fader[group] = {
+            col = options.default_col or 8,
+            step = options.default_step or 4
+        }
+    end
+
+    for col = 1, 8 do
+        drawpad(row, col, COLOR.OFF, MODE_HORIZONTAL_FADER, {
+            horizontal_fader_group = group,
+            rgb = rgb,
+            on_press = options.on_press,
+            on_release = options.on_release
+        })
+    end
+
+    render_horizontal_value_fader(group)
+end
+
 local function draw_vertical_fader(
     col,
     rgb,
@@ -1136,6 +1239,19 @@ local function handle_pad_press(pad, velocity)
         end
 
         render_fader(group)
+
+    elseif pad.mode == MODE_HORIZONTAL_FADER then
+        local group = pad.horizontal_fader_group
+        local fader = get_horizontal_fader_state(group)
+
+        if pad.col == fader.col then
+            fader.step = (fader.step % 4) + 1
+        else
+            fader.col = pad.col
+            fader.step = 1
+        end
+
+        render_horizontal_value_fader(group)
 
     elseif pad.mode == MODE_BALANCE then
         local group = pad.balance_group
@@ -1548,6 +1664,7 @@ local function draw_current_screen()
         LP.current_screen == 3 or
         LP.current_screen == 4 or
         LP.current_screen == 5 or
+        LP.current_screen == 6 or
         LP.current_screen == 7
 
     if matrix_screen then
@@ -1936,6 +2053,7 @@ API.MODE_HIGHLIGHT = MODE_HIGHLIGHT
 API.MODE_RADIO = MODE_RADIO
 API.MODE_TOGGLE = MODE_TOGGLE
 API.MODE_FADER = MODE_FADER
+API.MODE_HORIZONTAL_FADER = MODE_HORIZONTAL_FADER
 
 API.drawpad = drawpad
 API.drawstrip = drawstrip
@@ -1953,6 +2071,8 @@ API.start = start
 API.send_pad_rgb = send_pad_rgb
 API.render_fader = render_fader
 API.draw_horizontal_fader = draw_horizontal_fader
+API.draw_horizontal_value_fader = draw_horizontal_value_fader
+API.render_horizontal_value_fader = render_horizontal_value_fader
 API.render_horizontal_fader = render_horizontal_fader
 API.transport = Transport
 API.get_current_screen = get_current_screen

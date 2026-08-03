@@ -1,0 +1,892 @@
+desc:GJS_16Pads
+
+
+config:group "Group"  1 1 2 3 4
+
+<?
+printf("options:gmem=16pads%d",group;);
+
+?>
+options:no_meter
+
+import globalinit.jsfx-inc
+import notenames.jsfx-inc
+import gfx.jsfx-inc
+import tools.jsfx-inc
+import copypad.jsfx-inc
+import editwav.jsfx-inc
+
+//slider1:1<1,5,1>Mode
+
+filename:0,img/knob2.png
+filename:1,img/16padscase.png
+filename:2,img/pads.png
+filename:3,img/menuknobs.png
+filename:4,img/padcolors.png
+filename:5,img/editcase.png
+filename:6,img/led.png
+
+@init
+
+ 
+function doselection(id,pnote,color,sel)
+local(i)
+(
+ 
+  this.focus ? (sel[id]==0 ? (sel[id]=pnote;) : sel[id]=0;);
+  i=0;
+  loop (17,
+    sel[i]>0 ? setpadcolor(i,color,0) : setpadcolor(i,0,0);
+
+    i+=1;
+  );
+  
+  
+  
+);
+ 
+function padinit(id,x,y,w,h,r0,g0,b0,r1,g1,b1,color)
+//instance (id,x,y,w,h)
+(
+  pad_id[id]=id;
+  pad_x[id]=x;
+  pad_y[id]=y;
+  pad_w[id]=w;
+  pad_h[id]=h;
+  pad_r0[id]=r0;
+  pad_g0[id]=g0;
+  pad_b0[id]=b0;
+  pad_r1[id]=r1;
+  pad_g1[id]=g1;
+  pad_b1[id]=b1;  
+  pad_color[id]=color;
+  pb=pad_plusbut[id];
+  pb.event=0;
+);
+
+function padget(id,scale)
+(
+  this.id=pad_id[id];
+  this.x=pad_x[id]*scale;
+  this.y=pad_y[id]*scale;
+  this.w=pad_w[id]*scale;
+  this.h=pad_h[id]*scale;
+  this.r0= pad_r0[id];
+  this.g0= pad_g0[id];
+  this.b0= pad_b0[id];
+  this.r1= pad_r1[id];
+  this.g1= pad_g1[id];
+  this.b1= pad_b1[id];
+  this.vel= pad_vel[id];
+  this.color= pad_color[id];
+
+
+);
+
+
+
+
+function hilightfocus(id)
+(
+  this.focus==id ? 
+  (
+    
+ 
+    pad_focustime[id]>droptime ? hilight=0.75:hilight=0.5;
+    
+    
+  ):
+  (
+    hilight=0;
+    //pad_vel[id]=0;
+
+    //setpadcolor(id,pad_color[id],0);
+    //this.b0=0.2;
+  )
+
+);
+
+function makeclean()
+(
+  pad=1;
+  loop(16,
+    _global.clearmem+pad=pad;
+    gmem[clearmem+pad]=pad;
+   // while (_global.clearmem+pad==pad)(0;);
+    pad+=1;
+  );
+);
+
+function loadsamples()
+local(l,pad,file,i)
+(
+     _global.goload=0;
+      loop(l=0;8,addr=40+l;strcpy(addr,"");l+=1);
+     //clrgmem(gfilename,__memtop()-gfilename);
+     zzz8= gmem[done+17];
+      pad=1;
+      
+      loop (16,
+       // _global.clearmem=pad;
+       // while (_global.clearmem!=0)(0;);
+        
+       // gmem[loadpad+pad]=0;
+        l=0;
+        loop(pad_sampleamount[pad],
+          
+          //clrgmem(gfilename+(pad*255*16)+(l*255),255);
+          loadsample(pad,l);
+          l+=1;
+
+        );
+       // gmem[loadpad+pad]=pad;
+      pad+=1;
+      _global.goload=1;
+    );
+
+    
+
+);
+
+function init()
+(
+  pgrey=0;pgreen=7;pyellow=17;pblue=3;
+  // memory allocation
+ layerbut=10;
+ layergroupnotes=100;
+ 
+ handle=150;
+
+ notes=400;
+ notenames=notes+127; 
+ initnotenames();
+  
+  pad_id=800;
+  pad_x=pad_id+1*17;
+  pad_y=pad_id+2*17;
+  pad_w=pad_id+3*17;
+  pad_h=pad_id+4*17;
+  pad_r0=pad_id+5*17;
+  pad_g0=pad_id+6*17;
+  pad_b0=pad_id+7*17;
+  pad_r1=pad_id+8*17;
+  pad_g1=pad_id+9*17;
+  pad_b1=pad_id+10*17;
+  pad_level=pad_id+11*17;
+  pad_focus=pad_id+12*17;
+  pad_focustime=pad_id+13*17;
+  pad_vel=pad_id+14*17;
+  pad_note=pad_id+15*17;
+  pad_pad=pad_id+16*17;
+  pad_color=pad_id+17*17;
+  pad_plusbut=pad_id+18*17;
+  pad_minbut=pad_id+19*17;
+  pad_sampleamount=pad_id+20*17;
+  pad_mode=pad_id+21*17;
+  pad_modebut=pad_id+22*17; 
+  
+  
+
+  
+  buttons=1180;
+  
+  string=1200;
+  
+  
+  padcolor=1400;
+  
+  
+  initcolors(1450);  
+  
+  
+  groupid=0;
+  cplev=0;
+  
+  //memset(chokegroup,0,48);
+  
+  
+   
+  
+  modes=2000;
+  modes[1]="Play";
+  modes[2]="Midi learn";
+  modes[3]="Define choke groups";
+  modes[4]="Edit note offs";
+  modes[5]="Define layer groups";
+  
+   playmode=2100;
+   playmode[1]="Selected";
+   playmode[2]="Velocity";
+   playmode[3]="Random";
+   playmode[4]="Cycle";
+   playmode[5]="Mix";
+   
+   
+  
+  groupbase=2300;
+  layergroup=groupbase;
+  chokegroup=groupbase+17*8;
+  defaultgroup=groupbase+2*17*8;
+  noteoffgroup=groupbase+3*17*8;;
+  
+  
+  // end memory allocation
+  #fstr="";
+   #oldstr="";
+   gfx_getdropfile(-1);
+  
+  imgw=600;
+  imgh=600;
+  
+  _global.droppedonpad=-1;
+  mode=0;
+  droptime=5;
+  noteOn = $x90;
+  noteOff = $x80;
+  focus=0;
+  focusold=0;
+  goload=-1;
+  _global.goload=-1;
+  activebutton=buttons+1;
+  amountbuttons=4;
+  bufstart=3000;
+  bufsize=(__memtop()-bufstart)/8;
+  loop(i=0;16,pad_mode[i]=1;gmem[gpadmode+i+1]=1;gmem[loadpad+(i+1)]=-1;);
+  
+  frompad=-1;
+
+);
+
+function initpads()
+local(i,width,height)
+(
+  i=1;
+  
+  width=500;
+  height=500;
+  gap=7;
+  xstart=120;ystart=390;
+  x=xstart;y=ystart;w=100;h=100;
+  id=1;
+  while (
+    //p.padinit(i,x,y,w,h);
+    
+    p.padinit(i,x,y,w,h,0.2,0.2,0.2,1,0.2,0.2,0);
+    pad_mode[i]=1;
+    
+    x+=w+gap;
+    x>xstart+400 ? (x=xstart;y-=h+gap;id-=5;);
+    
+    pad+=1;
+    id+=1;
+    i+=1;
+    i<17;
+  );
+
+
+);
+
+function dolearn()
+(
+
+  learn ? (
+    mode==5 ? layergroupnotes[layergrouptrigger]=msg2:
+    (
+      gmem[midinote+activepad]=playednote;
+      pad_note[activepad]=playednote;
+      pad_pad[activepad]=activepad;
+      
+    );
+    learn=0;
+  );
+);
+
+function changemode()
+
+(
+  
+  mode<3 ? (doselection(0,0,pgrey,defaultgroup));
+  
+  mode==3 ? (doselection(0,0,pgreen,chokegroup));
+  
+  mode==4 ? (doselection(0,0,pyellow,noteoffgroup););
+  
+  mode==5 ? (doselection(0,0,pblue,layergroup););
+  clicked=0;
+);
+
+
+init();
+initpads();
+
+
+
+@serialize
+
+
+
+function save()
+local(i,staddr,l,g,a,j)
+(
+  _global.ready=0;
+  mode=1;
+
+  
+  loop (i=1;16,gmem[loadpad+i]=-1;i+=1;);
+  i=1;
+  
+  loop (16,
+    
+    loop (g=0;8,
+      file_var(0,chokegroup[i+g*16]);
+      file_var(0,layergroup[i+g*16]);
+      g+=1;
+
+    );
+    
+    
+    file_var(0,pad_note[i]);
+    //file_var(0,defaultgroup[i]);
+    file_var(0,noteoffgroup[i]);
+    
+    file_var(0,pad_mode[i]);
+    a=file_var(0,pad_sampleamount[i]);
+    
+    file_var(0,gmem[midinote+i]);
+    file_var(0,gmem[padlevel+i]);
+    file_var(0,gmem[gpadmode+i]);
+  
+    file_var(0,gmem[gsampleamount+i]);
+    
+    
+   
+    staddr=(i*16);j=0;
+    loop (a,
+        file_string(0,staddr+j);
+        
+        
+        file_var(0,gmem[env_a+(i*16)+j]);
+        file_var(0,gmem[env_d+(i*16)+j]);
+        file_var(0,gmem[env_s+(i*16)+j]);
+        file_var(0,gmem[env_r+(i*16)+j]); 
+        file_var(0,gmem[sampvol+(i*16)+j]);
+        file_var(0,gmem[lp1+(i*16)+j]);
+        file_var(0,gmem[lp2+(i*16)+j]);
+        file_var(0,gmem[sloop+(i*16)+j]);   
+        
+        
+        j+=1;
+        /*
+        gmem[padlevel+i]=l;
+        pad_level[i]=l; 
+        
+        getfile(staddr+j,0);goload=0;
+        chunck=bufsize;gmem[loadpad+i]=0;
+        cpy2gmem(bufstart+(goload*chunck),bufstart+(goload*chunck),chunck);
+        _global.droppedonpad=i;
+        while(_global.droppedonpad>-1)(0;);
+        */
+    ) ; 
+  
+  i=i+1;
+  );
+  loop (i=0;16,gmem[loadpad+droppedonpad]=-1;);
+  file_mem(0,layergroupnotes,64);
+);
+
+
+//while (_global.padsloaded<16)(0;);
+
+save();
+//makeclean(); // mischien nweer weghalem als samples niet geledn worden
+loadsamples();
+
+ls=1;
+
+
+
+
+
+ 
+@slider
+
+//mode=slider1;
+
+
+
+@block
+
+function choke(offset,cnote,cid)
+local(i,onOffStatus,offset,cnote,ingroup)
+(
+  znote=cnote;
+  i=1;ingroup=0;
+  loop(16,
+    cnote==chokegroup[cid*16+i] ? (
+     ingroup=1;
+
+    );
+    i=i+1;
+
+  );
+  ingroup ? (
+   i=1;
+   loop(16,
+      cnote!=chokegroup[cid*16+i] ? (
+       // midisend(9,noteOff,chokegroup[cid*16+i],0);
+        midisend(9,msg1,chokegroup[cid*16+i],0);
+      );
+      i+=1;
+    );
+  );
+
+);
+
+function setlayer(offset,cnote,cid)
+local(i,ingroup,group,l)
+(
+
+  group=floor(cid/8);ingroup=0;
+  l=cid%8;
+  loop(i=0;16,
+
+    layergroup[(group*16)+i]>1 ? (
+     ingroup=1;
+     //pad_level[i]=cid;
+     gmem[padlevel+i]=l;
+     gmem[gpadmode+i]=9;
+     
+    );
+    i=i+1;
+
+  );
+
+
+);
+
+function ignorenoteof(msg2)
+local(i)
+(
+  isoff=0;
+  i=1;
+  zzz5=0;
+  zzz1=noteoffgroup[0];
+  zzz2=noteoffgroup[1];;zzz3=msg2;
+  loop(16,
+    noteoffgroup[i]==msg2 ? (isoff=1;zzz5=1);
+    i+=1;
+  ); isoff;
+);
+
+while (midirecv(boffset,msg1,msg2,msg3)) ( 
+    
+    status = msg1 & $xF0;
+    
+    // ignore poly aftertouch ($xA0) and channel pressure ($xD0)
+    status != $xA0 && status != $xD0 ? (
+    
+        channel = msg1 & $x0F;
+        pressure = msg1 & $xD0;
+        onOffStatus = status; // 144 == Note On, 128 == Note Off
+        msg3 == 0 ? onOffStatus = noteOff;
+        
+        trigTest = noteTrig == 0 ? noteOn : noteOff;
+        velon = onOffStatus == noteOn ? 1 : 0;
+        vel = msg3;
+        ib = 1;
+        
+        pressure != 208 ? (
+            loop(16,
+                playednote = msg2;
+                
+                pad_note[ib] == msg2 ? (
+                    pad_vel[ib] = vel;
+                    onOffStatus == noteOn ? pad_pad[ib] = 1 : pad_pad[ib] = 0;
+                    pressure == 208 ? pad_vel[ib] = 0;
+                );
+                
+                ib += 1;
+            );
+            
+            // handle chokegroups
+            loop(c = 0; 8,
+                choke(boffset, playednote, c);
+                c += 1;
+            );
+            
+            // handle layergroups
+            loop(c = 0; 64,
+                layergroupnotes[c] == playednote ? (
+                    setlayer(boffset, playednote, c);
+                );
+                c += 1;
+            );
+            
+            notenrblock = msg2;
+            
+            mode == 2 || mode == 5 ? dolearn();
+            
+            !(ignorenoteof(msg2) && onOffStatus == noteOff) ? (
+                midisend(boffset,msg1,msg2,msg3);
+            );
+        );
+    );
+);
+
+@sample
+
+
+//transfer();
+    
+@gfx 1000 500
+
+function padfocus(id)
+instance (x,y,w,h,focus)
+(
+
+  mouse_x>x && mouse_x<(x+w) && mouse_y>y && mouse_y<(y+h) ? 
+  (
+    focus=id;
+    gfocus=id;
+    gfocus!=gfocusold ? (_global.droppedonpad=-1;gfocusold=gfocus;);
+  
+  ):
+  (
+    focus=-1;
+  );
+) ;
+
+function activepad(id)
+(
+  
+  learn=1;
+  activepad=id;
+  
+ 
+);
+
+function stacksample(padid,file)
+local(staddr,l)
+(
+  //+gmem[padlevel+i];
+  l=0;
+  staddr=(padid*16);//+pad_sampleamount[padid];
+  while (strlen(staddr)>0)( staddr+=1;l+=1;);
+  
+  strcpy(staddr,file);
+  #zztest=staddr;
+  pad_sampleamount[padid]+=1;
+  gmem[padlevel+padid]=l;
+  zzz9=l;
+  //l=gmem[padlevel+padid]-1;
+ // zzz1=pad_sampleamount[padid]=l+1;
+  loadsample(padid,l);
+  //getfile(file,0,pad);
+  //cpy2gmem(bufstart,bufstart,gmem[gbufsize+pad]);
+   
+  getsample(padid,gmem[padlevel+padid]);
+  //getfile(#filestr,0);
+  //getfile(file,0);
+  
+  
+ // goload=0;
+  
+  
+  gmem[gsampleamount+padid]=pad_sampleamount[padid];
+  
+  
+  gmem[env_a+(padid*16)+l]=3;
+  gmem[env_d+(padid*16)+l]=0;
+  gmem[env_s+(padid*16)+l]=1;
+  gmem[env_r+(padid*16)+l]=3;
+  gmem[sampvol+(padid*16)+l]=1;
+  gmem[lp1+(padid*16)+l]=1;
+  gmem[lp2+(padid*16)+l]=floor(gmem[gbufsize+padid]);
+  gmem[sloop+(padid*16)+l]=0;
+  
+ 
+
+);
+
+function pop(padid)
+(
+   pad_sampleamount[padid]>0 ? (
+     staddr=(padid*16)+pad_sampleamount[padid]-1;
+     strcpy(staddr,"");
+     pad_sampleamount[padid]-=1;
+     gmem[padlevel+padid]= max(pad_sampleamount[padid]-1,0);
+     gmem[gsampleamount+padid]=pad_sampleamount[padid];
+  );
+);
+
+
+function cyclemode(i)
+(
+  gmem[gpadmode+i]+=1;
+  gmem[gpadmode+i]>5 ? gmem[gpadmode+i]=1;
+
+);
+
+
+// + - etc buttons
+function drawpadbuttons(pad)
+(
+      //fs=fs/scale;
+      gap=p.w/100*8; // 5%
+      bw=(p.w-5*gap)/4;
+      bw2=(p.w-5*gap)/4/scale;
+      py2=(p.y+gap)/scale;
+      
+      i2=0;
+      minb=pad_minbut[pad];
+      minb.padget(pad,1);
+      minb.button(minb.id,(gap*(i2+1)+p.x+(bw*i2))/scale,py2,bw2,bw2,displayblue,lightgrey,white,"-",fs,0);
+      minb.event && clicked==0 && minb.focus ? (gmem[padlevel+pad]=max(0,gmem[padlevel+pad]-1);minb.event=0;);
+      i2+=1;
+      plusb=pad_plusbut[pad];
+      plusb.padget(pad,1);
+      plusb.button(plusb.id,(gap*(i2+1)+p.x+(bw*i2))/scale,py2,bw2,bw2,displayblue,lightgrey,white,"+",fs,0);
+      plusb.event && clicked==0 && plusb.focus? (gmem[padlevel+pad]=min(pad_sampleamount[pad]-1,gmem[padlevel+pad]+1);plusb.event=0;);
+      i2+=1;
+      modebut.padget(pad,1);
+      modebut.button(modebut.id,(gap*(i2+1)+p.x+(bw*i2))/scale,py2,bw2,bw2,displayblue,lightgrey,white,"m",fs,0);
+      modebut.event && clicked==0 && modebut.focus ? (cyclemode(pad);modebut.event=0;);
+      i2+=1;
+      editb.padget(pad,1);
+      editb.button(editb.id,(gap*(i2+1)+p.x+(bw*i2))/scale,py2,bw2,bw2,displayblue,lightgrey,white,"e",fs,0);
+      editb.event && clicked==0 && editb.focus ? (editwav=1;getsample(pad,gmem[padlevel+pad]);editb.event=0;);
+  );
+  
+function drawpads()
+local(i,fs,i2)
+(
+  
+  i=1;
+  while
+  (
+    p=pad_id+i; 
+    p.padget(i,scale);
+    //p.padgetlevel(i);
+    p.padfocus(i);
+    
+    mouse_cap==1 &&  pad_focustime[p.id]>droptime ? 
+    (
+       
+       activepad(i);
+       clicked==0 && mode==3 ? p.doselection(i,pad_note[i],pgreen,chokegroup+groupid*16);
+       clicked==0 && mode==4 ? p.doselection(i,pad_note[i],pyellow,noteoffgroup);
+       clicked==0 && mode==5 ? p.doselection(i,pad_note[i],pblue,layergroup+groupid*16);
+       clicked=1;
+       
+       
+     );
+     
+     mouse_cap==2 && clicked==0 ?(clicked=1;pop(gfocus););
+     
+     mouse_cap==0 ? (clicked=0;isdragging=0;);
+     p.hilightfocus(i);
+    
+
+    
+    
+   // p.knob
+    //gfx_gradrect(pad.x,pad.y,pad.w,pad.h,1,0,0,1);
+
+    //  gfx_r=min(p.r0+(p.r1-p.r0)*pad_vel[i]*1.2,1);
+   //   gfx_g=min(p.g0+(p.g1-p.g0)*pad_vel[i]*1.2,1);
+  //    gfx_b=min(p.b0+hilight+(p.b1-p.b0)*pad_vel[i]*1.2,1);
+  
+   // gfx_rect(p.x,p.y,p.w,p.h);
+   // padcolor=setpadcolor(p);
+    pad_vel[i]>0 ? (
+      //pvel=pad_vel[i]/32;
+      imgindex(2,p.x,p.y,p.w,p.h,12,11,pad_vel[i]);
+      //imgindex(4,p.x,p.y,p.w,p.h,5,4,pvel);
+    ): 
+    (
+      p.id==gfocus && mode==2 ? 
+      (pad_focustime[p.id]>droptime ? pc=4:pc=2;
+      ): pc=p.color;
+      imgindex(4,p.x,p.y,p.w,p.h,5,4,pc);
+    );
+    //pcol=pad_vel[i];
+    
+    
+    
+   mode==2 ? (
+     #notename=getnote(pad_note[i]);
+     fs=12*scale;
+     margin=10*scale;
+     gfx_setfont(1,"Arial",fs,'b');
+     gfx_x=p.x;
+     gfx_y=p.y;
+     setcolor(white);
+     gfx_drawstr(#notename,1|4,p.x+p.w,p.y+p.h);
+   );
+    
+    //pad_pad[i]==0 ?pad_vel[i]-=0.2;
+    //pad_vel[i]<0 ? pad_vel[i]=0;
+   gfx_getdropfile(0,#fstr);
+
+   p.focus>-1 ? pad_focustime[p.id]+=1 : pad_focustime[p.id]=0;  ;//: p.focustime=0;
+    
+    
+    //drag&drop
+    p.focus>-1 &&  _global.droppedonpad ==-1 && pad_focustime[p.id]>droptime && strlen(#fstr)>0  ? 
+    (
+     
+      loop (dr=0;8,
+        gfx_getdropfile(dr,#fstr);
+        strlen(#fstr)>0 &&  pad_sampleamount[p.id]<8 ? (stacksample(p.id,#fstr););
+        #fstr="";
+        dr+=1;
+      
+      );
+      
+      gfx_getdropfile(-1);
+
+      //#shortfile=shortfilename(#fstr);
+      
+       
+
+      #filestr=#fstr;
+      
+     
+      
+      //sprintf(tmp[1],"hallo ");
+      #fstr="";
+      
+      
+    );
+    
+    mode==2 ? (
+      drawpadbuttons(i);
+      pad_level[i]=gmem[padlevel+i];
+     
+      
+    );
+    
+    i+=1;
+    i<17;
+   
+  )
+);
+
+function drawbuttons(x,y,buttonswidth,buttonsheight,gap,fontsize)
+(
+
+  bw=buttonswidth;bh=buttonsheight;fs=fontsize;
+  playbutton=buttons+1;editnotesbutton=buttons+2;chokebutton=buttons+3;noteoffbutton=buttons+4;
+  playbutton.imgbutton(3,2,2,playbutton,x,y,bw,bh,3,1,2,white,modes[1],fs,1);
+  playbutton.event ? (mode=1;playbutton.event=0;changemode());
+  editnotesbutton.imgbutton(3,2,2,editnotesbutton,x,y+(bh+gap)*1,bw,bh,3,1,2,white,modes[2],fs,1);
+  editnotesbutton.event ? (mode=2;editnotesbutton.event=0;changemode());
+  chokebutton.imgbutton(3,2,2,chokebutton,x,y+(bh+gap)*2,bw,bh,3,1,2,white,modes[3],fs,1);
+  chokebutton.event ? (mode=3;chokebutton.event=0;changemode());
+  noteoffbutton.imgbutton(3,2,2,noteoffbutton,x,y+(bh+gap)*3,bw,bh,3,1,2,white,modes[4],fs,1);
+  noteoffbutton.event ? (mode=4;noteoffbutton.event=0;changemode());
+  layerbutton.imgbutton(3,2,2,layerbutton,x,y+(bh+gap)*4,bw,bh,3,1,2,white,modes[5],fs,1);
+  layerbutton.event ? (mode=5;layerbutton.event=0;changemode());
+);
+
+function display(x,y,w,h,left,top,fontsize,interlinie)
+local(filenameshort,display_padsample,display_activepad)
+(
+  display_padlevel=1;
+  display_padsample=2;
+  filenameshort=3;
+  x=x*scale;y=y*scale;w=w*scale;h=h*scale;left=left*scale;fontsize*=scale;interlinie*=scale;
+  setcolor(cyan);
+ // gfx_rect(x,y,w,h); 
+  gfx_x=x+left;
+  gfx_y=y+top;
+  setcolor(displayblue);
+  gfx_setfont(1,"Arial",fontsize,'b');
+  
+  sprintf(display_activepad,"Pad :%d Layer:%d Samples:%d",gfocus,gmem[padlevel+gfocus]+1,pad_sampleamount[gfocus]);
+  gfx_drawstr(display_activepad);
+  gfx_x=x+left;
+  gfx_y+=interlinie;
+  
+  filenameshort=shortfilename((gfocus*16)+gmem[padlevel+gfocus]);
+  strcpy(display_padsample,"Sample:");strcat(display_padsample,filenameshort);
+  gfx_drawstr(display_padsample);
+  
+  gfx_x=x+left;
+  gfx_y+=interlinie;
+  gfx_drawstr("Playmode:");gfx_drawstr(playmode[gmem[gpadmode+gfocus]]);
+
+  
+);
+
+
+
+function groupbuttons(group,pmode,color)
+local(x,y,w,h,x2,x3,xt,fs,i)
+(
+
+x=610;y=460;w=25;h=25;x2=x+48;xt=x1+50;x3=x2+36;
+fs=25*scale;
+//x=x*scale;x2=x2*scale;y=y*scale;w=w*scale;h=h*scale;xt=xt*scale;
+mode==pmode ? (
+  chokeleftbutton.button(chokeleftbutton,x,y,w,h,grey,lightgrey,white,"<",fs,0);
+  chokeleftbutton.event && clicked==0 && chokeleftbutton.focus && mouse_cap==1 ?
+    ( groupid-=1;groupid=max(0,min(groupid,7));chokeleftbutton.event=0;clicked=1;doselection(i,pad_note[i],color,group+groupid *16););
+  chokerightbutton.button(chokeleftbutton,x2,y,w,h,grey,lightgrey,white,">",fs,0);
+  chokerightbutton.event && clicked==0 && chokerightbutton.focus && mouse_cap==1 ?
+    ( groupid+=1;groupid=max(0,min(groupid,7));chokerightbutton.event=0;clicked=1;doselection(i,pad_note[i],color,group+groupid *16););
+  pmode==5 ?(
+    //lab.button(lb,x3*(i*75),y,w,h,red,green,white,"l",fs,0);
+    loop (i=0;4,
+      lab=(layerbut+(groupid*8)+i);
+      sprintf(#s,"%d",layergroupnotes[(groupid*8)+i]);
+      lab.button(lab,x3+(i*28),y,w,h,grey,lightgrey,white,#s,fs*.5,0);
+      lab.event && clicked==0 && lab.focus (layergrouptrigger=(groupid*8)+i;lab.event=0;learn=1;);
+      i+=1;
+    );
+  
+  );
+  
+  gfx_x=(x+15)*scale;gfx_y=y*scale;setcolor(white);
+  gfx_setfont(1,"Arial",fs,'b');
+  gfx_printf("  %d",groupid);
+  
+);
+
+);
+
+function _debug()(
+debug(800,20,400,500,15,18);
+print("trigger %d",layergrouptrigger);
+print("learn %d",learn);
+print("playednote %d",playednote);
+loop (i=0;4,print("layernote %d",layergroupnotes[groupid*8+i]);i+=1;);
+);
+
+scale=gfx_h / imgh;
+
+ !editwav ? (
+ gfx_x=0;gfx_y=0;
+ gfx_getimgdim(1, imgw, imgh) ;
+ gfx_blit(1,scale, 0);
+ 
+drawpads();
+display(610,80,300,100,10,5,12,15);
+
+drawbuttons(608,210,260,40,10,15);
+mode==3 ? groupbuttons(chokegroup,3,pgreen);
+mode==5 ? groupbuttons(layergroup,5,pblue);
+//gdrawwav(600,20,500,100,0,3000,0);
+copypad();
+//gdrawwav(20,500,300,100,bufstart,buflength,0);
+//gdrawwav(350,500,300,100,bufstart,buflength,1);
+):
+(
+
+editscreen();
+
+);
+
+
+
+//gfx_drawstr("test");

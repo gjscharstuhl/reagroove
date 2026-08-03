@@ -1,0 +1,894 @@
+desc:gjs: Midi Note Bundle
+
+author:Gert-Jan Scharstuhl
+version:1.3.1
+changelog:
+  + Fixed learned input mappings being cleared when transport starts
+  + Fixed Learn Output so MIDI input reliably updates the output slider
+  + Added separate input-note and output-note learn modes
+  + Initial release
+
+about:
+  Bundle multiple MIDI input notes into a single output note.
+  Each bundle can learn any number of source notes and maps
+  them to one configurable output note.
+
+tags:midi note bundle mapper learn utility
+
+/*
+=============================================================================
+
+    gjs: Midi Note Bundle
+    Version 1.3.1
+
+    Author
+    ------
+    Gert-Jan Scharstuhl
+
+    Description
+    -----------
+    Bundles multiple MIDI input notes into a single output note.
+
+    Features
+    --------
+    - 16 independent learnable bundles
+    - Multiple source notes per bundle
+    - Separate input-note and output-note learn modes
+    - One configurable output note per bundle
+    - Polyphonic aftertouch remapping
+    - Custom graphical interface
+    - Project and preset persistence
+
+=============================================================================
+*/
+
+slider1:60<0,127,1>Bundle 1 Output Note
+slider2:61<0,127,1>Bundle 2 Output Note
+slider3:62<0,127,1>Bundle 3 Output Note
+slider4:63<0,127,1>Bundle 4 Output Note
+slider5:64<0,127,1>Bundle 5 Output Note
+slider6:65<0,127,1>Bundle 6 Output Note
+slider7:66<0,127,1>Bundle 7 Output Note
+slider8:67<0,127,1>Bundle 8 Output Note
+slider9:68<0,127,1>Bundle 9 Output Note
+slider10:69<0,127,1>Bundle 10 Output Note
+slider11:70<0,127,1>Bundle 11 Output Note
+slider12:71<0,127,1>Bundle 12 Output Note
+slider13:72<0,127,1>Bundle 13 Output Note
+slider14:73<0,127,1>Bundle 14 Output Note
+slider15:74<0,127,1>Bundle 15 Output Note
+slider16:75<0,127,1>Bundle 16 Output Note
+
+options:gfx_hz=30
+in_pin:none
+out_pin:none
+
+
+// ============================================================================
+// Initialization
+// ============================================================================
+
+@init
+
+// Keep learned mappings intact when REAPER starts or stops transport.
+// Without this flag, REAPER may run @init again and clear the map.
+ext_noinit = 1;
+
+NUM_BUNDLES = 16;
+NUM_NOTES = 128;
+
+// Memory layout
+MAP_BASE          = 0;    // 128 values: input note -> bundle
+NOTE_HELD_BASE    = 128;  // 128 values: input note currently held
+HELD_BUNDLE_BASE  = 256;  // 128 values: bundle remembered at Note On
+BUNDLE_HELD_BASE  = 384;  // 16 values: number of held notes per bundle
+BUNDLE_CHAN_BASE  = 400;  // 16 values: last MIDI channel used per bundle
+BUNDLE_COUNT_BASE = 416;  // 16 values: number of learned notes per bundle
+
+active_input_learn_bundle = -1;
+active_output_learn_bundle = -1;
+drag_bundle = -1;
+last_mouse_cap = 0;
+
+editing_bundle = -1;
+edit_value = 0;
+edit_has_input = 0;
+
+// Initialize note mappings.
+i = 0;
+loop(NUM_NOTES,
+    MAP_BASE[i] = -1;
+    NOTE_HELD_BASE[i] = 0;
+    HELD_BUNDLE_BASE[i] = -1;
+    i += 1;
+);
+
+// Initialize bundle state.
+i = 0;
+loop(NUM_BUNDLES,
+    BUNDLE_HELD_BASE[i] = 0;
+    BUNDLE_CHAN_BASE[i] = 0;
+    BUNDLE_COUNT_BASE[i] = 0;
+    i += 1;
+);
+
+// Hide REAPER's default sliders.
+// The plugin uses its own custom interface instead.
+slider_show(slider1, 0);
+slider_show(slider2, 0);
+slider_show(slider3, 0);
+slider_show(slider4, 0);
+slider_show(slider5, 0);
+slider_show(slider6, 0);
+slider_show(slider7, 0);
+slider_show(slider8, 0);
+slider_show(slider9, 0);
+slider_show(slider10, 0);
+slider_show(slider11, 0);
+slider_show(slider12, 0);
+slider_show(slider13, 0);
+slider_show(slider14, 0);
+slider_show(slider15, 0);
+slider_show(slider16, 0);
+
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+function Clamp(value, minimum, maximum)
+(
+    value < minimum ? value = minimum;
+    value > maximum ? value = maximum;
+    value;
+);
+
+function PointInRect(px, py, x, y, w, h)
+(
+    px >= x &&
+    px < x + w &&
+    py >= y &&
+    py < y + h;
+);
+
+function GetOutputNote(bundle)
+local(value)
+(
+    value = 0;
+
+    bundle == 0  ? value = slider1;
+    bundle == 1  ? value = slider2;
+    bundle == 2  ? value = slider3;
+    bundle == 3  ? value = slider4;
+    bundle == 4  ? value = slider5;
+    bundle == 5  ? value = slider6;
+    bundle == 6  ? value = slider7;
+    bundle == 7  ? value = slider8;
+    bundle == 8  ? value = slider9;
+    bundle == 9  ? value = slider10;
+    bundle == 10 ? value = slider11;
+    bundle == 11 ? value = slider12;
+    bundle == 12 ? value = slider13;
+    bundle == 13 ? value = slider14;
+    bundle == 14 ? value = slider15;
+    bundle == 15 ? value = slider16;
+
+    value;
+);
+
+function SetOutputNote(bundle, note)
+(
+    note = floor(Clamp(note, 0, 127) + 0.5);
+
+    bundle == 0  ? (slider1  = note; sliderchange(slider1));
+    bundle == 1  ? (slider2  = note; sliderchange(slider2));
+    bundle == 2  ? (slider3  = note; sliderchange(slider3));
+    bundle == 3  ? (slider4  = note; sliderchange(slider4));
+    bundle == 4  ? (slider5  = note; sliderchange(slider5));
+    bundle == 5  ? (slider6  = note; sliderchange(slider6));
+    bundle == 6  ? (slider7  = note; sliderchange(slider7));
+    bundle == 7  ? (slider8  = note; sliderchange(slider8));
+    bundle == 8  ? (slider9  = note; sliderchange(slider9));
+    bundle == 9  ? (slider10 = note; sliderchange(slider10));
+    bundle == 10 ? (slider11 = note; sliderchange(slider11));
+    bundle == 11 ? (slider12 = note; sliderchange(slider12));
+    bundle == 12 ? (slider13 = note; sliderchange(slider13));
+    bundle == 13 ? (slider14 = note; sliderchange(slider14));
+    bundle == 14 ? (slider15 = note; sliderchange(slider15));
+    bundle == 15 ? (slider16 = note; sliderchange(slider16));
+);
+
+function RecountBundle(bundle)
+local(note, count)
+(
+    count = 0;
+    note = 0;
+
+    loop(NUM_NOTES,
+        MAP_BASE[note] == bundle ? count += 1;
+        note += 1;
+    );
+
+    BUNDLE_COUNT_BASE[bundle] = count;
+);
+
+function ClearBundle(bundle)
+local(note)
+(
+    note = 0;
+
+    loop(NUM_NOTES,
+        MAP_BASE[note] == bundle ? (
+            MAP_BASE[note] = -1;
+        );
+
+        note += 1;
+    );
+
+    BUNDLE_COUNT_BASE[bundle] = 0;
+);
+
+function LearnNote(bundle, note)
+local(old_bundle)
+(
+    old_bundle = MAP_BASE[note];
+
+    // Move the note from another bundle if needed.
+    old_bundle >= 0 && old_bundle != bundle ? (
+        MAP_BASE[note] = bundle;
+        RecountBundle(old_bundle);
+        RecountBundle(bundle);
+    )
+    :
+    // Add a previously unassigned note.
+    old_bundle < 0 ? (
+        MAP_BASE[note] = bundle;
+        RecountBundle(bundle);
+    );
+);
+
+function GetNoteName(note)
+local(pc, octave)
+(
+    note = floor(note);
+    pc = note % 12;
+    octave = floor(note / 12) - 1;
+
+    pc == 0  ? sprintf(#note_name, "C%d", octave);
+    pc == 1  ? sprintf(#note_name, "C#%d", octave);
+    pc == 2  ? sprintf(#note_name, "D%d", octave);
+    pc == 3  ? sprintf(#note_name, "D#%d", octave);
+    pc == 4  ? sprintf(#note_name, "E%d", octave);
+    pc == 5  ? sprintf(#note_name, "F%d", octave);
+    pc == 6  ? sprintf(#note_name, "F#%d", octave);
+    pc == 7  ? sprintf(#note_name, "G%d", octave);
+    pc == 8  ? sprintf(#note_name, "G#%d", octave);
+    pc == 9  ? sprintf(#note_name, "A%d", octave);
+    pc == 10 ? sprintf(#note_name, "A#%d", octave);
+    pc == 11 ? sprintf(#note_name, "B%d", octave);
+
+    #note_name;
+);
+
+
+// ============================================================================
+// MIDI processing
+// ============================================================================
+
+@block
+
+while(midirecv(offset, msg1, msg2, msg3))
+(
+    status = msg1 & $xF0;
+    channel = msg1 & $x0F;
+    input_note = msg2 & $x7F;
+
+    is_note_on =
+        status == $x90 &&
+        msg3 > 0;
+
+    is_note_off =
+        status == $x80 ||
+        (status == $x90 && msg3 == 0);
+
+    is_poly_aftertouch =
+        status == $xA0;
+
+    // Input Learn mode:
+    // Every incoming Note On is assigned to the selected bundle.
+    is_note_on && active_input_learn_bundle >= 0 ? (
+        LearnNote(active_input_learn_bundle, input_note);
+    );
+
+    // Output Learn mode:
+    // The next incoming Note On becomes the bundle's output note.
+    // The numeric field and graphical slider update automatically.
+    is_note_on && active_output_learn_bundle >= 0 ? (
+        SetOutputNote(active_output_learn_bundle, input_note);
+        active_output_learn_bundle = -1;
+    );
+
+    bundle = MAP_BASE[input_note];
+
+    // ------------------------------------------------------------------------
+    // Bundled Note On
+    // ------------------------------------------------------------------------
+
+    is_note_on && bundle >= 0 ? (
+        NOTE_HELD_BASE[input_note] == 0 ? (
+            NOTE_HELD_BASE[input_note] = 1;
+            HELD_BUNDLE_BASE[input_note] = bundle;
+
+            BUNDLE_HELD_BASE[bundle] += 1;
+            BUNDLE_CHAN_BASE[bundle] = channel;
+
+            // Only the first held source note sends an output Note On.
+            BUNDLE_HELD_BASE[bundle] == 1 ? (
+                output_note = GetOutputNote(bundle);
+
+                midisend(
+                    offset,
+                    $x90 | channel,
+                    output_note,
+                    msg3
+                );
+            );
+        );
+    )
+
+    // ------------------------------------------------------------------------
+    // Bundled Note Off
+    // ------------------------------------------------------------------------
+
+    : is_note_off && NOTE_HELD_BASE[input_note] == 1 ? (
+        held_bundle = HELD_BUNDLE_BASE[input_note];
+
+        NOTE_HELD_BASE[input_note] = 0;
+        HELD_BUNDLE_BASE[input_note] = -1;
+
+        held_bundle >= 0 ? (
+            BUNDLE_HELD_BASE[held_bundle] -= 1;
+
+            BUNDLE_HELD_BASE[held_bundle] < 0 ? (
+                BUNDLE_HELD_BASE[held_bundle] = 0;
+            );
+
+            // Send Note Off only after every source note in the bundle
+            // has been released.
+            BUNDLE_HELD_BASE[held_bundle] == 0 ? (
+                output_note = GetOutputNote(held_bundle);
+                output_channel = BUNDLE_CHAN_BASE[held_bundle];
+
+                midisend(
+                    offset,
+                    $x80 | output_channel,
+                    output_note,
+                    0
+                );
+            );
+        );
+    )
+
+    // ------------------------------------------------------------------------
+    // Polyphonic aftertouch
+    // ------------------------------------------------------------------------
+
+    : is_poly_aftertouch && bundle >= 0 ? (
+        output_note = GetOutputNote(bundle);
+
+        midisend(
+            offset,
+            $xA0 | channel,
+            output_note,
+            msg3
+        );
+    )
+
+    // ------------------------------------------------------------------------
+    // Pass all other MIDI messages through unchanged
+    // ------------------------------------------------------------------------
+
+    : (
+        midisend(offset, msg1, msg2, msg3);
+    );
+);
+
+
+// ============================================================================
+// Save mappings in the project and in FX presets
+// ============================================================================
+
+@serialize
+
+file_mem(0, MAP_BASE, NUM_NOTES);
+
+// Rebuild the displayed input counts after loading a project or preset.
+bundle = 0;
+loop(NUM_BUNDLES,
+    RecountBundle(bundle);
+    bundle += 1;
+);
+
+
+// ============================================================================
+// Custom graphical interface
+// ============================================================================
+
+@gfx 705 530
+
+// ---------------------------------------------------------------------------
+// Keyboard input for the numeric note field
+// ---------------------------------------------------------------------------
+
+key = gfx_getchar();
+
+editing_bundle >= 0 && key > 0 ? (
+
+    // Digits 0 through 9
+    key >= 48 && key <= 57 ? (
+        digit = key - 48;
+
+        edit_has_input == 0 ? (
+            edit_value = digit;
+            edit_has_input = 1;
+        ) : (
+            edit_value = edit_value * 10 + digit;
+        );
+
+        edit_value > 127 ? edit_value = 127;
+    );
+
+    // Backspace
+    key == 8 ? (
+        edit_value = floor(edit_value / 10);
+
+        edit_value == 0 ? (
+            edit_has_input = 0;
+        );
+    );
+
+    // Enter confirms the value.
+    key == 13 ? (
+        edit_has_input ? (
+            SetOutputNote(editing_bundle, edit_value);
+        );
+
+        editing_bundle = -1;
+        edit_has_input = 0;
+    );
+
+    // Escape cancels editing.
+    key == 27 ? (
+        editing_bundle = -1;
+        edit_has_input = 0;
+    );
+);
+
+
+// ---------------------------------------------------------------------------
+// Background and header
+// ---------------------------------------------------------------------------
+
+gfx_setfont(1, "Arial", 16, 'b');
+
+gfx_set(0.10, 0.10, 0.12, 1);
+gfx_rect(0, 0, gfx_w, gfx_h);
+
+gfx_set(1, 1, 1, 1);
+gfx_x = 14;
+gfx_y = 10;
+gfx_drawstr("gjs: Midi Note Bundle");
+
+gfx_setfont(2, "Arial", 12);
+
+gfx_set(0.7, 0.7, 0.7, 1);
+gfx_x = 14;
+gfx_y = 34;
+gfx_drawstr(
+    "Input Learn adds source notes. Output Learn captures the next played note."
+);
+
+
+// ---------------------------------------------------------------------------
+// Layout
+// ---------------------------------------------------------------------------
+
+ROW_X = 14;
+ROW_Y = 62;
+ROW_H = 28;
+
+SLIDER_X = 95;
+SLIDER_W = 165;
+SLIDER_H = 16;
+
+INPUT_X = 270;
+INPUT_W = 46;
+
+INPUT_LEARN_X = 326;
+INPUT_LEARN_W = 92;
+
+OUTPUT_LEARN_X = 428;
+OUTPUT_LEARN_W = 98;
+
+CLEAR_X = 536;
+CLEAR_W = 62;
+
+COUNT_X = 610;
+
+
+// ---------------------------------------------------------------------------
+// Mouse state
+// ---------------------------------------------------------------------------
+
+mouse_down = mouse_cap & 1;
+new_click = mouse_down && !(last_mouse_cap & 1);
+
+!mouse_down ? drag_bundle = -1;
+
+
+// ---------------------------------------------------------------------------
+// Draw all bundles
+// ---------------------------------------------------------------------------
+
+bundle = 0;
+
+loop(NUM_BUNDLES,
+
+    y = ROW_Y + bundle * ROW_H;
+    output_note = floor(GetOutputNote(bundle));
+
+    // Alternating row background
+    bundle % 2 == 0 ?
+        gfx_set(0.15, 0.15, 0.18, 1)
+    :
+        gfx_set(0.12, 0.12, 0.15, 1);
+
+    gfx_rect(8, y - 4, gfx_w - 16, ROW_H);
+
+
+    // -----------------------------------------------------------------------
+    // Bundle label
+    // -----------------------------------------------------------------------
+
+    gfx_set(0.9, 0.9, 0.9, 1);
+    gfx_x = ROW_X;
+    gfx_y = y;
+
+    sprintf(#bundle_text, "Bundle %02d", bundle + 1);
+    gfx_drawstr(#bundle_text);
+
+
+    // -----------------------------------------------------------------------
+    // Output-note slider
+    // -----------------------------------------------------------------------
+
+    gfx_set(0.25, 0.25, 0.28, 1);
+    gfx_rect(
+        SLIDER_X,
+        y,
+        SLIDER_W,
+        SLIDER_H
+    );
+
+    slider_fill =
+        SLIDER_W *
+        output_note /
+        127;
+
+    gfx_set(0.25, 0.65, 0.95, 1);
+    gfx_rect(
+        SLIDER_X,
+        y,
+        slider_fill,
+        SLIDER_H
+    );
+
+    knob_x =
+        SLIDER_X +
+        slider_fill -
+        3;
+
+    gfx_set(0.95, 0.95, 0.95, 1);
+    gfx_rect(
+        knob_x,
+        y - 2,
+        6,
+        SLIDER_H + 4
+    );
+
+    GetNoteName(output_note);
+
+    gfx_set(0, 0, 0, 1);
+    gfx_x = SLIDER_X + 5;
+    gfx_y = y + 1;
+
+    sprintf(
+        #output_text,
+        "%s",
+        #note_name
+    );
+
+    gfx_drawstr(#output_text);
+
+
+    // -----------------------------------------------------------------------
+    // Numeric output-note field
+    // -----------------------------------------------------------------------
+
+    editing_bundle == bundle ?
+        gfx_set(0.95, 0.65, 0.15, 1)
+    :
+        gfx_set(0.32, 0.32, 0.36, 1);
+
+    gfx_rect(
+        INPUT_X,
+        y - 2,
+        INPUT_W,
+        20
+    );
+
+    gfx_set(1, 1, 1, 1);
+    gfx_x = INPUT_X;
+    gfx_y = y;
+
+    editing_bundle == bundle ? (
+        edit_has_input ?
+            sprintf(#input_text, "%d", edit_value)
+        :
+            strcpy(#input_text, "");
+    ) : (
+        sprintf(#input_text, "%d", output_note);
+    );
+
+    gfx_drawstr(
+        #input_text,
+        1 | 4,
+        INPUT_X + INPUT_W,
+        y + 17
+    );
+
+
+    // -----------------------------------------------------------------------
+    // Input Learn button
+    // -----------------------------------------------------------------------
+
+    active_input_learn_bundle == bundle ?
+        gfx_set(0.95, 0.55, 0.10, 1)
+    :
+        gfx_set(0.25, 0.45, 0.25, 1);
+
+    gfx_rect(
+        INPUT_LEARN_X,
+        y - 2,
+        INPUT_LEARN_W,
+        20
+    );
+
+    gfx_set(1, 1, 1, 1);
+    gfx_x = INPUT_LEARN_X;
+    gfx_y = y - 1;
+
+    gfx_drawstr(
+        active_input_learn_bundle == bundle ?
+            "INPUT..."
+        :
+            "Learn Input",
+        1 | 4,
+        INPUT_LEARN_X + INPUT_LEARN_W,
+        y + 18
+    );
+
+
+    // -----------------------------------------------------------------------
+    // Output Learn button
+    // -----------------------------------------------------------------------
+
+    active_output_learn_bundle == bundle ?
+        gfx_set(0.95, 0.55, 0.10, 1)
+    :
+        gfx_set(0.25, 0.38, 0.58, 1);
+
+    gfx_rect(
+        OUTPUT_LEARN_X,
+        y - 2,
+        OUTPUT_LEARN_W,
+        20
+    );
+
+    gfx_set(1, 1, 1, 1);
+    gfx_x = OUTPUT_LEARN_X;
+    gfx_y = y - 1;
+
+    gfx_drawstr(
+        active_output_learn_bundle == bundle ?
+            "OUTPUT..."
+        :
+            "Learn Output",
+        1 | 4,
+        OUTPUT_LEARN_X + OUTPUT_LEARN_W,
+        y + 18
+    );
+
+
+    // -----------------------------------------------------------------------
+    // Clear button
+    // -----------------------------------------------------------------------
+
+    gfx_set(0.48, 0.20, 0.20, 1);
+    gfx_rect(
+        CLEAR_X,
+        y - 2,
+        CLEAR_W,
+        20
+    );
+
+    gfx_set(1, 1, 1, 1);
+    gfx_x = CLEAR_X;
+    gfx_y = y - 1;
+
+    gfx_drawstr(
+        "Clear",
+        1 | 4,
+        CLEAR_X + CLEAR_W,
+        y + 18
+    );
+
+
+    // -----------------------------------------------------------------------
+    // Number of learned input notes
+    // -----------------------------------------------------------------------
+
+    gfx_set(0.75, 0.75, 0.75, 1);
+    gfx_x = COUNT_X;
+    gfx_y = y;
+
+    sprintf(
+        #count_text,
+        "%d Inputs",
+        BUNDLE_COUNT_BASE[bundle]
+    );
+
+    gfx_drawstr(#count_text);
+
+
+    // -----------------------------------------------------------------------
+    // Click and drag the output-note slider
+    // -----------------------------------------------------------------------
+
+    new_click &&
+    PointInRect(
+        mouse_x,
+        mouse_y,
+        SLIDER_X,
+        y - 3,
+        SLIDER_W,
+        SLIDER_H + 6
+    ) ? (
+        editing_bundle = -1;
+        drag_bundle = bundle;
+
+        new_note =
+            (mouse_x - SLIDER_X) /
+            SLIDER_W *
+            127;
+
+        SetOutputNote(
+            bundle,
+            new_note
+        );
+    );
+
+    mouse_down &&
+    drag_bundle == bundle ? (
+        new_note =
+            (mouse_x - SLIDER_X) /
+            SLIDER_W *
+            127;
+
+        SetOutputNote(
+            bundle,
+            new_note
+        );
+    );
+
+
+    // -----------------------------------------------------------------------
+    // Click the numeric output-note field
+    // -----------------------------------------------------------------------
+
+    new_click &&
+    PointInRect(
+        mouse_x,
+        mouse_y,
+        INPUT_X,
+        y - 2,
+        INPUT_W,
+        20
+    ) ? (
+        editing_bundle = bundle;
+        edit_value = output_note;
+
+        // The first typed digit replaces the previous value.
+        edit_has_input = 0;
+
+        drag_bundle = -1;
+    );
+
+
+    // -----------------------------------------------------------------------
+    // Toggle Input Learn mode
+    // -----------------------------------------------------------------------
+
+    new_click &&
+    PointInRect(
+        mouse_x,
+        mouse_y,
+        INPUT_LEARN_X,
+        y - 2,
+        INPUT_LEARN_W,
+        20
+    ) ? (
+        editing_bundle = -1;
+        active_output_learn_bundle = -1;
+
+        active_input_learn_bundle == bundle ?
+            active_input_learn_bundle = -1
+        :
+            active_input_learn_bundle = bundle;
+    );
+
+
+    // -----------------------------------------------------------------------
+    // Toggle Output Learn mode
+    // -----------------------------------------------------------------------
+
+    new_click &&
+    PointInRect(
+        mouse_x,
+        mouse_y,
+        OUTPUT_LEARN_X,
+        y - 2,
+        OUTPUT_LEARN_W,
+        20
+    ) ? (
+        editing_bundle = -1;
+        active_input_learn_bundle = -1;
+
+        active_output_learn_bundle == bundle ?
+            active_output_learn_bundle = -1
+        :
+            active_output_learn_bundle = bundle;
+    );
+
+
+    // -----------------------------------------------------------------------
+    // Clear all learned notes from this bundle
+    // -----------------------------------------------------------------------
+
+    new_click &&
+    PointInRect(
+        mouse_x,
+        mouse_y,
+        CLEAR_X,
+        y - 2,
+        CLEAR_W,
+        20
+    ) ? (
+        editing_bundle = -1;
+
+        ClearBundle(bundle);
+
+        active_input_learn_bundle == bundle ? (
+            active_input_learn_bundle = -1;
+        );
+
+        active_output_learn_bundle == bundle ? (
+            active_output_learn_bundle = -1;
+        );
+    );
+
+    bundle += 1;
+);
+
+last_mouse_cap = mouse_cap;
+

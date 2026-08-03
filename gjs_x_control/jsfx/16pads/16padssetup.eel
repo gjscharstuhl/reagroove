@@ -1,0 +1,67 @@
+
+function delete()
+(
+// delete
+num_tracks=CountTracks(0);
+i=0;
+loop(num_tracks,
+  tr=GetTrack(0,i);
+  DeleteTrack(tr);
+);
+);
+
+delete();
+// create 16 pads track
+
+num_tracks=CountTracks(0);
+InsertTrackAtIndex(num_tracks, 1);
+tr=GetTrack(0,num_tracks);
+
+SetMediaTrackInfo_Value(tr, "I_RECINPUT", 4096+(63*2^5));
+SetMediaTrackInfo_Value(tr, "I_RECARM",1);
+
+p16=tr;
+
+#name="16PADS";
+GetSetMediaTrackInfo_String(tr, "P_NAME",#name, 1);
+padtrack=tr;
+
+// create folder track
+
+num_tracks=CountTracks(0);
+InsertTrackAtIndex(num_tracks, 1);
+tr=GetTrack(0,num_tracks);
+#name="Drums";
+GetSetMediaTrackInfo_String(tr, "P_NAME",#name, 1);
+SetMediaTrackInfo_Value(tr, "I_FOLDERDEPTH", 1);
+
+// create drum tracks
+
+i=0;amount=16;
+loop(amount,
+  num_tracks=CountTracks(0);
+  InsertTrackAtIndex(num_tracks, 1);
+  tr = GetTrack(0, num_tracks);
+  // add GJS_Frums fx
+  fx = TrackFX_AddByName(tr, "16padstrack.jsfx", 0, -1);
+  
+  //TrackFX_SetPreset(tr,  fx, "group2");
+  
+  // set drum  channel slider
+  TrackFX_SetParam(tr, 0, 0,i+1);
+  // create receive only midi 
+  CreateTrackSend(padtrack, tr, -1);
+  SetTrackSendInfo_Value(tr,-1,0,"I_SRCCHAN",-1); // no audio
+  // name drumtrack
+  sprintf(#name,"Drum %d",i+1);
+  GetSetMediaTrackInfo_String(tr, "P_NAME",#name, 1);
+  i+=1;
+
+);
+// last child in folder
+SetMediaTrackInfo_Value(tr, "I_FOLDERDEPTH", -1);
+
+
+fx = TrackFX_AddByName(p16, "GJS_16Pads", 0, -1);
+b=TrackFX_SetNamedConfigParm(p16, fx, "Group","2");
+

@@ -1,0 +1,299 @@
+desc:knob
+
+options:want_all_kb
+
+/*
+slider1:midi=0<-1,1,0.01>midi
+slider2:reset=0<0,4,1>Reset
+slider3:recording=0<0,4,1>Recording
+slider4:recorded=0<0,4,1>Recorded
+slider5:rootnote=0<0,30000,10>Root note
+
+
+filename:0,img/Case.png
+filename:1,img/knob.png
+filename:2,img/reset.png
+filename:3,img/recording.png
+filename:4,img/recorded.png
+filename:5,img/slider.png
+
+*/
+
+@slider
+//midi=slider1;
+
+
+@init
+gfx_getchar();
+scale=1;
+
+
+function knobinit(_img,_x,_y,_w,_h,_shx,_min,_max,_imgrange)
+instance(kmin,kmax,range,x,y,w,h,shx,img,imgrange)
+(
+  imgrange=_imgrange;
+  img=_img;
+  w=_w;
+  h=_h;
+  x=_x;y=_y;
+  shx=_shx;
+  kmin=_min;
+  kmax=_max;
+  range=kmax-kmin;
+);
+/*
+aknob.knobinit(1,105,45,73,59,12,-1,1,127);
+dknob.knobinit(1,172,45,73,59,12,1000,-10,127);
+sknob.knobinit(1,240,45,73,59,12,1000,-10,127);
+rknob.knobinit(1,307,45,73,59,12,1000,-10,127);
+resetknob.knobinit(2,722,130,168,56,3,0,4,5);
+recordingknob.knobinit(3,730,190,153,42,3,0,4,5);
+recordedknob.knobinit(4,725,240,175,59,3,0,4,5);
+rootnoteknob.knobinit(5,115,440,299,38,1,0,30000,1);
+//rootnote.knobinit(
+*/
+
+
+
+
+//@gfx 960 540
+
+function knob(_index)
+ instance (x,y,w,h,img,index,range,kmin,col,row,shx,imgrange)
+ local(rot)
+ (
+  //x=_x;y=_y;
+  
+  index=abs(floor((_index-kmin)/range*imgrange));
+  rot=0;
+  //gfx_getimgdim(img, w, h) ;
+  //w=floor(w/shx);
+  //h=floor(h/shy);
+  row=floor(index/shx);
+  col=index%shx;
+  gfx_x=x*scale;
+  gfx_y=y*scale;
+  gfx_blit(img,scale,rot,col*w,row*h,w,h);
+ 
+ );
+ 
+function knobfocus()
+instance (x,y,w,h,focus)
+(
+
+  mouse_x>x*scale && mouse_x<(x+w)*scale && mouse_y>y*scale && mouse_y<(y+h)*scale ? 
+  (
+    focus=1;
+  
+  ):
+  (
+    focus=0;
+  );
+) ;
+
+function knobclick(val*,mouse,stick)
+instance (clicked,imgrange,focus,bounce,event)
+(
+  this.knobfocus();
+  (focus && mouse_cap) || !mouse ? (!clicked ? bounce=1;clicked=1;);
+
+  clicked ?
+  (
+    test=bounce;
+    val+=bounce;
+    val=min(imgrange-1,val);
+    val >= imgrange-1 ?
+    (
+       stick ? (bounce=0;event=1;):bounce=-1;
+      
+    );
+    val <=0 && bounce==-1 ? 
+    (
+      clicked=0;bounce=0;
+      event=1;
+    );
+  );
+
+);
+
+function knobon(val*,mouse)
+instance (clicked,imgrange,focus,event)
+(
+  this.knobfocus();
+  (focus && mouse_cap) || !mouse ? (!clicked ? bounce=1;clicked=1;);
+
+  clicked ?
+  (
+    val+=1;
+    
+    val >= imgrange-1 ?
+    (
+       event=1;
+       clicked=0;
+       val=imgrange-1;
+    );
+  );
+
+);
+
+function knoboff(val*,mouse)
+instance (clicked,imgrange,focus,event)
+(
+  this.knobfocus();
+  (focus && mouse_cap) || !mouse ? (!clicked ? bounce=-1;clicked=1;);
+
+  clicked ?
+  (
+    
+    val-=1;
+    
+    val <=0  ?
+    (
+       event=1;
+       clicked=0;
+       val=0;
+    );
+  );
+
+);
+
+function knobdrag(val*,xy)
+instance (focus,drag,ystart,dy,range,kmin,kmax,index,oldmousey)
+//local(a)
+(
+
+  
+  xy ? (mousexy=mouse_x;d=-1;a=1600/299;):(mousexy=mouse_y;d=1;a=10;);
+  shift= mouse_cap&8;
+  shift==8 ? a=1;
+ 
+  this.knobfocus();
+  focus && mouse_cap ? drag=1;
+  !mouse_cap ? (drag=0;dy=0;dir=0;);
+  
+  drag ? 
+  (
+    oldmousey>mousexy+3 ? dir=d:
+      oldmousey<mousexy-3 ? dir=-d:
+        dir=0;
+    dy=dir*range/128*a;
+    oldmousey=mousexy;
+    val+=dy;
+    val=max(kmin,val);
+    val=min(kmax,val);
+
+  );
+
+);
+ 
+function slide(val*,y,slmin,slmax)
+ instance(focus,slide,range,blockx,moved)
+(
+  
+  slmin*=scale;slmax*=scale;y*=scale;
+  slrange=(slmax-slmin);
+  scale!=scaleold  && mouse_cap ?(newx=blockx*scale;scaleold=scale;scaling=1):scaling=0;
+  
+  
+  
+  
+  this.knobfocus();
+  
+  focus && mouse_cap ? 
+  (
+    mousex=mouse_x;
+    blockx=max(min(mousex,slmax),slmin);
+    val=((blockx-slmin)/slrange)*range;
+    val=floor(val);
+    moved=1;  
+  );
+
+  gfx_r=0.5;gfx_g=0.5;gfx_b=0.5;
+  //slmin*=scale;slmax*=scale;y*=scale;
+  scaling ? gfx_rect(newx,y,10*scale,20*scale):gfx_rect(blockx,y,10*scale,20*scale);
+  //gfx_rect(mouse_x,mouse_y,10*scale,20*scale);
+  
+
+);
+
+
+
+function sliderfocus()
+instance (x,y,w,h,focus)
+(
+
+  mouse_x>x && mouse_x<(x+w) && mouse_y>y && mouse_y<(y+h) ? 
+  (
+    focus=1;
+  
+  ):
+  (
+    focus=0;
+  );
+) ;
+
+
+function sliderdraw(_x,_y,_w,_h,_slmin,_slmax,_slval,img,offs1,offs2)
+instance(x,y,w,h,slmin,slmino,slmax,slval,slrange,grange,handlex,drag)
+(
+  offs1=offs1*scale;offs2=offs2*scale;
+  slmax=_slmax;slmin=_slmin;slval=_slval;
+  slmino=slmin;
+  slmin<0 ? 
+  (
+    slmax+=-slmin;
+    
+    slval+=-slmin;
+    slmin=0;
+    
+  );
+ 
+  x=_x*scale;
+  y=_y*scale;
+  w=_w*scale;
+  h=_h*scale;
+  
+  slrange=slmax-slmin;
+  grange=w;
+  handlex=slval/slrange*grange;
+  //handlex<offs1 ? handlex=offs1;
+  //handlex>w-offs2 ? handlex=offs2;
+  gfx_r=0.1;gfx_b=0.5;gfx_g=0.1;
+  gfx_x=x;gfx_y=y+10;
+  //gfx_rect(x,y+10,w,h);
+  gfx_blit(img,1,0,0,0,299,38,x-offs1,y,w+offs2,h);
+  gfx_r=0.5;gfx_b=0.5;gfx_g=0.5;
+  gfx_rect(x+handlex-(5*scale),y,10*scale,h);
+  
+  
+  
+  
+);
+
+function sliderdrag(val*)
+instance(drag,focus,slmin,slmino,slmax,slval,oval,slrange,grange,x,y,w,h)
+(
+  this.sliderfocus();
+  focus && mouse_cap ? drag=1;
+ 
+  
+  drag ? 
+  (
+    mousex=mouse_x;
+    //handlex=max(min(mousex,slmax),slmin);
+    
+    val=((mousex-x)/grange)*slrange;
+    
+    floor(val);
+    slmino <0 ? (val+=slmino;slmax+=slmino;);
+    val < slmino ? val=slmino;
+    val > slmax ? val=slmax;
+    
+    oval=val;
+    ;
+
+  );
+   !mouse_cap ? drag=0;
+);
+
+ 

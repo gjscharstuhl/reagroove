@@ -1,0 +1,610 @@
+desc:knob
+
+options:want_all_kb
+
+/*
+slider1:midi=0<-1,1,0.01>midi
+slider2:reset=0<0,4,1>Reset
+slider3:recording=0<0,4,1>Recording
+slider4:recorded=0<0,4,1>Recorded
+slider5:rootnote=0<0,30000,10>Root note
+
+
+filename:0,img/Case.png
+filename:1,img/knob2.png
+filename:2,img/reset.png
+filename:3,img/recording.png
+filename:4,img/recorded.png
+filename:5,img/slider.png
+
+*/
+
+@slider
+//midi=slider1;
+
+
+@init
+gfx_getchar();
+scale=1;
+
+
+function knobinit(_img,_x,_y,_w,_h,_shx,_shy,_min,_max,_imgrange)
+instance(kmin,kmax,range,x,y,w,h,shx,shy,img,imgrange)
+(
+  imgrange=_imgrange;
+  img=_img;
+  w=_w;
+  h=_h;
+  x=_x;y=_y;
+  shx=_shx;
+  shy=_shy;
+  kmin=_min;
+  kmax=_max;
+  range=kmax-kmin;
+);
+/*
+aknob.knobinit(1,105,45,73,59,12,-1,1,127);
+dknob.knobinit(1,172,45,73,59,12,1000,-10,127);
+sknob.knobinit(1,240,45,73,59,12,1000,-10,127);
+rknob.knobinit(1,307,45,73,59,12,1000,-10,127);
+resetknob.knobinit(2,722,130,168,56,3,0,4,5);
+recordingknob.knobinit(3,730,190,153,42,3,0,4,5);
+recordedknob.knobinit(4,725,240,175,59,3,0,4,5);
+rootnoteknob.knobinit(5,115,440,299,38,1,0,30000,1);
+//rootnote.knobinit(
+*/
+
+
+
+
+//@gfx 960 540
+
+function knob(_index)
+ instance (x,y,w,h,img,index,range,kmin,col,row,shx,shy,imgrange)
+ local(rot)
+ (
+  //x=_x;y=_y;
+  
+  index=abs(floor((_index-kmin)/range*imgrange));
+  rot=0;
+  gfx_getimgdim(img, iw, ih) ;
+  iw=floor(iw/shx);
+  ih=floor(ih/shy);
+  row=floor(index/shx);
+  col=index%shx;
+  gfx_x=x*scale;
+  gfx_y=y*scale;
+  //gfx_blit(img,scale,rot,col*iw,row*ih,w,h);
+  gfx_blit(img,scale,rot,col*iw,row*ih,iw,ih,x*scale,y*scale,w*scale,h*scale);
+ );
+ 
+function knobfocus()
+instance (x,y,w,h,focus)
+(
+
+  mouse_x>x*scale && mouse_x<(x+w)*scale && mouse_y>y*scale && mouse_y<(y+h)*scale ? 
+  (
+    focus=1;
+  
+  ):
+  (
+    focus=0;
+  );
+) ;
+
+function focus()
+instance (x,y,w,h,focus)
+(
+
+  mouse_x>x && mouse_x<(x+w) && mouse_y>y && mouse_y<(y+h) ? 
+  (
+    focus=1;
+  
+  ):
+  (
+    focus=0;
+  );
+) ;
+
+function knobclick(val*,mouse,stick)
+instance (clicked,imgrange,focus,bounce,event)
+(
+  this.knobfocus();
+  (focus && mouse_cap) || !mouse ? (!clicked ? bounce=1;clicked=1;);
+
+  clicked ?
+  (
+    test=bounce;
+    val+=bounce;
+    val=min(imgrange-1,val);
+    val >= imgrange-1 ?
+    (
+       stick ? (bounce=0;event=1;):bounce=-1;
+      
+    );
+    val <=0 && bounce==-1 ? 
+    (
+      clicked=0;bounce=0;
+      event=1;
+    );
+  );
+
+);
+
+function knobon(val*,mouse)
+instance (clicked,imgrange,focus,event)
+(
+  this.knobfocus();
+  (focus && mouse_cap) || !mouse ? (!clicked ? bounce=1;clicked=1;);
+
+  clicked ?
+  (
+    val+=1;
+    
+    val >= imgrange-1 ?
+    (
+       event=1;
+       clicked=0;
+       val=imgrange-1;
+    );
+  );
+
+);
+
+function knoboff(val*,mouse)
+instance (clicked,imgrange,focus,event)
+(
+  this.knobfocus();
+  (focus && mouse_cap) || !mouse ? (!clicked ? bounce=-1;clicked=1;);
+
+  clicked ?
+  (
+    
+    val-=1;
+    
+    val <=0  ?
+    (
+       event=1;
+       clicked=0;
+       val=0;
+    );
+  );
+
+);
+
+function knobdrag(val*,xy)
+instance (focus,drag,ystart,dy,range,kmin,kmax,index,oldmousey)
+//local(a)
+(
+
+  
+  xy ? (mousexy=mouse_x;d=-1;a=1600/299;):(mousexy=mouse_y;d=1;a=10;);
+  shift= mouse_cap&8;
+  shift==8 ? a=1;
+ 
+  this.knobfocus();
+  focus && mouse_cap ? drag=1;
+  !mouse_cap ? (drag=0;dy=0;dir=0;isdragging=0;);
+  
+  drag  ? 
+  (
+    oldmousey>mousexy+3 ? dir=d:
+      oldmousey<mousexy-3 ? dir=-d:
+        dir=0;
+    dy=dir*range/128*a;
+    oldmousey=mousexy;
+    val+=dy;
+    val=max(kmin,val);
+    val=min(kmax,val);
+    isdragging=1;
+
+  );
+
+);
+ 
+function slide(val*,y,slmin,slmax)
+ instance(focus,slide,range,blockx,moved)
+(
+  
+  slmin*=scale;slmax*=scale;y*=scale;
+  slrange=(slmax-slmin);
+  scale!=scaleold  && mouse_cap ?(newx=blockx*scale;scaleold=scale;scaling=1):scaling=0;
+  
+  
+  
+  
+  this.knobfocus();
+  
+  focus && mouse_cap ? 
+  (
+    mousex=mouse_x;
+    blockx=max(min(mousex,slmax),slmin);
+    val=((blockx-slmin)/slrange)*range;
+    val=floor(val);
+    moved=1;  
+  );
+
+  gfx_r=0.5;gfx_g=0.5;gfx_b=0.5;
+  //slmin*=scale;slmax*=scale;y*=scale;
+  scaling ? gfx_rect(newx,y,10*scale,20*scale):gfx_rect(blockx,y,10*scale,20*scale);
+  //gfx_rect(mouse_x,mouse_y,10*scale,20*scale);
+  
+
+);
+
+
+
+function sliderfocus()
+instance (x,y,w,h,focus)
+(
+
+  mouse_x>x && mouse_x<(x+w) && mouse_y>y && mouse_y<(y+h) ? 
+  (
+    focus=1;
+  
+  ):
+  (
+    focus=0;
+  );
+) ;
+
+
+function sliderdraw(_x,_y,_w,_h,_slmin,_slmax,_slval,img,offs1,offs2)
+instance(x,y,w,h,slmin,slmino,slmax,slval,slrange,grange,handlex,drag)
+(
+  offs1=offs1*scale;offs2=offs2*scale;
+  slmax=_slmax;slmin=_slmin;slval=_slval;
+  slmino=slmin;
+  slmin<0 ? 
+  (
+    slmax+=-slmin;
+    
+    slval+=-slmin;
+    slmin=0;
+    
+  );
+ 
+  x=_x*scale;
+  y=_y*scale;
+  w=_w*scale;
+  h=_h*scale;
+  
+  slrange=slmax-slmin;
+  grange=w;
+  handlex=slval/slrange*grange;
+  //handlex<offs1 ? handlex=offs1;
+  //handlex>w-offs2 ? handlex=offs2;
+  gfx_r=0.1;gfx_b=0.5;gfx_g=0.1;
+  gfx_x=x;gfx_y=y+10;
+  //gfx_rect(x,y+10,w,h);
+  gfx_blit(img,1,0,0,0,299,38,x-offs1,y,w+offs2,h);
+  gfx_r=0.5;gfx_b=0.5;gfx_g=0.5;
+  gfx_rect(x+handlex-(5*scale),y,10*scale,h);
+  
+  
+  
+  
+);
+
+function sliderdrag(val*)
+instance(drag,focus,slmin,slmino,slmax,slval,oval,slrange,grange,x,y,w,h)
+(
+  this.sliderfocus();
+  focus && mouse_cap ? drag=1;
+ 
+  
+  drag ? 
+  (
+    mousex=mouse_x;
+    //handlex=max(min(mousex,slmax),slmin);
+    
+    val=((mousex-x)/grange)*slrange;
+    
+    floor(val);
+    slmino <0 ? (val+=slmino;slmax+=slmino;);
+    val < slmino ? val=slmino;
+    val > slmax ? val=slmax;
+    
+    oval=val;
+    ;
+
+  );
+   !mouse_cap ? drag=0;
+);
+
+
+function setcolor(color)
+(
+  gfx_r=color[1];
+  gfx_g=color[2];
+  gfx_b=color[3];
+
+);
+
+function initcolors(colorbase)
+(
+  red=colorbase;
+  red[1]=1;
+  red[2]=0;
+  red[3]=0;
+  
+  green=colorbase+5;
+  green[1]=0;
+  green[2]=0.5;
+  green[3]=0;
+  
+  blue=colorbase+10;;
+  bleu[1]=0;
+  blue[2]=0;
+  blue[3]=0.5;
+  
+  blue2=colorbase+15;;
+  bleu2[1]=0;
+  blue2[2]=0;
+  blue2[3]=0.75; 
+  
+  grey=colorbase+20;
+  grey[1]=0.2;
+  grey[2]=0.2;
+  grey[3]=0.2;
+  
+  
+  
+  lightgrey=colorbase+25;
+  lightgrey[1]=0.5;
+  lightgrey[2]=0.5;
+  lightgrey[3]=0.5;
+  
+  yellow=colorbase+30;
+  yellow[1]=0.5;
+  yellow[2]=0.5;
+  yellow[3]=0;
+  
+  white=colorbase+35;
+  white[1]=1;
+  white[2]=1;
+  white[3]=1;
+
+  cyan=colorbase+40;
+  cyan[1]=0.714;
+  cyan[2]=0.863;
+  cyan[3]=0.890;
+
+  darkgrey=colorbase+45;
+  darkgrey[1]=0.1;
+  darkgrey[2]=0.1;
+  darkgrey[3]=0.1;
+  
+  displayblue=colorbase+50;
+  displayblue[1]=0.3;
+  displayblue[2]=0.3;
+  displayblue[3]=0.5;
+  
+  displaybluelight=colobase+55;
+  displaybluelight[1]=(displayblue[1]+cyan[1])/2;
+  displaybluelight[2]=(displayblue[2]+cyan[2])/2;
+  displaybluelight[3]=(displayblue[3]+cyan[3])/2;
+  
+  
+  
+  
+);
+ 
+function drawwav(x,y,w,h,samplestart,buflength)
+local(i,acc)
+
+(
+  x=x*scale;y=y*scale;win=w*scale;w=w*scale*fac;h=h*scale;
+  //buflength/=fac;
+  gfx_r=0.3;gfx_g=0.3;gfx_b=0.5;
+  setcolor (darkgrey);
+  //gfx_rect(x,y,win,h);
+ // gfx_r=1;gfx_g=0;gfx_b=1;
+  gwidth=w;
+  gfx_x=x+w+gfxoffset;
+  //w-=gfxoffset;
+  
+  i=buflength;
+  acc=10;
+  setcolor(cyan);
+  lp1m=0;lp2m=0;
+  loop (w*acc,
+    
+    gfx_x>x && gfx_x<x+win ?( 
+      gfx_y=y+h/2;
+      smplx=floor ((gfx_x-x-gfxoffset)/w*buflength);
+      smplx>gmem[lp1+(gfocus*16)+level] && smplx<gmem[lp2+(gfocus*16)+level]  ? setcolor(displayblue):setcolor(displaybluelight);    
+
+      gfx_lineto(gfx_x,min(y+h,max(gfx_y+samplestart[floor(i)]*h/8*fac,y)));
+      setcolor(displayblue);
+      //lp1m==1 ? (gfx_line(gfx_x,y,gfx_x,y+h);lp1m=2;);
+      //lp2m==1 ? (gfx_line(gfx_x,y,gfx_x,y+h);lp2m=2;);
+    );
+    gfx_x-=1/acc;
+    i-=buflength/w/acc;
+  
+  );
+  
+  setcolor(displayblue);
+  po1=x+gfxoffset+gmem[lp1+(gfocus*16)+level]/buflength*w;
+  po1>=x && po1<x+win ? gfx_line(po1,y,po1,y+h);
+  po2=x+gfxoffset+gmem[lp2+(gfocus*16)+level]/buflength*w;
+  po2>=x && po2<x+win ? gfx_line(po2,y,po2,y+h);  
+  //gfx_r=1;gfx_g=1;gfx_b=0;
+ // gfx_line(gfxoffset+x,y,gfxoffset+x,y+h);
+ // gfx_line(x+w+gfxoffset,y,x+w+gfxoffset,y+h);
+  
+);
+
+function gdrawwav(x,y,w,h,samplestart,buflength,glob)
+local(i,acc,gfxoffset,gfx,gwidth)
+
+(
+  x=x*scale;y=y*scale;w=w*scale;h=h*scale;
+  gfx_r=0.3;gfx_g=0.3;gfx_b=0.5;
+  gfx_rect(x,y,w,h);
+  gfx_r=1;gfx_g=0;gfx_b=1;
+
+  gfx=x+w;
+
+  gwidth=w;
+  gfx_x=w+x;
+  i=buflength;
+  acc=10;
+  loop (w*acc,
+    gfx_y=y+h/2;
+    glob==1 ? gfx_lineto(gfx_x,gfx_y+gmem[samplestart+floor(i)]*h/8);
+    glob==0 ? gfx_lineto(gfx_x,gfx_y+samplestart[floor(i)]*h/8);
+    
+    gfx_x-=1/acc;
+    
+    i-=buflength/w/acc;
+  
+  );
+
+  //gfx_r=1;gfx_g=1;gfx_b=0;
+  gfx_line(x,y,x,y+h);
+  gfx_line(x+w,y,x+w,y+h);
+  
+);
+
+function setpadcolor(id,color,fgbg)
+(
+  fgbg==0 ?
+  (
+    pad_r0[id]=color[1];
+    pad_g0[id]=color[2];
+    pad_b0[id]=color[3];
+
+  ):
+  (
+    pad_r1[id]=color[1];
+    pad_g2[id]=color[2];
+    pad_b3[id]=color[3];
+  ); 
+  pad_color[id]=color;
+);
+
+function hilightcolor(h)
+(
+  gfx_r+=h;
+  gfx_g+=h;
+  gfx_b+=h;
+
+);
+
+function imgindex(img,x,y,w,h,shx,shy,index)
+ local(rot,col,row)
+
+ (
+  //x=_x;y=_y;
+  
+  rot=0;
+  gfx_getimgdim(img, iw, ih) ;
+  iw=floor(iw/shx);
+  ih=floor(ih/shy);
+  //index=127;
+  row=floor(index/shx);
+  col=index%shx;
+  gfx_x=x;
+  gfx_y=y;
+  gfx_blit(img,scale,rot,col*iw,row*ih,iw,ih,x,y,w,h);
+ 
+ );
+
+function button(id,x,y,w,h,coloron,coloroff,fontcolor,string,fontsize,group)
+local(i)
+(
+  this.id=id;
+  this.x=x*scale;this.y=y*scale;this.w=w*scale;this.h=h*scale;this.fontsize=fontsize*scale;
+  this.fontcolor=fontcolor;this.string=string;this.coloron=coloron;this.coloroff=coloroff;
+  this.focus();
+  //this.focus ? setcolor(coloron):setcolor(coloroff);
+  i=1;
+  loop (amountbuttons,
+    b=buttons+i;
+    setcolor(coloroff);
+    index=0;
+    i+=1;
+  );
+  this.focus && mouse_cap==1 && !isdragging ? (
+    this.event=1;
+    index=2;
+    group ? activebutton=id;
+
+  );
+  group ? (
+    activebutton==id ? (setcolor(coloron);index=3;);
+    
+    this.focus && !isdragging ? (hilightcolor(0.2);index=2;);
+  ): (
+    this.focus && !isdragging ? (setcolor(coloron);index=2;);
+    mouse_cap==1 && this.focus && !isdragging ?  (hilightcolor(0.2);index=3;)
+  
+  );
+  gfx_rect(this.x,this.y,this.w,this.h);
+  //imgindex(3,this.x,this.y,this.w,this.h,2,2,index);
+  setcolor(this.fontcolor);
+  gfx_setfont(1,"Arial",this.fontsize,'b');
+  gfx_x=this.x;
+  gfx_y=this.y;
+  gfx_drawstr(this.string,1|4,this.x+this.w,this.y+this.h);
+  
+
+);
+
+function imgbutton(img,mx,my,id,x,y,w,h,coloron,coloroff,colorhi,fontcolor,string,fontsize,group)
+local(i)
+(
+  this.id=id;
+  this.x=x*scale;this.y=y*scale;this.w=w*scale;this.h=h*scale;this.fontsize=fontsize*scale;
+  this.fontcolor=fontcolor;this.string=string;this.coloron=coloron;this.coloroff=coloroff;
+  this.focus();
+  //this.focus ? setcolor(coloron):setcolor(coloroff);
+  i=1;
+  loop (amountbuttons,
+    b=buttons+i;
+    setcolor(coloroff);
+    index=coloroff;
+    i+=1;
+  );
+  this.focus && mouse_cap==1 && !isdragging ? (
+    this.event=1;
+    index=coloron;
+    group ? activebutton=id;
+
+  );
+  group ? (
+    activebutton==id ? (setcolor(coloron);index=coloron;);
+    
+    this.focus && !isdragging ? (hilightcolor(0.2);index=colorhi;);
+  ): (
+    this.focus && !isdragging ? (setcolor(coloron);index=coloron;);
+    mouse_cap==1 && this.focus && !isdragging ?  (hilightcolor(0.2);index=colorhi;)
+  
+  );
+  //gfx_rect(this.x,this.y,this.w,this.h);
+  imgindex(img,this.x,this.y,this.w,this.h,mx,my,index);
+  setcolor(this.fontcolor);
+  gfx_setfont(1,"Arial",this.fontsize,'b');
+  gfx_x=this.x;
+  gfx_y=this.y;
+  gfx_drawstr(this.string,1|4,this.x+this.w,this.y+this.h);
+  
+
+);
+
+
+function gfxprint(x,y,s,fs)
+local (str)
+(
+  fs*=scale;
+  x=x*scale;y=y*scale;
+  str=s;
+  strcat(str, "%d");
+  gfx_x=x;gfx_y=y;
+   gfx_setfont(1,"Arial",fs,'b');
+  gfx_printf(s);
+  ydeb+=interlinie;
+
+);

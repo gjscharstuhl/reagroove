@@ -237,6 +237,39 @@ local function clean_track_keep_last_complete(
 end
 
 
+local function set_items_full_height_in_time_selection(
+    project,
+    start_time,
+    end_time
+)
+    if not project then
+        return
+    end
+
+    for index = 0, reaper.CountMediaItems(project) - 1 do
+        local item = reaper.GetMediaItem(project, index)
+
+        if item_overlaps_time_selection(
+            item,
+            start_time,
+            end_time
+        ) then
+            reaper.SetMediaItemInfo_Value(
+                item,
+                "F_FREEMODE_Y",
+                0.0
+            )
+
+            reaper.SetMediaItemInfo_Value(
+                item,
+                "F_FREEMODE_H",
+                1.0
+            )
+        end
+    end
+end
+
+
 local function clean_time_selection_keep_last_complete(project)
     local armed_tracks = get_armed_tracks(project)
 
@@ -272,6 +305,14 @@ local function clean_time_selection_keep_last_complete(project)
             changed = true
         end
     end
+
+    -- Make items easy to see and select when
+    -- Free Item Positioning is enabled.
+    set_items_full_height_in_time_selection(
+        project,
+        start_time,
+        end_time
+    )
 
     reaper.PreventUIRefresh(-1)
     reaper.UpdateArrange()
@@ -453,6 +494,40 @@ function Transport.cancel_record_watch()
 end
 
 
+local function move_cursor_to_current_region_start(project)
+    if not project then
+        return
+    end
+
+    local position = reaper.GetCursorPositionEx(project)
+
+    local _, marker_count, region_count =
+        reaper.CountProjectMarkers(project)
+
+    for index = 0, marker_count + region_count - 1 do
+        local ok,
+              is_region,
+              start_pos,
+              end_pos =
+            reaper.EnumProjectMarkers2(project, index)
+
+        if ok
+        and is_region
+        and position >= start_pos
+        and position < end_pos then
+            reaper.SetEditCurPos2(
+                project,
+                start_pos,
+                false,
+                false
+            )
+
+            return
+        end
+    end
+end
+
+
 -- ============================================================
 -- Bedieningsfuncties
 -- ============================================================
@@ -508,17 +583,27 @@ end
 
 function Transport.stop()
 
-    -- Stop hoofdproject plus alle acht subprojecten.
-    for project_index = 0, 9 do
-        local project = reaper.EnumProjects(project_index)
+    -- Stop every open project and return its cursor to the beginning
+    -- of the region in which it stopped.
+    local project_index = 0
 
-        if project then
-            reaper.Main_OnCommandEx(
-                CMD_STOP,
-                0,
-                project
-            )
+    while true do
+        local project =
+            reaper.EnumProjects(project_index, "")
+
+        if not project then
+            break
         end
+
+        reaper.Main_OnCommandEx(
+            CMD_STOP,
+            0,
+            project
+        )
+
+        move_cursor_to_current_region_start(project)
+
+        project_index = project_index + 1
     end
 
     state.watching_record = false
