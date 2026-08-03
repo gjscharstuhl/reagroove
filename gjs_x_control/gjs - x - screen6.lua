@@ -44,6 +44,19 @@ local function horizontal_fader_to_velocity(fader)
     return math.floor((index * 127 / 31) + 0.5)
 end
 
+local function balance_to_microtune(balance)
+    if not balance or balance.centered then return 0 end
+    local index
+    if balance.position == 1 then index = 0
+    elseif balance.position == 2 then index = 5 - balance.step
+    elseif balance.position == 3 then index = 9 - balance.step
+    elseif balance.position == 6 then index = 9 + balance.step
+    elseif balance.position == 7 then index = 13 + balance.step
+    elseif balance.position == 8 then index = 18
+    else index = 9 end
+    return ((index - 9) / 9) * 0.45
+end
+
 return function(api)
     local C = api.COLOR
     local state = api.get_screen_state(6)
@@ -74,6 +87,15 @@ return function(api)
             col = 8,
             step = 4
         }
+    end
+
+    if state.sequencer_microtune == nil then
+        state.sequencer_microtune = 0
+    end
+
+    local microtune_group = "screen6_microtune"
+    if state.balance[microtune_group] == nil then
+        state.balance[microtune_group] = { position = 4, step = 4, centered = true }
     end
 
     state.sequencer_item_exists = sequencer.item_exists()
@@ -107,9 +129,10 @@ return function(api)
         2,
         C.PURPLE,
         {
-            group = "screen6_microtune",
+            group = microtune_group,
             on_press = function()
-                -- Connected when microtune mode is implemented.
+                state.sequencer_microtune =
+                    balance_to_microtune(state.balance[microtune_group])
             end
         }
     )
@@ -219,11 +242,6 @@ return function(api)
             on_press = function(pad)
                 local active_mode = state.radio["screen6_mode"]
 
-                -- Pad 58 is insert mode.
-                if active_mode ~= 58 then
-                    return
-                end
-
                 local step = sequencer_step_from_pad(pad)
                 local pitch = state.radio["screen6_note"]
 
@@ -231,14 +249,35 @@ return function(api)
                     return
                 end
 
-                local success, result = sequencer.insert_note({
-                    pitch = pitch,
-                    step = step,
-                    bar = state.sequencer_bar,
-                    velocity = state.sequencer_velocity,
-                    channel = 0,
-                    gate = 0.5
-                })
+                local success, result
+
+                if active_mode == 58 then
+                    success, result = sequencer.insert_note({
+                        pitch = pitch,
+                        step = step,
+                        bar = state.sequencer_bar,
+                        velocity = state.sequencer_velocity,
+                        channel = 0,
+                        gate = 0.5
+                    })
+
+                elseif active_mode == 48 then
+                    success, result = sequencer.delete_note({
+                        pitch = pitch,
+                        step = step,
+                        bar = state.sequencer_bar
+                    })
+
+                elseif active_mode == 38 then
+                    success, result = sequencer.microtune_note({
+                        pitch = pitch,
+                        step = step,
+                        bar = state.sequencer_bar,
+                        offset = state.sequencer_microtune
+                    })
+                else
+                    return
+                end
 
                 if not success then
                     report_error(result)
