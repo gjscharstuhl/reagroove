@@ -196,12 +196,14 @@ playing && enabled ? (
     // signatures. beat_position is measured in quarter notes.
     measure_qn = max(0.000001, ts_num * 4 / ts_denom);
     relative_qn = beat_position - region_start_qn;
+    region_bars = use_gmem ? max(1, floor(gmem[gmem_base + 3])) : max(1, floor(slider2));
 
     relative_qn >= 0 ? (
-        current_bar = floor(relative_qn / measure_qn) + 1;
+        absolute_bar = floor(relative_qn / measure_qn);
+        current_bar = (absolute_bar % region_bars) + 1;
 
         current_bar == selected_bar ? (
-            within_bar_qn = relative_qn - ((current_bar - 1) * measure_qn);
+            within_bar_qn = relative_qn - (absolute_bar * measure_qn);
             current_step = floor(within_bar_qn / (measure_qn / 16)) + 1;
             current_step = max(1, min(16, current_step));
         );
@@ -226,4 +228,5 @@ last_pattern_version = pattern_version;
 last_force_version = force_version;
 last_step = current_step;
 last_playing = playing;
+
 
