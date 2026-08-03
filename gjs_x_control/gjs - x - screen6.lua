@@ -165,7 +165,15 @@ return function(api)
         {
             active_color = C.WHITE,
             on_press = function()
-                -- Item deletion is connected next.
+                local success, result = sequencer.delete_item()
+
+                if not success then
+                    report_error(result)
+                    return
+                end
+
+                state.sequencer_item_exists = false
+                api.send_pad_rgb(5, 1, ITEM_INACTIVE_GREEN)
             end
         }
     )
@@ -258,7 +266,8 @@ return function(api)
                         bar = state.sequencer_bar,
                         velocity = state.sequencer_velocity,
                         channel = 0,
-                        gate = 0.5
+                        gate = 0.5,
+                        offset = state.sequencer_microtune
                     })
 
                 elseif active_mode == 48 then

@@ -198,6 +198,55 @@ function M.create_item()
     return true, item
 end
 
+
+function M.delete_item()
+    local context = M.get_context()
+
+    if not context.project then
+        return false, "No active ReaGroove subproject."
+    end
+
+    if not context.track then
+        return false, "No record-armed track found in the active subproject."
+    end
+
+    if not context.region_start
+    or not context.region_end
+    or context.region_end <= context.region_start then
+        return false, "The selected ReaGroove region was not found."
+    end
+
+    if not context.item then
+        return true, "not_found"
+    end
+
+    reaper.Undo_BeginBlock2(context.project)
+
+    local deleted = reaper.DeleteTrackMediaItem(
+        context.track,
+        context.item
+    )
+
+    if not deleted then
+        reaper.Undo_EndBlock2(
+            context.project,
+            "Delete ReaGroove sequencer item",
+            -1
+        )
+        return false, "REAPER could not delete the sequencer MIDI item."
+    end
+
+    reaper.TrackList_AdjustWindows(false)
+    reaper.UpdateArrange()
+    reaper.Undo_EndBlock2(
+        context.project,
+        "Delete ReaGroove sequencer item",
+        -1
+    )
+
+    return true, "deleted"
+end
+
 local function get_bar_qn_range(project, region_start, bar_index)
     bar_index = math.max(1, math.floor(tonumber(bar_index) or 1))
 
@@ -254,6 +303,10 @@ function M.insert_note(options)
         0.01,
         math.min(1.0, tonumber(options.gate) or 0.5)
     )
+    local offset = math.max(
+        -0.45,
+        math.min(0.45, tonumber(options.offset) or 0)
+    )
 
     if pitch < 0 or pitch > 127 then
         return false, "Invalid MIDI note."
@@ -288,7 +341,8 @@ function M.insert_note(options)
     end
 
     local step_qn = (qn_end - qn_start) / 16
-    local note_start_qn = qn_start + ((step - 1) * step_qn)
+    local nominal_start_qn = qn_start + ((step - 1) * step_qn)
+    local note_start_qn = nominal_start_qn + (step_qn * offset)
     local note_end_qn = note_start_qn + (step_qn * gate)
 
     local start_ppq = reaper.MIDI_GetPPQPosFromProjQN(
