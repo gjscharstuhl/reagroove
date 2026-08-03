@@ -131,6 +131,38 @@ function M.item_exists()
     return M.get_context().item ~= nil
 end
 
+function M.get_bar_count()
+    local context = M.get_context()
+
+    if not context.project
+    or not context.region_start
+    or not context.region_end
+    or context.region_end <= context.region_start then
+        return 1
+    end
+
+    local _, start_measure =
+        reaper.TimeMap2_timeToBeats(
+            context.project,
+            context.region_start
+        )
+
+    local _, end_measure =
+        reaper.TimeMap2_timeToBeats(
+            context.project,
+            context.region_end
+        )
+
+    if start_measure == nil or end_measure == nil then
+        return 1
+    end
+
+    return math.max(
+        1,
+        math.floor((end_measure - start_measure) + 0.5)
+    )
+end
+
 function M.create_item()
     local context = M.get_context()
 
@@ -645,6 +677,110 @@ function M.microtune_note(options)
     )
 
     return true, "moved"
+end
+
+
+
+------------------------------------------------------------
+-- JSFX display bridge
+------------------------------------------------------------
+
+local DISPLAY_GMEM = "GJS_X_BRIDGE"
+local DISPLAY_BASE = 300
+local display_pattern_version = 0
+local display_force_version = 0
+
+local function clear_display_steps()
+    for index = 0, 15 do
+        reaper.gmem_write(DISPLAY_BASE + 16 + index, 0)
+    end
+end
+
+function M.disable_display()
+    reaper.gmem_attach(DISPLAY_GMEM)
+    reaper.gmem_write(DISPLAY_BASE + 0, 0)
+    display_force_version = display_force_version + 1
+    reaper.gmem_write(DISPLAY_BASE + 5, display_force_version)
+end
+
+function M.update_display(options)
+    options = options or {}
+
+    local bar = math.max(1, math.floor(tonumber(options.bar) or 1))
+    local pitch = math.floor(tonumber(options.pitch) or -1)
+    local context = M.get_context()
+
+    reaper.gmem_attach(DISPLAY_GMEM)
+    reaper.gmem_write(DISPLAY_BASE + 0, 1)
+    reaper.gmem_write(DISPLAY_BASE + 1, bar)
+
+    if not context.project
+    or not context.region_start
+    or not context.region_end then
+        reaper.gmem_write(DISPLAY_BASE + 2, 0)
+        reaper.gmem_write(DISPLAY_BASE + 3, 0)
+        clear_display_steps()
+        display_pattern_version = display_pattern_version + 1
+        reaper.gmem_write(DISPLAY_BASE + 4, display_pattern_version)
+        return false
+    end
+
+    local region_start_qn = reaper.TimeMap2_timeToQN(
+        context.project,
+        context.region_start
+    )
+
+    reaper.gmem_write(DISPLAY_BASE + 2, region_start_qn or 0)
+    reaper.gmem_write(DISPLAY_BASE + 3, M.get_bar_count())
+    clear_display_steps()
+
+    if context.take and pitch >= 0 and pitch <= 127 then
+        local qn_start, qn_end = get_bar_qn_range(
+            context.project,
+            context.region_start,
+            bar
+        )
+
+        if qn_start and qn_end and qn_end > qn_start then
+            local step_qn = (qn_end - qn_start) / 16
+            local velocities = {}
+            local _, note_count = reaper.MIDI_CountEvts(context.take)
+
+            for note_index = 0, note_count - 1 do
+                local ok, _, _, start_ppq, _, _, note_pitch, velocity =
+                    reaper.MIDI_GetNote(context.take, note_index)
+
+                if ok and note_pitch == pitch then
+                    local note_qn = reaper.MIDI_GetProjQNFromPPQPos(
+                        context.take,
+                        start_ppq
+                    )
+
+                    -- Round to the nearest nominal sixteenth. This keeps
+                    -- microtuned notes visible on their intended step.
+                    local relative = (note_qn - qn_start) / step_qn
+                    local step = math.floor(relative + 0.5) + 1
+
+                    if step >= 1 and step <= 16
+                    and note_qn >= qn_start - (step_qn * 0.5)
+                    and note_qn < qn_end + (step_qn * 0.5) then
+                        velocities[step] = math.max(
+                            velocities[step] or 0,
+                            velocity or 0
+                        )
+                    end
+                end
+            end
+
+            for step = 1, 16 do
+                reaper.gmem_write(DISPLAY_BASE + 15 + step, velocities[step] or 0)
+            end
+        end
+    end
+
+    display_pattern_version = display_pattern_version + 1
+    reaper.gmem_write(DISPLAY_BASE + 4, display_pattern_version)
+    return true
 end
 
 return M

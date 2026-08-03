@@ -16,6 +16,8 @@ local ITEM_INACTIVE_GREEN = { 0, 10, 0 }
 local NOTE_EMPTY_BLUE = { 0, 0, 10 }
 local NOTE_SELECTED_BLUE = { 0, 0, 127 }
 
+local display_generation = 0
+
 local function sequencer_step_from_pad(pad)
     if pad.row == 8 then
         return pad.col
@@ -100,6 +102,79 @@ return function(api)
 
     state.sequencer_item_exists = sequencer.item_exists()
 
+    local bar_count = sequencer.get_bar_count()
+    state.sequencer_bar = math.max(
+        1,
+        math.min(bar_count, state.sequencer_bar)
+    )
+
+    local function refresh_display()
+        sequencer.update_display({
+            bar = state.sequencer_bar,
+            pitch = state.radio["screen6_note"]
+        })
+    end
+
+    display_generation = display_generation + 1
+    local generation = display_generation
+    local last_signature = nil
+    local last_check = 0
+
+    local function keep_display_synced()
+        if generation ~= display_generation then return end
+
+        if api.get_current_screen
+        and api.get_current_screen() ~= 6 then
+            sequencer.disable_display()
+            return
+        end
+
+        local now = reaper.time_precise()
+        if now - last_check >= 0.05 then
+            last_check = now
+
+            local context = sequencer.get_context()
+            local signature = table.concat({
+                tostring(state.sequencer_bar),
+                tostring(state.radio["screen6_note"] or 0),
+                tostring(context.item),
+                tostring(context.take),
+                tostring(context.item and reaper.GetMediaItemInfo_Value(context.item, "D_POSITION") or 0),
+                tostring(context.item and reaper.GetMediaItemInfo_Value(context.item, "D_LENGTH") or 0)
+            }, ":")
+
+            if signature ~= last_signature then
+                last_signature = signature
+                refresh_display()
+            end
+        end
+
+        reaper.defer(keep_display_synced)
+    end
+
+    refresh_display()
+    reaper.defer(keep_display_synced)
+
+    ------------------------------------------------------------
+    -- Physical Launchpad navigation buttons
+    -- LEFT  = previous bar
+    -- RIGHT = next bar
+    ------------------------------------------------------------
+
+    if api.set_navigation then
+        api.set_navigation(
+            state.sequencer_bar > 1 and function()
+                state.sequencer_bar = state.sequencer_bar - 1
+                api.redraw()
+            end or nil,
+
+            state.sequencer_bar < bar_count and function()
+                state.sequencer_bar = state.sequencer_bar + 1
+                api.redraw()
+            end or nil
+        )
+    end
+
     ------------------------------------------------------------
     -- Bottom row: velocity for newly inserted notes.
     -- Default is maximum velocity (127).
@@ -149,7 +224,10 @@ return function(api)
         {
             group = "screen6_note",
             background_rgb = NOTE_EMPTY_BLUE,
-            active_color = NOTE_SELECTED_BLUE
+            active_color = NOTE_SELECTED_BLUE,
+            on_press = function()
+                reaper.defer(refresh_display)
+            end
         }
     )
 
@@ -174,6 +252,7 @@ return function(api)
 
                 state.sequencer_item_exists = false
                 api.send_pad_rgb(5, 1, ITEM_INACTIVE_GREEN)
+                refresh_display()
             end
         }
     )
@@ -197,6 +276,7 @@ return function(api)
 
                 state.sequencer_item_exists = true
                 api.send_pad_rgb(5, 1, C.GREEN)
+                refresh_display()
             end,
 
             on_release = function()
@@ -290,6 +370,8 @@ return function(api)
 
                 if not success then
                     report_error(result)
+                else
+                    refresh_display()
                 end
             end
         }
