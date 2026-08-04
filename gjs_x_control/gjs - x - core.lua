@@ -1906,6 +1906,35 @@ local function process_midi_input()
 end
 
 ------------------------------------------------------------
+-- Clean shutdown
+------------------------------------------------------------
+
+local cleanup_done = false
+
+local function cleanup()
+    if cleanup_done then
+        return
+    end
+
+    cleanup_done = true
+    LP.running = false
+
+    -- Never allow an error during REAPER shutdown to open a dialog.
+    pcall(function()
+        reaper.gmem_attach(GMEM_NAME)
+        reaper.gmem_write(PERFORMANCE_MODE_SLOT, 0)
+    end)
+
+    if Bridge and type(Bridge.shutdown) == "function" then
+        pcall(Bridge.shutdown)
+    end
+
+    if Transport and type(Transport.cleanup) == "function" then
+        pcall(Transport.cleanup, nil)
+    end
+end
+
+------------------------------------------------------------
 -- Main loop
 ------------------------------------------------------------
 
