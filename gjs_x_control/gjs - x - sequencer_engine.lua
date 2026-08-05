@@ -714,8 +714,93 @@ function M.disable_display(expected_mode)
     return true
 end
 
+local function get_region_at_position(project, position)
+    if not project or position == nil then
+        return nil, nil, nil
+    end
+
+    local _, marker_count, region_count =
+        reaper.CountProjectMarkers(project)
+
+    for index = 0, marker_count + region_count - 1 do
+        local ok, is_region, start_pos, end_pos, _, number =
+            reaper.EnumProjectMarkers2(project, index)
+
+        if ok and is_region
+        and position >= start_pos
+        and position < end_pos then
+            return start_pos, end_pos, number
+        end
+    end
+
+    return nil, nil, nil
+end
+
+local function count_region_bars(project, region_start, region_end)
+    if not project or not region_start or not region_end
+    or region_end <= region_start then
+        return 0
+    end
+
+    local _, start_measure =
+        reaper.TimeMap2_timeToBeats(project, region_start)
+    local _, end_measure =
+        reaper.TimeMap2_timeToBeats(project, region_end)
+
+    if start_measure == nil or end_measure == nil then
+        return 0
+    end
+
+    return math.max(
+        1,
+        math.floor((end_measure - start_measure) + 0.5)
+    )
+end
+
+function M.get_main_display_context()
+    local project = get_active_project()
+    if not project then
+        return { project = nil }
+    end
+
+    local play_state = reaper.GetPlayStateEx(project)
+    local transport_active =
+        (play_state & 1) == 1 or
+        (play_state & 4) == 4
+
+    local position
+    if transport_active then
+        position = reaper.GetPlayPositionEx(project)
+    else
+        position = reaper.GetCursorPositionEx(project)
+    end
+
+    local region_start, region_end, region_number =
+        get_region_at_position(project, position)
+
+    -- At stop, or briefly outside all markers, keep the selected region as
+    -- a useful fallback. During playback the region under the playhead wins,
+    -- so a queued/pending TargetRegion cannot hide the current region.
+    if not region_start then
+        region_start, region_end, region_number =
+            get_target_region(project)
+    end
+
+    return {
+        project = project,
+        region_start = region_start,
+        region_end = region_end,
+        region_number = region_number,
+        bar_count = count_region_bars(
+            project,
+            region_start,
+            region_end
+        )
+    }
+end
+
 function M.update_main_display()
-    local context = M.get_context()
+    local context = M.get_main_display_context()
 
     reaper.gmem_attach(DISPLAY_GMEM)
     reaper.gmem_write(DISPLAY_BASE + 0, 2)
@@ -740,9 +825,11 @@ function M.update_main_display()
 
     reaper.gmem_write(DISPLAY_BASE + 1, 1)
     reaper.gmem_write(DISPLAY_BASE + 2, region_start_qn or 0)
-    reaper.gmem_write(DISPLAY_BASE + 3, M.get_bar_count())
-    clear_display_steps()
+    reaper.gmem_write(DISPLAY_BASE + 3, context.bar_count or 0)
 
+    -- Keep the current mainscreen overview visible while switching regions.
+    -- The JSFX receives the new region context atomically via the version bump
+    -- below, without an intermediate empty frame.
     display_pattern_version = display_pattern_version + 1
     reaper.gmem_write(DISPLAY_BASE + 4, display_pattern_version)
     return true

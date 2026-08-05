@@ -549,13 +549,16 @@ return function(api, navigation)
         local now = reaper.time_precise()
         if now - last_check >= 0.05 then
             last_check = now
-            local context = sequencer.get_context()
+            local context = sequencer.get_main_display_context
+                and sequencer.get_main_display_context()
+                or sequencer.get_context()
+
             local signature = table.concat({
                 tostring(context.project),
                 tostring(context.region_start or 0),
                 tostring(context.region_end or 0),
-                tostring(reaper.GetExtState("GJS_X", "ActiveTrack")),
-                tostring(reaper.GetExtState("GJS_X", "TargetRegion"))
+                tostring(context.region_number or 0),
+                tostring(reaper.GetExtState("GJS_X", "ActiveTrack"))
             }, ":")
 
             if signature ~= last_signature then
