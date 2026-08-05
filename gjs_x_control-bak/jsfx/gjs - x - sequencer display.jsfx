@@ -1,0 +1,232 @@
+desc:GJS - X - Sequencer Display
+options:gmem=GJS_X_BRIDGE
+
+// ============================================================
+// ReaGroove sequencer display for Launchpad X
+//
+// This JSFX owns only Launchpad rows 7 and 8.
+// Lua writes the pattern/state into gmem; JSFX draws the moving
+// playhead at audio-block speed.
+//
+// gmem layout
+// ------------------------------------------------------------
+// Sequencer display uses gmem base slot 300.
+// gmem[300] = enabled (1 only while screen 6 is active)
+// gmem[301] = selected bar, 1-based
+// gmem[302] = selected region start in quarter notes
+// gmem[303] = selected region length in bars
+// gmem[304] = pattern version (increment after Lua changes notes)
+// gmem[305] = force redraw version
+//
+// gmem[316] .. gmem[331] = velocity for steps 1 .. 16
+//                         0 means no selected note on that step
+//
+// The first version shows one selected drum pitch at a time.
+// Lua will refresh these sixteen values when the selected drum
+// note, region, armed track or selected bar changes.
+// ============================================================
+
+slider1:0<0,1,1{Off,On}>Local test enable
+slider2:1<1,16,1>Local test bar
+slider3:0<0,65535,1>Local test pattern mask
+
+@init
+
+gmem_base = 300;
+
+last_enabled = -1;
+last_bar = -1;
+last_pattern_version = -1;
+last_force_version = -1;
+last_step = -2;
+last_playing = -1;
+
+buf_midi = 0;
+buf_daw = 256;
+
+function clamp127(value) (
+    max(0, min(127, floor(value)));
+);
+
+function step_led(step) local(row, col) (
+    step <= 8 ? (
+        row = 8;
+        col = step;
+    ) : (
+        row = 7;
+        col = step - 8;
+    );
+
+    row * 10 + col;
+);
+
+function get_background(bar, component) local(cycle) (
+    cycle = ((bar - 1) % 3) + 1;
+
+    // Dark green, dark orange, dark blue.
+    cycle == 1 ? (
+        component == 1 ? 0 : component == 2 ? 10 : 0;
+    ) : cycle == 2 ? (
+        component == 1 ? 12 : component == 2 ? 3 : 0;
+    ) : (
+        component == 1 ? 0 : component == 2 ? 0 : 10;
+    );
+);
+
+function get_playhead(bar, component) local(cycle) (
+    cycle = ((bar - 1) % 3) + 1;
+
+    // Bright green, bright orange, bright blue.
+    cycle == 1 ? (
+        component == 1 ? 0 : component == 2 ? 127 : 0;
+    ) : cycle == 2 ? (
+        component == 1 ? 127 : component == 2 ? 35 : 0;
+    ) : (
+        component == 1 ? 0 : component == 2 ? 35 : 127;
+    );
+);
+
+function write_rgb_spec(buffer, target, led, red, green, blue) (
+    buffer[target + 0] = $x03;
+    buffer[target + 1] = clamp127(led);
+    buffer[target + 2] = clamp127(red);
+    buffer[target + 3] = clamp127(green);
+    buffer[target + 4] = clamp127(blue);
+);
+
+function send_display(selected_bar, current_step, playing, use_gmem)
+local(i, target, led, velocity, red, green, blue, note_here, playhead_here,
+      message_length, mask) (
+
+    // SysEx headers: normal MIDI interface and DAW interface.
+    buf_midi[0] = $xF0;
+    buf_midi[1] = $x00;
+    buf_midi[2] = $x20;
+    buf_midi[3] = $x29;
+    buf_midi[4] = $x02;
+    buf_midi[5] = $x0D;
+    buf_midi[6] = $x03;
+
+    buf_daw[0] = $xF0;
+    buf_daw[1] = $x00;
+    buf_daw[2] = $x20;
+    buf_daw[3] = $x29;
+    buf_daw[4] = $x02;
+    buf_daw[5] = $x0C;
+    buf_daw[6] = $x03;
+
+    mask = floor(slider3);
+    i = 0;
+
+    loop(16,
+        target = 7 + (i * 5);
+        led = step_led(i + 1);
+
+        use_gmem ? (
+            velocity = floor(gmem[gmem_base + 16 + i]);
+        ) : (
+            velocity = (mask & (1 << i)) ? 127 : 0;
+        );
+
+        note_here = velocity > 0;
+        playhead_here = playing && current_step == i + 1;
+
+        // Base background follows the selected bar.
+        red = get_background(selected_bar, 1);
+        green = get_background(selected_bar, 2);
+        blue = get_background(selected_bar, 3);
+
+        // Entered note is red. Velocity controls brightness, with a
+        // minimum level so quiet notes remain visible.
+        note_here ? (
+            red = max(30, velocity);
+            green = 0;
+            blue = 0;
+        );
+
+        // Playhead is the bright bar colour. A note under the playhead
+        // becomes white so both states remain visible.
+        playhead_here ? (
+            note_here ? (
+                red = 127;
+                green = 127;
+                blue = 127;
+            ) : (
+                red = get_playhead(selected_bar, 1);
+                green = get_playhead(selected_bar, 2);
+                blue = get_playhead(selected_bar, 3);
+            );
+        );
+
+        write_rgb_spec(buf_midi, target, led, red, green, blue);
+        write_rgb_spec(buf_daw, target, led, red, green, blue);
+
+        i += 1;
+    );
+
+    message_length = 8 + (16 * 5);
+    buf_midi[message_length - 1] = $xF7;
+    buf_daw[message_length - 1] = $xF7;
+
+    midisend_buf(0, buf_midi, message_length);
+    midisend_buf(0, buf_daw, message_length);
+);
+
+@slider
+
+// Force a refresh when testing with sliders.
+last_force_version = -1;
+
+@block
+
+external_enabled = floor(gmem[gmem_base + 0]) == 1;
+use_gmem = external_enabled;
+enabled = external_enabled || slider1 >= 0.5;
+
+selected_bar = use_gmem ? max(1, floor(gmem[gmem_base + 1])) : floor(slider2);
+region_start_qn = use_gmem ? gmem[gmem_base + 2] : 0;
+pattern_version = use_gmem ? floor(gmem[gmem_base + 4]) : floor(slider3);
+force_version = use_gmem ? floor(gmem[gmem_base + 5]) : floor(slider3);
+
+playing = (play_state & 1) == 1;
+current_step = 0;
+
+playing && enabled ? (
+    // Keep sixteen equal steps per musical bar, including non-4/4
+    // signatures. beat_position is measured in quarter notes.
+    measure_qn = max(0.000001, ts_num * 4 / ts_denom);
+    relative_qn = beat_position - region_start_qn;
+    region_bars = use_gmem ? max(1, floor(gmem[gmem_base + 3])) : max(1, floor(slider2));
+
+    relative_qn >= 0 ? (
+        absolute_bar = floor(relative_qn / measure_qn);
+        current_bar = (absolute_bar % region_bars) + 1;
+
+        current_bar == selected_bar ? (
+            within_bar_qn = relative_qn - (absolute_bar * measure_qn);
+            current_step = floor(within_bar_qn / (measure_qn / 16)) + 1;
+            current_step = max(1, min(16, current_step));
+        );
+    );
+);
+
+changed =
+    enabled != last_enabled ||
+    selected_bar != last_bar ||
+    pattern_version != last_pattern_version ||
+    force_version != last_force_version ||
+    current_step != last_step ||
+    playing != last_playing;
+
+enabled && changed ? (
+    send_display(selected_bar, current_step, playing, use_gmem);
+);
+
+last_enabled = enabled;
+last_bar = selected_bar;
+last_pattern_version = pattern_version;
+last_force_version = force_version;
+last_step = current_step;
+last_playing = playing;
+
+

@@ -1,0 +1,335 @@
+@init
+
+
+
+function writestring(mem,s)
+local (len,i,c)
+(
+  
+  len=strlen(s);
+  gmem[mem+len-1]=0;
+  i=0;
+  loop(len,
+    c=str_getchar(s,i);
+    
+    gmem[mem+i-1]=c;
+    i=i+1;
+  );
+
+
+);
+
+
+function debug(mem)
+(
+  t0=gmem[mem];
+  t1=gmem[mem+1];
+  t2=gmem[mem+2];
+  t3=gmem[mem+3];
+  t4=gmem[mem+4];
+  t5=gmem[mem+5];
+  t6=gmem[mem+6];
+  t7=gmem[mem+7];
+  t8=gmem[mem+8];
+  t16=gmem[mem+16];
+
+);
+
+function debug2(mem)
+(
+  t0=mem[0];
+  t1=mem[1];
+  t2=mem[2];
+  t3=mem[3];
+  t4=mem[4];
+  t5=mem[5];
+  t6=mem[6];     
+
+);
+
+
+
+
+function readstring(m)
+local (ch,myVar,ir)
+(
+  #rstr="";
+  ir=0;
+  
+  
+  while 
+  (
+  myVar=gmem[m+ir-1];
+  //strcat(#file,myvar);
+  sprintf(ch,"%c",myVar);
+  strcat(#rstr,ch);
+  ir+=1;
+  Myvar>0;
+  );
+   _global.loading=0;
+    
+  #rstr;
+  
+);
+
+
+
+function shortfilename(str)
+local(ch,chs,f,pos)
+(
+  f=1;
+  pos=strlen(str)-1;
+  
+  while(
+    ch=str_getchar(str, pos);
+    pos-=1;
+    !(ch=='\\' || ch=='/');
+  
+  );
+ // strcpy(
+  strcpy_from(f,str, pos+2);
+  f;
+
+);
+
+function getpadstr(pad,level)
+(
+  f=1;
+  f=readstring(400+(pad*8*255)+level*255);
+  f;
+
+);
+
+function writepadstr(pad,level,str)
+(
+
+  writestring(400+(pad*8*255)+level*255,str);
+);
+
+
+function clrgmem(gmemaddr,size)
+local(i)
+(
+  
+  i=0;
+  loop(size,
+    gmem[gmemaddr+i]=0;
+    i+=1;
+  );
+  
+);
+
+function cpy2gmem(srcaddr,gmemaddr,size)
+local(i)
+(
+  
+  i=0;
+  loop(size,
+    gmem[gmemaddr+i]=srcaddr[i];
+    i+=1;
+  );
+  cpy2gmemfin=1;
+);
+
+function cpyg2mem(gmemaddr,srcaddr,size)
+local(i)
+(
+  i=0;
+  loop(size,
+    srcaddr[i]=gmem[gmemaddr+i];
+    i+=1;
+  );
+
+);
+
+function getfile(str,level,pad)
+local(filename,ptr,fmem,buffsize,bufstart)
+(
+  #filestr=str;
+  handle = file_open(#filestr);
+  handle >=0 ? 
+  (
+  #zzz=str;
+  zzz4=level;
+  bufstart=3000;
+  bufsize=(__memtop()-bufstart)/8;
+    fmem= bufstart+(level*bufsize);
+
+    file_riff(handle,'rqsr' ,srate);
+    buflength=gmem[gbufsize+pad]=file_avail(handle);
+    //bfs=gmem[gbufsize+pad]=floor(buflength/bufsize)+1)*bufsize);
+    bfs=max(bfs,(floor(buflength/bufsize)+1)*bufsize);
+    
+    memset( bufstart+level*bfs,0,bfs);
+    file_mem(handle, bufstart+level*bfs,buflength);
+    fileread=1;
+   
+   
+  );
+  
+  file_close(handle);
+  
+  fileready=1;
+
+);
+
+
+
+function getfile3(str,level,pad)
+local(filename,ptr)
+(
+
+  loadfase[level]==0  ? (
+    #filestr=str;
+    fchunck=2048;
+    chid[level]=0;
+    handle[level] = file_open(#filestr);
+    file_riff(handle[level],'rqsr' ,srate);
+    buflength=file_avail(handle[level]);
+    
+    bufstart=3000;
+    bufsize=(__memtop()-bufstart)/8;
+    bfs=gmem[gbufsize+pad]=max((floor(buflength/bufsize)+1)*bufsize,bfs);
+    //bfs=bufsize*2;
+   // memset(bufstart+(level*bfs),0,bfs);
+     //memset( bufstart,0,bfs);
+    gmem[loadpad+pad]=-1;
+    
+    
+    handle[level]>=0 ? loadfase[level]=1;
+  ):
+  loadfase[level]==1 ? 
+  (
+    
+
+  sloaded[level]=chid[level]*fchunck;
+  file_mem(handle[level],bufstart+(level*bfs)+sloaded[level],fchunck);
+  //memset( bufstart+sloaded,1,chunck-1);
+    chid[level]+=1;
+
+    //bufstart[sloaded]=1;
+    sloaded[level]>bfs ? loadfase[level]=2;
+    zzz6=chid[level];
+    zzz7=sloaded[level];
+    zzz8=loadfase;
+  ):
+  
+  loadfase[level]==2 ?
+  (
+  file_close(handle[level]);
+  _global.droppedonpad=-1;
+  fileready=1;
+  //gmem[loadpad+pad] =2;
+  //loadfase=-1;
+  chid=0;
+  
+  loadfase[level]=3;
+  );
+
+);
+
+function getfile4(str,level,pad)
+local(filename,ptr)
+(
+  
+  loadfase[level]==0 ? (
+    #filestr=str;
+    fchunck=10;
+    chid[level]=0;
+    handle[level] = file_open(#filestr);
+    file_riff(handle[level],'rqsr' ,srate);
+    buflength=file_avail(handle[level]);
+    
+    bufstart=3000;
+    bufsize=(__memtop()-bufstart)/8;
+    bfs=max(gmem[gbufsize+pad]=(floor(buflength/bufsize)+1)*bufsize,bfs);
+   // bfs=bufsize;
+    
+     //memset( bufstart,0,bfs);
+    gmem[loadpad+pad]=1;
+    
+    
+    handle[level]>=0 ? loadfase[level]=1;
+  ):
+  loadfase[level]==1 ? 
+  (
+    
+
+  sloaded[level]=chid[level]*fchunck;
+  file_mem(handle[level],bufstart+(level*bfs)+sloaded[level],fchunck);
+  //memset( bufstart+sloaded,1,chunck-1);
+    chid[level]+=1;
+
+    //bufstart[sloaded]=1;
+    sloaded[level]>bfs ? loadfase[level]=2;
+    zzz6=chid[level];
+    zzz7=sloaded[level];
+    zzz8=loadfase;
+  ):
+  
+  loadfase[level]==2 ?
+  (
+  file_close(handle[level]);
+  _global.droppedonpad=-1;
+  fileready=1;
+  gmem[loadpad+pad] =2;
+  //loadfase=-1;
+  chid=0;
+  
+  loadfase[level]=3;
+  );
+  
+);
+function print(s,val)
+local (str)
+(
+  str=s;
+  strcat(str, "%d");
+  gfx_x=xdeb;gfx_y=ydeb;
+   gfx_setfont(1,"Arial",fontsizedebug,'b');
+  gfx_printf(s,val);
+  ydeb+=interlinie;
+
+);
+
+function debug(x,y,w,h,_fontsize,_interlinie)
+(
+  setcolor(1);
+  setcolor(cyan);
+  
+  xdeb=x*scale;ydeb=y*scale;
+  fontsizedebug=_fontsize*scale;interlinie=_interlinie*scale;
+  w=w*scale;h=h*scale;
+  gfx_rect(xdeb,ydeb,w,h); 
+  v=0.5445;
+  setcolor(red);
+  //print("volume pad 11 %f",gmem[sampvol+(11*16)+0]);
+  
+
+
+);
+
+
+function loadsample(pad,level)
+local(level)
+(
+
+     file=(pad*16)+level;
+     #f=file;
+     
+
+     gmem[loadpad+pad]=0;
+     // writestring(gfilename,file);
+     
+     #test="";
+      while (strlen(#test)==0)(
+        writestring(gfilename+(pad*255*16)+(level*255), file);
+        #test=readstring(gfilename+(pad*255*16)+(level*255));
+      );
+        gmem[loadpad+pad]=pad; 
+        //addr=40+level;
+        //strcpy(addr,#f);
+
+
+);
+

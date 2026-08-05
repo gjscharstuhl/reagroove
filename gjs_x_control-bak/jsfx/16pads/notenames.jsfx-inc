@@ -1,0 +1,81 @@
+
+
+@init
+
+
+
+function notename_notes()
+local(i,sn)
+(
+  i=0;
+  sn='A';
+  loop(12,
+  notes[i]=sn;
+  i==1 || i==4 || i==6 || i==9 || i==11 ? (notes[i]=sn+1000;sn+=1;):
+  i==2 || i==7 ? sn+=1;
+  i+=1;
+  
+  );
+
+);
+
+function notename_createnotes()
+local(sn,oc)
+(
+sn=21;oc=0;octnr=0;
+
+loop(127,
+ //c1=#notes[oc];
+ //c2=str_getchar(notes,oc+1);
+ //sprintf(notename[sn]," %c",sn);
+ //memcpy(notename[sn],notes[oc],1);
+ notenames[sn]=notes[oc];
+ //strcat(notename[sn],c2);
+ 
+ oc=oc+1;
+ oc >= 12 ? (oc=0;);
+ sn=sn+1;
+ 
+);
+);
+
+function getnote(n)
+local(s)
+(
+  #s="";
+  kruis=0;
+  note=notenames[n];
+  octave=floor(n/12)-1;
+  note>=100 ?(note-=1000;kruis=1;);
+  sprintf(#s," %c",note);
+  kruis ? strcat(#s,"#");
+  sprintf(str," %d %d",octave,n);
+  strcat(#s,str);
+  #s;
+);
+
+
+function initnotenames()
+(
+	notename_notes();
+	notename_createnotes();
+
+);
+
+/*
+notes=500;
+notenames=1000;
+notes();
+nn();
+
+#str=getnote(77);
+#str2=getnote(78);
+
+//debug();
+
+
+
+
+
+
+

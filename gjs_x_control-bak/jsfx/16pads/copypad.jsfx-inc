@@ -1,0 +1,116 @@
+@init
+
+function pop(padid)
+(
+   pad_sampleamount[padid]>0 ? (
+     staddr=(padid*16)+pad_sampleamount[padid]-1;
+     strcpy(staddr,"");
+     pad_sampleamount[padid]-=1;
+     gmem[padlevel+padid]= max(pad_sampleamount[padid]-1,0);
+     gmem[gsampleamount+padid]=pad_sampleamount[padid];
+  );
+);
+
+
+function copysample(frompad,topad,l)
+local(staddr)
+(
+  //+gmem[padlevel+i];
+  #fromstr=(frompad*16)+l;
+  staddr=(topad*16)+l;
+  
+  strcpy(staddr,#fromstr);
+ 
+  
+  gmem[padlevel+topad]=l;
+  pad_level[topad]=pad_level[frompad]; 
+  gmem[l+topad]=gmem[l+frompad];
+  
+
+  //getsample(padid,gmem[padlevel+padid]);
+  //getfile(#filestr,0);
+  fileready=0;
+ // while (goload!=-1)(wait+=1;);
+  
+  pad_sampleamount[topad]=pad_sampleamount[frompad];
+  gmem[gsampleamount+topad]=gmem[gsampleamount+frompad];
+  
+  
+  gmem[env_a+(topad*16)+l]=gmem[env_a+(frompad*16)+l];
+  gmem[env_d+(topad*16)+l]=gmem[env_d+(frompad*16)+l];
+  gmem[env_s+(topad*16)+l]=gmem[env_s+(frompad*16)+l];
+  gmem[env_r+(topad*16)+l]=gmem[env_r+(frompad*16)+l];
+  gmem[sampvol+(topad*16)+l]=gmem[sampvol+(frompad*16)+l];
+  gmem[lp1+(topad*16)+l]=gmem[lp1+(frompad*16)+l];
+  gmem[lp2+(topad*16)+l]=gmem[lp2+(frompad*16)+l];
+  gmem[sloop+(topad*16)+l]=gmem[sloop+(frompad*16)+l];
+  
+  pad_mode[topad]=pad_mode[frompad];
+  gmem[gpadmode+topad]=gmem[gpadmode+frompad];
+  
+  //getfile(#fromstr,0,topad);
+  loadsample(topad,l);
+  
+  droppedonpad=topad;
+  goload=0;wait=0;
+
+);
+
+function copy(frompad,topad)
+local(l)
+(
+  print("copy from %d",frompad);
+  print("copy to %d",topad);
+  
+  cplevels=pad_sampleamount[frompad];
+  l=0;
+  loop(cplevels,
+    
+    copysample(frompad,topad,l);
+    l+=1;
+  );
+  docopy=0;
+  frompad=-1;
+  //goload==-1 ? (copysample(frompad,topad,cplev);cplev+=1;);
+  //cplev>=pad_sampleamount[frompad] || cplev>7 ? (docopy=0;frompad=-1;);
+
+);
+
+function swap(frompad,topad)
+local(l)
+(
+  print("swap from %d",frompad);
+  print("to %d",topad);
+  
+  tpad=17;
+  copy(topad,tpad);
+  copy(frompad,topad);
+  copy(17,frompad);
+  
+
+  doswap=0;frompad=-1;
+);
+
+function copypad()
+(
+  /*
+  debug(800,20,200,400,10,15);
+  setcolor(red);
+  print("focus:%d",gfocus);
+  print("from pad cap:%d",frompad);
+  print("goload %d",goload);
+  print("cplev %d",cplev);
+  print("llvs:%d",pad_sampleamount[frompad]);
+  */
+  mouse_cap == 5 && frompad==-1 ? (frompad=gfocus;cplev=0;tcopy=1;);
+  mouse_cap == 9 && frompad==-1 ? (frompad=gfocus;cplev=0;tswap=1;);
+  mouse_cap ==17 ? (loop (8,pop(gfocus);_global.clearmem=gfocus;));
+  mouse_cap==0 && frompad>=0 && frompad!=gfocus && tcopy ? (docopy=1;tcopy=0;tswap=0; copy(frompad,gfocus);frompad=-1;);
+  mouse_cap==0 && frompad>=0 && frompad!=gfocus && tswap ? (doswap=1;tcopy=0;tswap=0;fase=0;swap(frompad,gfocus);frompad=-1;);
+
+  //doswap ? swap(frompad,gfocus);
+);
+
+
+
+
