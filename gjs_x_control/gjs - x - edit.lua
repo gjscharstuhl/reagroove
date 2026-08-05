@@ -16,6 +16,9 @@ local time_signature = dofile(
 local subproject_track = dofile(
     script_dir .. "gjs - x - subproject_track.lua"
 )
+local save_and_quit = dofile(
+    script_dir .. "gjs - x - save_and_quit.lua"
+)
 
 local SCOPE_SELECTED_TRACK = 1
 local SCOPE_ALL_TRACKS = 2
@@ -29,6 +32,7 @@ local ACTION_CLEAR_COL = 2
 local ACTION_MERGE_COL = 3
 local ACTION_TIME_SIGNATURE_COL = 4
 local ACTION_TRACK_SELECT_COL = 5
+local ACTION_SAVE_QUIT_COL = 8
 
 local selected_bars = 1
 local selected_track = nil
@@ -564,7 +568,7 @@ return function(api, navigation)
     )
 
     api.drawstrip(
-        1, 1, 5,
+        1, 1, 8,
         C.BLUE,
         api.MODE_HIGHLIGHT,
         {
@@ -586,6 +590,8 @@ return function(api, navigation)
                     time_signature_mode = true
                 elseif pad.col == ACTION_TRACK_SELECT_COL then
                     track_select_mode = true
+                elseif pad.col == ACTION_SAVE_QUIT_COL then
+                    save_and_quit.run()
                 end
 
                 api.redraw()

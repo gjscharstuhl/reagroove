@@ -152,7 +152,17 @@ return function(api)
         reaper.defer(keep_display_synced)
     end
 
-    refresh_display()
+    -- draw_current_screen() sends the complete 8x8 Lua matrix only after
+    -- this screen function returns. Defer the first JSFX refresh so the
+    -- sequencer background/playhead is painted after that matrix packet,
+    -- rather than being overwritten by the grey Lua step block.
+    reaper.defer(function()
+        if generation == display_generation
+        and (not api.get_current_screen or api.get_current_screen() == 6) then
+            refresh_display()
+        end
+    end)
+
     reaper.defer(keep_display_synced)
 
     ------------------------------------------------------------
@@ -216,6 +226,16 @@ return function(api)
     -- Drum-note selection: MIDI notes 23 through 56.
     ------------------------------------------------------------
 
+    local function note_background_rgb(row, col)
+        local note = row * 10 + col
+
+        if note == state.radio["screen6_note"] then
+            return NOTE_SELECTED_BLUE
+        end
+
+        return NOTE_EMPTY_BLUE
+    end
+
     api.drawblock(
         3, 3,
         6, 6,
@@ -223,7 +243,10 @@ return function(api)
         api.MODE_RADIO,
         {
             group = "screen6_note",
-            background_rgb = NOTE_EMPTY_BLUE,
+            -- drawblock applies background_rgb after drawpad(). Returning
+            -- the selected colour here keeps the chosen drum note visible
+            -- through redraws and bar navigation.
+            background_rgb = note_background_rgb,
             active_color = NOTE_SELECTED_BLUE,
             on_press = function()
                 reaper.defer(refresh_display)
