@@ -131,35 +131,63 @@ function M.item_exists()
     return M.get_context().item ~= nil
 end
 
-function M.get_bar_count()
-    local context = M.get_context()
-
-    if not context.project
-    or not context.region_start
-    or not context.region_end
-    or context.region_end <= context.region_start then
-        return 1
+local function count_bars_by_measure_boundaries(
+    project,
+    region_start,
+    region_end
+)
+    if not project
+    or region_start == nil
+    or region_end == nil
+    or region_end <= region_start then
+        return 0
     end
 
     local _, start_measure =
-        reaper.TimeMap2_timeToBeats(
-            context.project,
-            context.region_start
-        )
+        reaper.TimeMap2_timeToBeats(project, region_start)
 
-    local _, end_measure =
-        reaper.TimeMap2_timeToBeats(
-            context.project,
-            context.region_end
-        )
-
-    if start_measure == nil or end_measure == nil then
-        return 1
+    if start_measure == nil then
+        return 0
     end
 
-    return math.max(
-        1,
-        math.floor((end_measure - start_measure) + 0.5)
+    local measure_index = math.floor(start_measure)
+    local bar_count = 0
+    local tolerance = 0.000001
+
+    -- The Launchpad overview supports at most sixteen visible bars.
+    while bar_count < 16 do
+        local ok, _, qn_end =
+            reaper.TimeMap_GetMeasureInfo(
+                project,
+                measure_index
+            )
+
+        if not ok or qn_end == nil then
+            break
+        end
+
+        local measure_end_time =
+            reaper.TimeMap2_QNToTime(project, qn_end)
+
+        bar_count = bar_count + 1
+
+        if measure_end_time >= region_end - tolerance then
+            break
+        end
+
+        measure_index = measure_index + 1
+    end
+
+    return math.max(1, bar_count)
+end
+
+function M.get_bar_count()
+    local context = M.get_context()
+
+    return count_bars_by_measure_boundaries(
+        context.project,
+        context.region_start,
+        context.region_end
     )
 end
 
@@ -737,23 +765,10 @@ local function get_region_at_position(project, position)
 end
 
 local function count_region_bars(project, region_start, region_end)
-    if not project or not region_start or not region_end
-    or region_end <= region_start then
-        return 0
-    end
-
-    local _, start_measure =
-        reaper.TimeMap2_timeToBeats(project, region_start)
-    local _, end_measure =
-        reaper.TimeMap2_timeToBeats(project, region_end)
-
-    if start_measure == nil or end_measure == nil then
-        return 0
-    end
-
-    return math.max(
-        1,
-        math.floor((end_measure - start_measure) + 0.5)
+    return count_bars_by_measure_boundaries(
+        project,
+        region_start,
+        region_end
     )
 end
 
