@@ -19,6 +19,9 @@ local subproject_track = dofile(
 local save_and_quit = dofile(
     script_dir .. "gjs - x - save_and_quit.lua"
 )
+local sequencer = dofile(
+    script_dir .. "gjs - x - sequencer_engine.lua"
+)
 
 local SCOPE_SELECTED_TRACK = 1
 local SCOPE_ALL_TRACKS = 2
@@ -445,6 +448,16 @@ return function(api, navigation)
 
     if api.set_screen0_main_active then
         api.set_screen0_main_active(false)
+    end
+
+    if api.set_jsfx_loop_overview_active then
+        api.set_jsfx_loop_overview_active(false)
+    end
+
+    -- Main and Edit share screen 0. Explicitly disable the mainscreen
+    -- JSFX overlay here, otherwise it keeps drawing over the Edit layout.
+    if sequencer and type(sequencer.disable_display) == "function" then
+        sequencer.disable_display(2)
     end
 
     if api.set_navigation then

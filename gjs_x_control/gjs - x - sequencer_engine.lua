@@ -715,8 +715,26 @@ end
 
 local DISPLAY_GMEM = "GJS_X_BRIDGE"
 local DISPLAY_BASE = 300
+local DISPLAY_ACTIVE_PROJECT_SLOT = DISPLAY_BASE + 32 -- gmem[332]
 local display_pattern_version = 0
 local display_force_version = 0
+
+
+local function publish_active_clock_project()
+    local active_track = tonumber(
+        reaper.GetExtState("GJS_X", "ActiveTrack")
+    ) or 0
+
+    active_track = math.max(
+        0,
+        math.min(8, math.floor(active_track))
+    )
+
+    reaper.gmem_write(
+        DISPLAY_ACTIVE_PROJECT_SLOT,
+        active_track
+    )
+end
 
 local function clear_display_steps()
     for index = 0, 15 do
@@ -818,6 +836,7 @@ function M.update_main_display()
     local context = M.get_main_display_context()
 
     reaper.gmem_attach(DISPLAY_GMEM)
+    publish_active_clock_project()
     reaper.gmem_write(DISPLAY_BASE + 0, 2)
 
     if not context.project
@@ -858,6 +877,7 @@ function M.update_display(options)
     local context = M.get_context()
 
     reaper.gmem_attach(DISPLAY_GMEM)
+    publish_active_clock_project()
     reaper.gmem_write(DISPLAY_BASE + 0, 1)
     reaper.gmem_write(DISPLAY_BASE + 1, bar)
 

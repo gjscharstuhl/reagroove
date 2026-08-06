@@ -1,0 +1,70 @@
+desc:GJS - X - Subproject Clock
+options:gmem=GJS_X_BRIDGE
+
+// ============================================================
+// Audio-rate clock source for one ReaGroove subproject.
+//
+// Put one instance in every subproject and set slider 1 to the
+// corresponding GJS_X ActiveTrack number (1..8).
+//
+// Shared input from Lua/display bridge:
+//   gmem[300] = display mode (0 off, 1 screen 6, 2 mainscreen)
+//   gmem[302] = active region start in this subproject's QN map
+//   gmem[303] = active region length in bars
+//   gmem[332] = active subproject number (1..8)
+//
+// Per-project clock output, four slots each:
+//   base = 340 + ((project_number - 1) * 4)
+//   base + 0 = heartbeat counter
+//   base + 1 = transport active (0/1)
+//   base + 2 = current bar in region (1-based, 0 when stopped)
+//   base + 3 = current sixteenth in bar (1-based, 0 when stopped)
+// ============================================================
+
+slider1:1<1,8,1>ReaGroove subproject number
+
+@init
+clock_root = 340;
+heartbeat = 0;
+
+@block
+
+project_number = max(1, min(8, floor(slider1)));
+active_project = floor(gmem[332]);
+display_mode = floor(gmem[300]);
+region_start_qn = gmem[302];
+region_bars = max(0, floor(gmem[303]));
+
+my_base = clock_root + ((project_number - 1) * 4);
+
+active_project == project_number && display_mode > 0 ? (
+    transport_active = ((play_state & 1) == 1) || ((play_state & 4) == 4);
+    current_bar = 0;
+    current_step = 0;
+
+    transport_active && region_bars > 0 ? (
+        measure_qn = max(0.000001, ts_num * 4 / ts_denom);
+        relative_qn = beat_position - region_start_qn;
+
+        // Tiny negative values can occur exactly on a synchronized loop edge.
+        relative_qn >= -0.000001 ? (
+            relative_qn = max(0, relative_qn);
+            absolute_bar = floor(relative_qn / measure_qn);
+            wrapped_bar = absolute_bar % region_bars;
+            wrapped_bar < 0 ? wrapped_bar += region_bars;
+            current_bar = wrapped_bar + 1;
+
+            within_bar_qn = relative_qn - (absolute_bar * measure_qn);
+            current_step = floor(within_bar_qn / (measure_qn / 16)) + 1;
+            current_step = max(1, min(16, current_step));
+        );
+    );
+
+    heartbeat += 1;
+    heartbeat > 1000000000 ? heartbeat = 1;
+
+    gmem[my_base + 0] = heartbeat;
+    gmem[my_base + 1] = transport_active ? 1 : 0;
+    gmem[my_base + 2] = current_bar;
+    gmem[my_base + 3] = current_step;
+);
