@@ -361,7 +361,7 @@ function M.insert_note(options)
     )
     local gate = math.max(
         0.01,
-        math.min(1.0, tonumber(options.gate) or 0.5)
+        math.min(16.0, tonumber(options.gate) or 0.5)
     )
     local offset = math.max(
         -0.45,

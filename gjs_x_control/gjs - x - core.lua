@@ -114,6 +114,8 @@ local SCREEN_CC = {
 
 -- Launchpad X top-row navigation buttons used by screen 0.
 local NAV_CC = {
+    UP = 91,
+    DOWN = 92,
     LEFT = 93,
     RIGHT = 94
 }
@@ -152,6 +154,8 @@ local LP = {
     -- Navigation callbacks for the screen-0 main/edit container.
     screen0_main_active = false,
     jsfx_loop_overview_active = false,
+    navigation_up = nil,
+    navigation_down = nil,
     navigation_left = nil,
     navigation_right = nil
 }
@@ -230,9 +234,11 @@ local function set_jsfx_loop_overview_active(active)
     LP.jsfx_loop_overview_active = active == true
 end
 
-local function set_navigation(left_callback, right_callback)
+local function set_navigation(left_callback, right_callback, up_callback, down_callback)
     LP.navigation_left = left_callback
     LP.navigation_right = right_callback
+    LP.navigation_up = up_callback
+    LP.navigation_down = down_callback
 end
 
 local function get_screen_state(screen)
@@ -1629,6 +1635,16 @@ end
 
 local function draw_navigation()
     send_cc_color(
+        NAV_CC.UP,
+        LP.navigation_up and SIDEBAR_COLOR.GREY or 0
+    )
+
+    send_cc_color(
+        NAV_CC.DOWN,
+        LP.navigation_down and SIDEBAR_COLOR.GREY or 0
+    )
+
+    send_cc_color(
         NAV_CC.LEFT,
         LP.navigation_left and SIDEBAR_COLOR.GREY or 0
     )
@@ -1657,6 +1673,8 @@ end
 
 local function draw_current_screen()
     LP.loop_overview_signature = nil
+    LP.navigation_up = nil
+    LP.navigation_down = nil
     LP.navigation_left = nil
     LP.navigation_right = nil
     LP.screen0_main_active = false
@@ -1822,7 +1840,19 @@ local function process_midi_message(message)
             return
         end
 
-        if data1 == NAV_CC.LEFT then
+        if data1 == NAV_CC.UP then
+            if LP.navigation_up then
+                LP.navigation_up()
+            end
+            return
+
+        elseif data1 == NAV_CC.DOWN then
+            if LP.navigation_down then
+                LP.navigation_down()
+            end
+            return
+
+        elseif data1 == NAV_CC.LEFT then
             if LP.navigation_left then
                 LP.navigation_left()
             end
