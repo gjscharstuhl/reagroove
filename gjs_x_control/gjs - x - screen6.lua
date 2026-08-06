@@ -19,6 +19,10 @@ local LENGTH_SELECTED_GREEN = { 0, 127, 0 }
 
 local display_generation = 0
 
+-- Piano audition bridge for the companion JSFX.
+local AUDITION_ENABLE_SLOT = 1100
+local AUDITION_NOTES_BASE = 1120
+
 local PIANO_KEYS = {
     -- White keys on row 5: C D E F G A B C
     [51] = 0, [52] = 2, [53] = 4, [54] = 5,
@@ -78,6 +82,23 @@ return function(api)
     state.sequencer_bar = state.sequencer_bar or 1
     state.sequencer_velocity = state.sequencer_velocity or 127
     state.sequencer_microtune = state.sequencer_microtune or 0
+
+    local function set_audition_enabled(enabled)
+        reaper.gmem_attach("GJS_X_BRIDGE")
+        reaper.gmem_write(AUDITION_ENABLE_SLOT, enabled and 1 or 0)
+        if not enabled then
+            for pitch = 0, 127 do
+                reaper.gmem_write(AUDITION_NOTES_BASE + pitch, 0)
+            end
+        end
+    end
+
+    local function set_audition_note(pitch, velocity)
+        pitch = math.max(0, math.min(127, math.floor(tonumber(pitch) or 0)))
+        velocity = math.max(0, math.min(127, math.floor(tonumber(velocity) or 0)))
+        reaper.gmem_attach("GJS_X_BRIDGE")
+        reaper.gmem_write(AUDITION_NOTES_BASE + pitch, velocity)
+    end
 
     local velocity_group = "screen6_velocity"
     state.horizontal_fader = state.horizontal_fader or {}
@@ -167,6 +188,8 @@ return function(api)
             end or nil
         )
     end
+
+    set_audition_enabled(state.sequencer_layout == "piano")
 
     -- Row 1: velocity for newly inserted notes.
     api.draw_horizontal_value_fader(1, C.ORANGE, {
@@ -275,10 +298,17 @@ return function(api)
             api.drawpad(row, col, NOTE_EMPTY_BLUE, api.MODE_RADIO, {
                 group = "screen6_piano_key",
                 active_color = NOTE_SELECTED_BLUE,
-                on_press = function()
+                on_press = function(_, velocity)
                     local octave_col = (state.radio["screen6_octave"] or 44) % 10
-                    state.radio["screen6_note"] = ((octave_col + 1) * 12) + PIANO_KEYS[pad_note]
+                    local pitch = ((octave_col + 1) * 12) + PIANO_KEYS[pad_note]
+                    state.radio["screen6_note"] = pitch
+                    set_audition_note(pitch, velocity or state.sequencer_velocity)
                     reaper.defer(refresh_display)
+                end,
+                on_release = function()
+                    local octave_col = (state.radio["screen6_octave"] or 44) % 10
+                    local pitch = ((octave_col + 1) * 12) + PIANO_KEYS[pad_note]
+                    set_audition_note(pitch, 0)
                 end
             })
         end

@@ -23,3 +23,10 @@ Version 21 - subproject mixer page 4
 - Child tracks are ignored.
 - Values stay synchronized with REAPER and redraw when ActiveTrack changes.
 - Shared logic is in gjs - x - subproject_mixer.lua.
+
+Piano sequencer audition
+------------------------
+Add "gjs: Piano Sequencer Audition" before the instrument on the track you
+want to hear. In screen 6 piano mode, pressing a piano pad now sends the exact
+selected score pitch; releasing the pad sends note-off. Slider 1 selects the
+MIDI output channel (default channel 1).
