@@ -42,7 +42,17 @@ local function get_top_level_tracks(project)
         local track = reaper.GetTrack(project, index)
 
         if track and depth == 0 then
-            tracks[#tracks + 1] = track
+            local visible_in_tcp =
+                reaper.GetMediaTrackInfo_Value(track, "B_SHOWINTCP") > 0.5
+            local visible_in_mixer =
+                reaper.GetMediaTrackInfo_Value(track, "B_SHOWINMIXER") > 0.5
+
+            -- Hidden helper tracks must not consume a selector pad. A track
+            -- remains selectable when it is visible in either the TCP or the
+            -- mixer, and is ignored only when hidden from both.
+            if visible_in_tcp or visible_in_mixer then
+                tracks[#tracks + 1] = track
+            end
         end
 
         if track then
