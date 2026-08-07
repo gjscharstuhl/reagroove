@@ -276,6 +276,43 @@ function Bridge.set_matrix_rgb(matrix)
     })
 end
 
+-- Send only a range of matrix rows using the generic RGB-list command.
+-- Screen 6 uses this for rows 1..6 so the sequencer-display JSFX remains
+-- the sole writer of rows 7 and 8. Keeping those writers separate avoids
+-- overlapping full-matrix SysEx packets during scene/layout transitions.
+function Bridge.set_matrix_rows_rgb(matrix, first_row, last_row)
+    if type(matrix) ~= "table" then
+        return false
+    end
+
+    first_row = clamp(first_row, 1, 8)
+    last_row = clamp(last_row, first_row, 8)
+
+    local entries = {}
+
+    for row = first_row, last_row do
+        local row_colors = matrix[row]
+        if type(row_colors) ~= "table" then row_colors = {} end
+
+        for col = 1, 8 do
+            local color = row_colors[col]
+            if type(color) ~= "table" then color = { 0, 0, 0 } end
+
+            entries[#entries + 1] = {
+                row * 10 + col,
+                color[1], color[2], color[3]
+            }
+        end
+    end
+
+    return enqueue({
+        -- This can contain up to 64 RGB entries. Use the matrix command and
+        -- its large JSFX buffers rather than the 8-LED fader command.
+        command = COMMAND_SET_MATRIX_RGB,
+        entries = copy_entries(entries)
+    })
+end
+
 function Bridge.last_acknowledged_sequence()
     return math.floor(reaper.gmem_read(2) or -1)
 end

@@ -445,7 +445,12 @@ local function activate_queued_scene(api)
         callback()
     end
 
-    if api.redraw then
+    -- A queued scene can activate while screen 6 is open. Screen 6 has its
+    -- own continuously updated sequencer overlay and does not need a full
+    -- UI redraw merely because the target patterns changed. Its display sync
+    -- loop will pick up the new region/item context itself.
+    if api.redraw
+    and (not api.get_current_screen or api.get_current_screen() ~= 6) then
         api.redraw()
     end
 
