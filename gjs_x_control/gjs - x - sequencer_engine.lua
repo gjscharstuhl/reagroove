@@ -54,11 +54,14 @@ local function get_target_region(project)
     return nil, nil, region_number
 end
 
-local function get_first_armed_track(project)
+local function get_target_track(project)
     if not project then
         return nil
     end
 
+    -- ReaGroove track rule: the first record-armed track in the ActiveTrack
+    -- subproject is the sequencer/edit target. Keep this deterministic and
+    -- independent of REAPER track/item selection.
     for index = 0, reaper.CountTracks(project) - 1 do
         local track = reaper.GetTrack(project, index)
 
@@ -108,13 +111,94 @@ local function find_sequencer_item(track, region_start, region_end)
     return nil
 end
 
+-- Find a normal MIDI item on the armed track when no tagged sequencer item
+-- exists. Live-recorded MIDI does not carry the ReaGroove sequencer tag, but
+-- it should still be editable/displayable by screen 6. Prefer an exact
+-- region-sized item; otherwise use the MIDI item with the largest overlap
+-- with the target region.
+local function find_midi_item_in_region(track, region_start, region_end)
+    if not track or not region_start or not region_end then
+        return nil, nil
+    end
+
+    local best_item, best_take, best_overlap = nil, nil, 0
+
+    for index = 0, reaper.CountTrackMediaItems(track) - 1 do
+        local item = reaper.GetTrackMediaItem(track, index)
+        local take = item and reaper.GetActiveTake(item) or nil
+
+        if take and reaper.TakeIsMIDI(take) then
+            local item_start = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+            local item_end = item_start +
+                reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+
+            if math.abs(item_start - region_start) <= POSITION_TOLERANCE
+            and math.abs(item_end - region_end) <= POSITION_TOLERANCE then
+                return item, take
+            end
+
+            local overlap = math.max(0,
+                math.min(item_end, region_end) - math.max(item_start, region_start)
+            )
+
+            if overlap > best_overlap then
+                best_overlap = overlap
+                best_item = item
+                best_take = take
+            end
+        end
+    end
+
+    return best_item, best_take
+end
+
+local function get_selected_midi_item(project)
+    if not project then return nil, nil, nil end
+
+    local selected_count = reaper.CountSelectedMediaItems(project)
+    for index = 0, selected_count - 1 do
+        local item = reaper.GetSelectedMediaItem(project, index)
+        local take = item and reaper.GetActiveTake(item) or nil
+        if take and reaper.TakeIsMIDI(take) then
+            return item, take, reaper.GetMediaItemTrack(item)
+        end
+    end
+
+    return nil, nil, nil
+end
+
+local function get_selected_midi_item_context(preferred_project)
+    -- First use the project that is actually active in REAPER. Live-recorded
+    -- items are normally selected there, even when ReaGroove's ActiveTrack
+    -- still points at a subproject tab.
+    local current_project = reaper.EnumProjects(-1, "")
+    if current_project then
+        local item, take, track = get_selected_midi_item(current_project)
+        if item then
+            return current_project, item, take, track
+        end
+    end
+
+    -- Then try the ReaGroove project selected by ActiveTrack.
+    if preferred_project and preferred_project ~= current_project then
+        local item, take, track = get_selected_midi_item(preferred_project)
+        if item then
+            return preferred_project, item, take, track
+        end
+    end
+
+    return nil, nil, nil, nil
+end
+
 function M.get_context()
     local project = get_active_project()
-    local region_start, region_end, region_number =
-        get_target_region(project)
-    local track = get_first_armed_track(project)
-    local item = find_sequencer_item(track, region_start, region_end)
-    local take = item and reaper.GetActiveTake(item) or nil
+    local region_start, region_end, region_number = get_target_region(project)
+    local track = get_target_track(project)
+
+    -- A MIDI item is valid regardless of origin. Prefer an exact/overlapping
+    -- MIDI item on the first armed track in the target region. Tagged legacy
+    -- sequencer items remain valid, but no special ownership is required.
+    local item, take = find_midi_item_in_region(track, region_start, region_end)
 
     return {
         project = project,
@@ -127,6 +211,12 @@ function M.get_context()
     }
 end
 
+local function get_owned_sequencer_context()
+    return M.get_context()
+end
+
+-- Any usable MIDI item is a sequencer item. Its origin does not matter:
+-- live-recorded, created by screen 6, or created manually in REAPER.
 function M.item_exists()
     return M.get_context().item ~= nil
 end
@@ -224,18 +314,11 @@ function M.create_item()
     if not item then
         reaper.Undo_EndBlock2(
             context.project,
-            "Create ReaGroove sequencer item",
+            "Create MIDI item",
             -1
         )
         return false, "REAPER could not create the MIDI item."
     end
-
-    reaper.GetSetMediaItemInfo_String(
-        item,
-        ITEM_TAG_KEY,
-        ITEM_TAG_VALUE,
-        true
-    )
 
     local take = reaper.GetActiveTake(item)
     if take then
@@ -251,7 +334,7 @@ function M.create_item()
     reaper.UpdateArrange()
     reaper.Undo_EndBlock2(
         context.project,
-        "Create ReaGroove sequencer item",
+        "Create MIDI item",
         -1
     )
 
@@ -290,17 +373,17 @@ function M.delete_item()
     if not deleted then
         reaper.Undo_EndBlock2(
             context.project,
-            "Delete ReaGroove sequencer item",
+            "Delete MIDI item",
             -1
         )
-        return false, "REAPER could not delete the sequencer MIDI item."
+        return false, "REAPER could not delete the MIDI item."
     end
 
     reaper.TrackList_AdjustWindows(false)
     reaper.UpdateArrange()
     reaper.Undo_EndBlock2(
         context.project,
-        "Delete ReaGroove sequencer item",
+        "Delete MIDI item",
         -1
     )
 

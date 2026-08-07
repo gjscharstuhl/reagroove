@@ -34,7 +34,7 @@ local function require_take(sequencer)
         return nil, "No active ReaGroove subproject."
     end
     if not context.item or not context.take then
-        return nil, "Create the sequencer MIDI item first."
+        return nil, "Select a MIDI item or create the sequencer MIDI item first."
     end
     return context
 end
