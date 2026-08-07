@@ -37,6 +37,7 @@
 
 local BRIDGE_TRACK_NAME = "DIRTT Launchpad Bridge"
 local BRIDGE_FX_NAME    = "gjs - x - sysex bridge"
+local PERFORMANCE_GATE_FX_NAME = "gjs: Launchpad Performance Gate"
 
 local SUBPROJECT_COUNT   = 8
 local REGION_COUNT       = 8
@@ -361,6 +362,22 @@ local function create_test_track(proj, number)
 
     if fx_index < 0 then
         return false, "ReaSynth werd niet gevonden."
+    end
+
+    -- The Launchpad Performance Gate MUST live in the Input FX chain.
+    -- That way it can filter live controller notes without ever seeing
+    -- MIDI-item/sequencer playback.
+    local gate_index = reaper.TrackFX_AddByName(
+        track,
+        PERFORMANCE_GATE_FX_NAME,
+        true,
+        -1
+    )
+
+    if gate_index < 0 then
+        return false,
+            "Launchpad Performance Gate werd niet gevonden voor Input FX:\n\n"
+            .. PERFORMANCE_GATE_FX_NAME
     end
 
     -- Record-arm.

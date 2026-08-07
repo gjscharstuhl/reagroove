@@ -36,3 +36,15 @@ Screen 6 piano chord mode:
 - Pad 38 toggles chord monitoring through the Piano Sequencer Audition JSFX.
 - Audition always uses the velocity set by the screen 6 velocity fader.
 - Pressing a sequencer step inserts/removes every selected chord note at once.
+
+Launchpad Performance Gate
+--------------------------
+IMPORTANT: place "gjs: Launchpad Performance Gate" in the track INPUT FX chain,
+not in the normal Track FX chain. Input FX receives live controller MIDI only;
+MIDI-item and sequencer playback bypasses it, so sequencer notes are never filtered.
+For existing projects you can run:
+
+    gjs - x - move performance gate to input fx.lua
+
+This moves an existing normal Performance Gate to Input FX and adds it to armed
+tracks when needed.

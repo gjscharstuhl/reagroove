@@ -2,6 +2,10 @@ desc:gjs: Launchpad Performance Gate
 
 options:gmem=GJS_X_BRIDGE
 
+// IMPORTANT: use this as INPUT FX, not as normal Track FX.
+// Input FX sees only live MIDI input, so sequencer/MIDI-item playback
+// bypasses this gate and can never be filtered by it.
+
 @block
 
 block_notes = floor(gmem[1000]);
