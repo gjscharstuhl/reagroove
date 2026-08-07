@@ -30,3 +30,9 @@ Add "gjs: Piano Sequencer Audition" before the instrument on the track you
 want to hear. In screen 6 piano mode, pressing a piano pad now sends the exact
 selected score pitch; releasing the pad sends note-off. Slider 1 selects the
 MIDI output channel (default channel 1).
+
+Screen 6 piano chord mode:
+- Piano keys toggle notes into/out of the current chord.
+- Pad 38 toggles chord monitoring through the Piano Sequencer Audition JSFX.
+- Audition always uses the velocity set by the screen 6 velocity fader.
+- Pressing a sequencer step inserts/removes every selected chord note at once.

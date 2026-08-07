@@ -1780,7 +1780,22 @@ local function select_screen(screen)
     LP.current_screen = screen
 
     update_performance_mode()
-    draw_current_screen()
+
+    -- Screen 6 has a JSFX-driven sequencer overlay on rows 7/8.  Disable
+    -- that overlay first and give the JSFX one defer cycle to observe the
+    -- change before sending the full 8x8 matrix.  Otherwise the two SysEx
+    -- writers can overlap and the Launchpad can briefly become all-white.
+    if screen == 6 then
+        reaper.gmem_attach(GMEM_NAME)
+        reaper.gmem_write(300, 0)
+        reaper.defer(function()
+            if LP.current_screen == 6 then
+                draw_current_screen()
+            end
+        end)
+    else
+        draw_current_screen()
+    end
 end
 ------------------------------------------------------------
 -- MIDI input processing

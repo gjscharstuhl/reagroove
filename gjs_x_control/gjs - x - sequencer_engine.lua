@@ -869,11 +869,83 @@ function M.update_main_display()
     return true
 end
 
+-- Return all unique MIDI pitches that start on one sequencer step.
+-- This is used by screen 6 to recall an existing chord from the MIDI item.
+function M.get_step_pitches(options)
+    options = options or {}
+
+    local bar = math.max(1, math.floor(tonumber(options.bar) or 1))
+    local step = math.max(1, math.min(16, math.floor(tonumber(options.step) or 1)))
+    local context = M.get_context()
+    local result = {}
+    local seen = {}
+
+    if not context.project or not context.take or not context.region_start then
+        return result
+    end
+
+    local qn_start, qn_end = get_bar_qn_range(
+        context.project,
+        context.region_start,
+        bar
+    )
+    if not qn_start or not qn_end or qn_end <= qn_start then
+        return result
+    end
+
+    local step_qn = (qn_end - qn_start) / 16
+    local _, note_count = reaper.MIDI_CountEvts(context.take)
+
+    for note_index = 0, note_count - 1 do
+        local ok, _, _, start_ppq, _, _, pitch =
+            reaper.MIDI_GetNote(context.take, note_index)
+
+        if ok then
+            local note_qn = reaper.MIDI_GetProjQNFromPPQPos(
+                context.take,
+                start_ppq
+            )
+            local relative = (note_qn - qn_start) / step_qn
+            local note_step = math.floor(relative + 0.5) + 1
+
+            if note_step == step
+            and note_qn >= qn_start - (step_qn * 0.5)
+            and note_qn < qn_end + (step_qn * 0.5)
+            and not seen[pitch] then
+                seen[pitch] = true
+                result[#result + 1] = pitch
+            end
+        end
+    end
+
+    table.sort(result)
+    return result
+end
+
 function M.update_display(options)
     options = options or {}
 
     local bar = math.max(1, math.floor(tonumber(options.bar) or 1))
     local pitch = math.floor(tonumber(options.pitch) or -1)
+    local requested_pitches = {}
+    local requested_lookup = {}
+
+    if type(options.pitches) == "table" then
+        for _, value in ipairs(options.pitches) do
+            local requested_pitch = math.floor(tonumber(value) or -1)
+            if requested_pitch >= 0 and requested_pitch <= 127
+            and not requested_lookup[requested_pitch] then
+                requested_lookup[requested_pitch] = true
+                requested_pitches[#requested_pitches + 1] = requested_pitch
+            end
+        end
+        table.sort(requested_pitches)
+    elseif pitch >= 0 and pitch <= 127 then
+        requested_lookup[pitch] = true
+        requested_pitches[1] = pitch
+    end
+
+    local exact_pitches = options.exact_pitches == true
     local context = M.get_context()
 
     reaper.gmem_attach(DISPLAY_GMEM)
@@ -901,7 +973,7 @@ function M.update_display(options)
     reaper.gmem_write(DISPLAY_BASE + 3, M.get_bar_count())
     clear_display_steps()
 
-    if context.take and pitch >= 0 and pitch <= 127 then
+    if context.take and #requested_pitches > 0 then
         local qn_start, qn_end = get_bar_qn_range(
             context.project,
             context.region_start,
@@ -910,37 +982,65 @@ function M.update_display(options)
 
         if qn_start and qn_end and qn_end > qn_start then
             local step_qn = (qn_end - qn_start) / 16
-            local velocities = {}
+            local step_notes = {}
             local _, note_count = reaper.MIDI_CountEvts(context.take)
 
             for note_index = 0, note_count - 1 do
                 local ok, _, _, start_ppq, _, _, note_pitch, velocity =
                     reaper.MIDI_GetNote(context.take, note_index)
 
-                if ok and note_pitch == pitch then
+                if ok then
                     local note_qn = reaper.MIDI_GetProjQNFromPPQPos(
                         context.take,
                         start_ppq
                     )
-
-                    -- Round to the nearest nominal sixteenth. This keeps
-                    -- microtuned notes visible on their intended step.
                     local relative = (note_qn - qn_start) / step_qn
                     local step = math.floor(relative + 0.5) + 1
 
                     if step >= 1 and step <= 16
                     and note_qn >= qn_start - (step_qn * 0.5)
                     and note_qn < qn_end + (step_qn * 0.5) then
-                        velocities[step] = math.max(
-                            velocities[step] or 0,
-                            velocity or 0
-                        )
+                        local entry = step_notes[step]
+                        if not entry then
+                            entry = { pitches = {}, count = 0, velocity = 0 }
+                            step_notes[step] = entry
+                        end
+                        if not entry.pitches[note_pitch] then
+                            entry.pitches[note_pitch] = true
+                            entry.count = entry.count + 1
+                        end
+                        if requested_lookup[note_pitch] then
+                            entry.velocity = math.max(entry.velocity, velocity or 0)
+                        end
                     end
                 end
             end
 
             for step = 1, 16 do
-                reaper.gmem_write(DISPLAY_BASE + 15 + step, velocities[step] or 0)
+                local entry = step_notes[step]
+                local matches = entry ~= nil
+
+                if matches then
+                    for _, requested_pitch in ipairs(requested_pitches) do
+                        if not entry.pitches[requested_pitch] then
+                            matches = false
+                            break
+                        end
+                    end
+                end
+
+                -- In chord mode, a step is shown only when the MIDI item has
+                -- exactly the selected chord: every selected pitch and no
+                -- additional pitch starting on that step.
+                if matches and exact_pitches
+                and entry.count ~= #requested_pitches then
+                    matches = false
+                end
+
+                reaper.gmem_write(
+                    DISPLAY_BASE + 15 + step,
+                    matches and math.max(1, entry.velocity) or 0
+                )
             end
         end
     end

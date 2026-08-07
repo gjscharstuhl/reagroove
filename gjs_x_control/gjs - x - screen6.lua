@@ -82,6 +82,8 @@ return function(api)
     state.sequencer_bar = state.sequencer_bar or 1
     state.sequencer_velocity = state.sequencer_velocity or 127
     state.sequencer_microtune = state.sequencer_microtune or 0
+    state.sequencer_chord = state.sequencer_chord or {}
+    state.sequencer_chord_mode = state.sequencer_chord_mode or false
 
     local function set_audition_enabled(enabled)
         reaper.gmem_attach("GJS_X_BRIDGE")
@@ -93,11 +95,39 @@ return function(api)
         end
     end
 
+    local function clear_audition_notes()
+        reaper.gmem_attach("GJS_X_BRIDGE")
+        for pitch = 0, 127 do
+            reaper.gmem_write(AUDITION_NOTES_BASE + pitch, 0)
+        end
+    end
+
     local function set_audition_note(pitch, velocity)
         pitch = math.max(0, math.min(127, math.floor(tonumber(pitch) or 0)))
         velocity = math.max(0, math.min(127, math.floor(tonumber(velocity) or 0)))
         reaper.gmem_attach("GJS_X_BRIDGE")
         reaper.gmem_write(AUDITION_NOTES_BASE + pitch, velocity)
+    end
+
+    local function audition_pitches(pitches)
+        clear_audition_notes()
+        if state.sequencer_layout ~= "piano" then return end
+        for _, pitch in ipairs(pitches or {}) do
+            set_audition_note(pitch, state.sequencer_velocity)
+        end
+    end
+
+    local function stop_audition()
+        clear_audition_notes()
+    end
+
+    local function selected_chord_pitches()
+        local pitches = {}
+        for pitch, selected in pairs(state.sequencer_chord) do
+            if selected then pitches[#pitches + 1] = pitch end
+        end
+        table.sort(pitches)
+        return pitches
     end
 
     local velocity_group = "screen6_velocity"
@@ -124,10 +154,33 @@ return function(api)
     end
 
     local function refresh_display()
-        sequencer.update_display({
+        local options = {
             bar = state.sequencer_bar,
             pitch = selected_pitch()
-        })
+        }
+
+        if state.sequencer_layout == "piano"
+        and state.sequencer_chord_mode then
+            options.pitches = selected_chord_pitches()
+            options.exact_pitches = true
+        end
+
+        sequencer.update_display(options)
+    end
+
+    local function safe_redraw()
+        -- Never send a full matrix in the same defer cycle in which the
+        -- sequencer-display JSFX is disabled.  Give the JSFX one cycle to
+        -- stop writing rows 7/8 first; this prevents all-white matrix frames.
+        sequencer.disable_display(1)
+        if state.sequencer_redraw_pending then return end
+        state.sequencer_redraw_pending = true
+        reaper.defer(function()
+            state.sequencer_redraw_pending = false
+            if not api.get_current_screen or api.get_current_screen() == 6 then
+                api.redraw()
+            end
+        end)
     end
 
     display_generation = display_generation + 1
@@ -163,33 +216,46 @@ return function(api)
         reaper.defer(keep_display_synced)
     end
 
-    refresh_display()
+    -- Publish the sequencer rows only after the complete matrix frame has
+    -- been sent by core.lua. This avoids competing SysEx writes.
+    reaper.defer(refresh_display)
     reaper.defer(keep_display_synced)
 
-    -- LEFT/RIGHT select the previous/next bar.
+    -- LEFT/RIGHT select the previous/next bar. A bar change only affects
+    -- sequencer rows 7 and 8. Never redraw the complete 8x8 RGB matrix here:
+    -- sending a full matrix frame while the display JSFX is updating those
+    -- rows can make the Launchpad interpret a broken frame as all-white.
+    local function select_bar(bar)
+        stop_audition()
+        local new_bar = math.max(1, math.min(bar_count, bar))
+        if new_bar == state.sequencer_bar then return end
+        state.sequencer_bar = new_bar
+        refresh_display()
+    end
+
+    -- Keep LEFT/RIGHT callbacks installed at the end bars as well. The
+    -- selector clamps the value, so navigation never requires a full redraw
+    -- merely to enable or disable an arrow LED.
     -- UP/DOWN switch between the drum and piano layouts.
     if api.set_navigation then
         api.set_navigation(
-            state.sequencer_bar > 1 and function()
-                state.sequencer_bar = state.sequencer_bar - 1
-                api.redraw()
-            end or nil,
-            state.sequencer_bar < bar_count and function()
-                state.sequencer_bar = state.sequencer_bar + 1
-                api.redraw()
-            end or nil,
+            function() select_bar(state.sequencer_bar - 1) end,
+            function() select_bar(state.sequencer_bar + 1) end,
             state.sequencer_layout == "piano" and function()
                 state.sequencer_layout = "drum"
-                api.redraw()
+                safe_redraw()
             end or nil,
             state.sequencer_layout == "drum" and function()
                 state.sequencer_layout = "piano"
-                api.redraw()
+                safe_redraw()
             end or nil
         )
     end
 
     set_audition_enabled(state.sequencer_layout == "piano")
+    if state.sequencer_layout ~= "piano" then
+        stop_audition()
+    end
 
     -- Row 1: velocity for newly inserted notes.
     api.draw_horizontal_value_fader(1, C.ORANGE, {
@@ -277,40 +343,102 @@ return function(api)
             })
         end
 
+        -- Pad 37: toggle between single-note and chord-entry mode.
+        -- Switching mode starts from a clean, predictable selection.
+        state.toggle[37] = state.sequencer_chord_mode
+        api.drawpad(3, 7, C.DARK_YELLOW or C.YELLOW, api.MODE_TOGGLE, {
+            active = state.sequencer_chord_mode,
+            active_color = C.YELLOW,
+            on_press = function(pad)
+                stop_audition()
+                state.sequencer_chord_mode = pad.active == true
+                state.sequencer_chord = {}
+                for note = 51, 68 do
+                    state.toggle[note] = nil
+                end
+                safe_redraw()
+                reaper.defer(refresh_display)
+            end
+        })
+
+        -- Pad 38: momentary monitor only. It never changes the mode or
+        -- selection; it simply plays the current note/chord while held.
+        api.drawpad(3, 8, C.DARK_YELLOW or C.YELLOW, api.MODE_HIGHLIGHT, {
+            active_color = C.YELLOW,
+            on_press = function()
+                state.sequencer_monitor_held = true
+                if state.sequencer_chord_mode then
+                    audition_pitches(selected_chord_pitches())
+                else
+                    local pitch = selected_pitch()
+                    audition_pitches(pitch and { pitch } or {})
+                end
+            end,
+            on_release = function()
+                state.sequencer_monitor_held = false
+                stop_audition()
+                return true
+            end
+        })
+
         -- Row 4: octave selection, default pad 4 = C4.
         for col = 1, 8 do
             api.drawpad(4, col, OCTAVE_BLUE, api.MODE_RADIO, {
                 group = "screen6_octave",
                 active_color = OCTAVE_SELECTED_BLUE,
                 on_press = function(pad)
-                    local key_note = state.radio["screen6_piano_key"]
-                    local semitone = key_note and PIANO_KEYS[key_note]
-                    if semitone then
-                        state.radio["screen6_note"] = ((pad.col + 1) * 12) + semitone
-                        reaper.defer(refresh_display)
-                    end
+                    -- Store the octave explicitly and redraw immediately so all
+                    -- piano-key callbacks are rebuilt for the newly selected range.
+                    state.radio["screen6_octave"] = 40 + pad.col
+                    local key_note = state.radio["screen6_piano_key"] or 51
+                    local semitone = PIANO_KEYS[key_note] or 0
+                    state.radio["screen6_note"] = ((pad.col + 1) * 12) + semitone
+                    stop_audition()
+                    safe_redraw()
+                    reaper.defer(refresh_display)
                 end
             })
         end
 
         local function draw_piano_key(row, col)
             local pad_note = (row * 10) + col
-            api.drawpad(row, col, NOTE_EMPTY_BLUE, api.MODE_RADIO, {
-                group = "screen6_piano_key",
-                active_color = NOTE_SELECTED_BLUE,
-                on_press = function(_, velocity)
-                    local octave_col = (state.radio["screen6_octave"] or 44) % 10
-                    local pitch = ((octave_col + 1) * 12) + PIANO_KEYS[pad_note]
-                    state.radio["screen6_note"] = pitch
-                    set_audition_note(pitch, velocity or state.sequencer_velocity)
-                    reaper.defer(refresh_display)
-                end,
-                on_release = function()
-                    local octave_col = (state.radio["screen6_octave"] or 44) % 10
-                    local pitch = ((octave_col + 1) * 12) + PIANO_KEYS[pad_note]
-                    set_audition_note(pitch, 0)
-                end
-            })
+            local pitch = ((octave_col + 1) * 12) + PIANO_KEYS[pad_note]
+
+            if state.sequencer_chord_mode then
+                -- MODE_TOGGLE normally restores its generic saved state. Keep
+                -- that state explicitly synchronized with the absolute-pitch
+                -- chord table so old notes cannot reappear unexpectedly.
+                state.toggle[pad_note] = state.sequencer_chord[pitch] == true
+                api.drawpad(row, col, NOTE_EMPTY_BLUE, api.MODE_TOGGLE, {
+                    active = state.sequencer_chord[pitch] == true,
+                    active_color = NOTE_SELECTED_BLUE,
+                    on_press = function(pad)
+                        state.sequencer_chord[pitch] = pad.active or nil
+                        state.radio["screen6_note"] = pitch
+                        audition_pitches(selected_chord_pitches())
+                        reaper.defer(refresh_display)
+                    end,
+                    on_release = function()
+                        stop_audition()
+                        return true
+                    end
+                })
+            else
+                api.drawpad(row, col, NOTE_EMPTY_BLUE, api.MODE_RADIO, {
+                    group = "screen6_piano_key",
+                    active_color = NOTE_SELECTED_BLUE,
+                    on_press = function()
+                        state.radio["screen6_piano_key"] = pad_note
+                        state.radio["screen6_note"] = pitch
+                        audition_pitches({ pitch })
+                        reaper.defer(refresh_display)
+                    end,
+                    on_release = function()
+                        stop_audition()
+                        return true
+                    end
+                })
+            end
         end
 
         for col = 1, 8 do draw_piano_key(5, col) end
@@ -321,35 +449,94 @@ return function(api)
     -- Rows 7 and 8: sixteen sequencer steps. Pressing an occupied step
     -- deletes it; pressing an empty step inserts it with current settings.
     api.drawblock(7, 1, 8, 8, C.GREY, api.MODE_HIGHLIGHT, {
-        active_color = C.WHITE,
+        active_color = C.RED,
         on_press = function(pad)
             local step = sequencer_step_from_pad(pad)
-            local pitch = selected_pitch()
-            if not step or not pitch then return end
+            if not step then return end
 
-            local success, result = sequencer.delete_note({
-                pitch = pitch,
-                step = step,
-                bar = state.sequencer_bar
-            })
+            -- Pad 38 acts as a shift key: while it is held, pressing a
+            -- sequencer step recalls every MIDI note that starts on that step
+            -- into the piano chord selection instead of editing the item.
+            if state.sequencer_layout == "piano"
+            and state.sequencer_monitor_held then
+                local recalled = sequencer.get_step_pitches({
+                    step = step,
+                    bar = state.sequencer_bar
+                })
 
-            if success and result == "not_found" then
-                local gate = 1
-                if state.sequencer_layout == "piano" then
-                    gate = NOTE_LENGTH_GATES[state.radio["screen6_length"]] or 1
+                if #recalled > 0 then
+                    state.sequencer_chord_mode = true
+                    state.toggle[37] = true
+                    state.sequencer_chord = {}
+                    for _, pitch in ipairs(recalled) do
+                        state.sequencer_chord[pitch] = true
+                    end
+
+                    -- Jump the visible keyboard to the octave of the lowest
+                    -- recalled note. Notes in other octaves stay selected and
+                    -- appear when that octave is chosen.
+                    local lowest = recalled[1]
+                    local octave_col = math.max(1, math.min(8, math.floor(lowest / 12) - 1))
+                    state.radio["screen6_octave"] = 40 + octave_col
+                    state.radio["screen6_note"] = lowest
+                    audition_pitches(recalled)
+                    safe_redraw()
+                    reaper.defer(refresh_display)
                 end
-                success, result = sequencer.insert_note({
+                return
+            end
+
+            local pitches
+            if state.sequencer_layout == "piano" and state.sequencer_chord_mode then
+                pitches = selected_chord_pitches()
+            else
+                local pitch = selected_pitch()
+                pitches = pitch and { pitch } or {}
+            end
+            if #pitches == 0 then return end
+
+            local gate = 1
+            if state.sequencer_layout == "piano" then
+                gate = NOTE_LENGTH_GATES[state.radio["screen6_length"]] or 1
+            end
+
+            -- Treat a chord as one unit. First remove every selected pitch. If
+            -- none existed at this step, insert the complete set. This prevents
+            -- partially deleted/partially inserted chords.
+            local success, result = true, nil
+            local found_existing = false
+            for _, pitch in ipairs(pitches) do
+                success, result = sequencer.delete_note({
                     pitch = pitch,
                     step = step,
-                    bar = state.sequencer_bar,
-                    velocity = state.sequencer_velocity,
-                    channel = 0,
-                    gate = gate,
-                    offset = state.sequencer_microtune
+                    bar = state.sequencer_bar
                 })
+                if not success then break end
+                if result ~= "not_found" then found_existing = true end
+            end
+
+            if success and not found_existing then
+                for _, pitch in ipairs(pitches) do
+                    success, result = sequencer.insert_note({
+                        pitch = pitch,
+                        step = step,
+                        bar = state.sequencer_bar,
+                        velocity = state.sequencer_velocity,
+                        channel = 0,
+                        gate = gate,
+                        offset = state.sequencer_microtune
+                    })
+                    if not success then break end
+                end
             end
 
             if not success then report_error(result) else refresh_display() end
+        end,
+        on_release = function()
+            -- Let the sequencer display restore its normal red/velocity state
+            -- instead of leaving the temporary pressed color visible.
+            reaper.defer(refresh_display)
+            return true
         end
     })
 end
