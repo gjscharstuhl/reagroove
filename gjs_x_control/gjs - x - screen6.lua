@@ -57,6 +57,27 @@ local function horizontal_fader_to_velocity(fader)
     return math.floor((index * 127 / 31) + 0.5)
 end
 
+local function velocity_to_horizontal_fader(velocity)
+    velocity = math.max(0, math.min(127, math.floor(tonumber(velocity) or 127)))
+    local index = math.max(0, math.min(31, math.floor((velocity * 31 / 127) + 0.5)))
+    return {
+        col = math.floor(index / 4) + 1,
+        step = (index % 4) + 1
+    }
+end
+
+local function gate_to_length_pad(gate)
+    gate = tonumber(gate) or 1
+    local best_pad, best_distance = 31, math.huge
+    for pad, candidate in pairs(NOTE_LENGTH_GATES) do
+        local distance = math.abs(candidate - gate)
+        if distance < best_distance then
+            best_pad, best_distance = pad, distance
+        end
+    end
+    return best_pad
+end
+
 local function balance_to_microtune(balance)
     if not balance or balance.centered then return 0 end
     local index
@@ -459,10 +480,11 @@ return function(api)
             -- into the piano chord selection instead of editing the item.
             if state.sequencer_layout == "piano"
             and state.sequencer_monitor_held then
-                local recalled = sequencer.get_step_pitches({
+                local recalled_data = sequencer.get_step_note_data({
                     step = step,
                     bar = state.sequencer_bar
                 })
+                local recalled = recalled_data.pitches or {}
 
                 if #recalled > 0 then
                     state.sequencer_chord_mode = true
@@ -470,6 +492,19 @@ return function(api)
                     state.sequencer_chord = {}
                     for _, pitch in ipairs(recalled) do
                         state.sequencer_chord[pitch] = true
+                    end
+
+                    -- Recall the editable note properties as well. The lowest
+                    -- note is the reference when imported MIDI contains mixed
+                    -- velocities or lengths inside one chord.
+                    if recalled_data.velocity ~= nil then
+                        state.sequencer_velocity = recalled_data.velocity
+                        state.horizontal_fader[velocity_group] =
+                            velocity_to_horizontal_fader(recalled_data.velocity)
+                    end
+                    if recalled_data.gate ~= nil then
+                        state.radio["screen6_length"] =
+                            gate_to_length_pad(recalled_data.gate)
                     end
 
                     -- Jump the visible keyboard to the octave of the lowest

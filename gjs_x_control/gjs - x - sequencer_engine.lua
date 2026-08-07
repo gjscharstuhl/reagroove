@@ -922,6 +922,73 @@ function M.get_step_pitches(options)
     return result
 end
 
+-- Return the pitches plus editable properties for one sequencer step.
+-- The lowest-pitch note is used as the reference for velocity and length;
+-- notes inserted as a chord by screen 6 normally share those properties.
+function M.get_step_note_data(options)
+    options = options or {}
+
+    local bar = math.max(1, math.floor(tonumber(options.bar) or 1))
+    local step = math.max(1, math.min(16, math.floor(tonumber(options.step) or 1)))
+    local context = M.get_context()
+    local result = { pitches = {}, velocity = nil, gate = nil }
+    local notes = {}
+
+    if not context.project or not context.take or not context.region_start then
+        return result
+    end
+
+    local qn_start, qn_end = get_bar_qn_range(
+        context.project,
+        context.region_start,
+        bar
+    )
+    if not qn_start or not qn_end or qn_end <= qn_start then
+        return result
+    end
+
+    local step_qn = (qn_end - qn_start) / 16
+    local _, note_count = reaper.MIDI_CountEvts(context.take)
+
+    for note_index = 0, note_count - 1 do
+        local ok, _, _, start_ppq, end_ppq, _, pitch, velocity =
+            reaper.MIDI_GetNote(context.take, note_index)
+
+        if ok then
+            local note_qn = reaper.MIDI_GetProjQNFromPPQPos(context.take, start_ppq)
+            local relative = (note_qn - qn_start) / step_qn
+            local note_step = math.floor(relative + 0.5) + 1
+
+            if note_step == step
+            and note_qn >= qn_start - (step_qn * 0.5)
+            and note_qn < qn_end + (step_qn * 0.5) then
+                local end_qn = reaper.MIDI_GetProjQNFromPPQPos(context.take, end_ppq)
+                notes[#notes + 1] = {
+                    pitch = pitch,
+                    velocity = velocity or 0,
+                    gate = math.max(0.01, (end_qn - note_qn) / step_qn)
+                }
+            end
+        end
+    end
+
+    table.sort(notes, function(a, b) return a.pitch < b.pitch end)
+    local seen = {}
+    for _, note in ipairs(notes) do
+        if not seen[note.pitch] then
+            seen[note.pitch] = true
+            result.pitches[#result.pitches + 1] = note.pitch
+        end
+    end
+
+    if notes[1] then
+        result.velocity = notes[1].velocity
+        result.gate = notes[1].gate
+    end
+
+    return result
+end
+
 function M.update_display(options)
     options = options or {}
 
