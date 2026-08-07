@@ -1706,14 +1706,17 @@ local function draw_current_screen()
         LP.building_matrix = false
 
         if Bridge and Bridge.set_matrix_rgb then
+            local screen6_state = LP.current_screen == 6 and get_screen_state(6) or nil
+            local screen6_midi_edit = screen6_state
+                and screen6_state.sequencer_layout == "midi_edit"
+
             if LP.current_screen == 6
+            and not screen6_midi_edit
             and Bridge.set_matrix_rows_rgb then
-                -- Screen 6 rows 7/8 are owned continuously by the sequencer
-                -- display JSFX. Never include them in Lua's matrix SysEx.
-                -- This removes the full-frame race that could turn the whole
-                -- Launchpad white on scene, sequence or layout transitions.
+                -- Drum/piano reserve rows 7/8 for the sequencer display JSFX.
                 Bridge.set_matrix_rows_rgb(LP.framebuffer, 1, 6)
             else
+                -- MIDI edit owns all eight rows because the display JSFX is off.
                 Bridge.set_matrix_rgb(LP.framebuffer)
             end
             LP.matrix_screen_active = true

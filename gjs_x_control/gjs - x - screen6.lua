@@ -8,6 +8,9 @@ local script_path = debug.getinfo(1, "S").source:sub(2)
 local script_dir = script_path:match("(.*[\\/])") or ""
 
 local sequencer = dofile(script_dir .. "gjs - x - sequencer_engine.lua")
+local piano = dofile(script_dir .. "gjs - x - screen6_piano.lua")
+local midi_edit_screen = dofile(script_dir .. "gjs - x - screen6_midi_edit.lua")
+local midi_edit_engine = dofile(script_dir .. "gjs - x - midi_edit_engine.lua")
 
 local ITEM_INACTIVE_GREEN = { 0, 10, 0 }
 local NOTE_EMPTY_BLUE = { 0, 0, 10 }
@@ -23,21 +26,8 @@ local display_generation = 0
 local AUDITION_ENABLE_SLOT = 1100
 local AUDITION_NOTES_BASE = 1120
 
-local PIANO_KEYS = {
-    -- White keys on row 5: C D E F G A B C
-    [51] = 0, [52] = 2, [53] = 4, [54] = 5,
-    [55] = 7, [56] = 9, [57] = 11, [58] = 12,
-    -- Black keys on row 6: C# D# F# G# A#
-    [62] = 1, [63] = 3, [65] = 6, [66] = 8, [67] = 10
-}
-
-local NOTE_LENGTH_GATES = {
-    [31] = 1,   -- 1/16
-    [32] = 2,   -- 1/8
-    [33] = 4,   -- 1/4
-    [34] = 8,   -- 1/2
-    [35] = 16   -- 1/1
-}
+local PIANO_KEYS = piano.PIANO_KEYS
+local NOTE_LENGTH_GATES = piano.NOTE_LENGTH_GATES
 
 local function sequencer_step_from_pad(pad)
     if pad.row == 8 then return pad.col end
@@ -175,6 +165,11 @@ return function(api)
     end
 
     local function refresh_display()
+        if state.sequencer_layout == "midi_edit" then
+            sequencer.disable_display()
+            return
+        end
+
         local options = {
             bar = state.sequencer_bar,
             pitch = selected_pitch()
@@ -211,6 +206,10 @@ return function(api)
 
     local function keep_display_synced()
         if generation ~= display_generation then return end
+        if state.sequencer_layout == "midi_edit" then
+            sequencer.disable_display()
+            return
+        end
         if api.get_current_screen and api.get_current_screen() ~= 6 then
             sequencer.disable_display(1)
             return
@@ -237,15 +236,17 @@ return function(api)
         reaper.defer(keep_display_synced)
     end
 
-    -- Publish the sequencer rows only after the complete matrix frame has
-    -- been sent by core.lua. This avoids competing SysEx writes.
-    reaper.defer(refresh_display)
-    reaper.defer(keep_display_synced)
+    -- Drum/piano reserve rows 7/8 for the display JSFX. MIDI edit owns the
+    -- complete matrix itself, so the display stays disabled there.
+    if state.sequencer_layout == "midi_edit" then
+        sequencer.disable_display(1)
+    else
+        reaper.defer(refresh_display)
+        reaper.defer(keep_display_synced)
+    end
 
-    -- LEFT/RIGHT select the previous/next bar. A bar change only affects
-    -- sequencer rows 7 and 8. Never redraw the complete 8x8 RGB matrix here:
-    -- sending a full matrix frame while the display JSFX is updating those
-    -- rows can make the Launchpad interpret a broken frame as all-white.
+    -- LEFT/RIGHT select bars in drum/piano. DOWN walks drum -> piano ->
+    -- MIDI edit; UP walks back.
     local function select_bar(bar)
         stop_audition()
         local new_bar = math.max(1, math.min(bar_count, bar))
@@ -254,23 +255,32 @@ return function(api)
         refresh_display()
     end
 
-    -- Keep LEFT/RIGHT callbacks installed at the end bars as well. The
-    -- selector clamps the value, so navigation never requires a full redraw
-    -- merely to enable or disable an arrow LED.
-    -- UP/DOWN switch between the drum and piano layouts.
+    local function set_layout(layout)
+        stop_audition()
+        state.sequencer_monitor_held = false
+        state.sequencer_layout = layout
+        if layout == "midi_edit" then sequencer.disable_display(1) end
+        safe_redraw()
+    end
+
     if api.set_navigation then
-        api.set_navigation(
-            function() select_bar(state.sequencer_bar - 1) end,
-            function() select_bar(state.sequencer_bar + 1) end,
-            state.sequencer_layout == "piano" and function()
-                state.sequencer_layout = "drum"
-                safe_redraw()
-            end or nil,
-            state.sequencer_layout == "drum" and function()
-                state.sequencer_layout = "piano"
-                safe_redraw()
-            end or nil
-        )
+        if state.sequencer_layout == "drum" then
+            api.set_navigation(
+                function() select_bar(state.sequencer_bar - 1) end,
+                function() select_bar(state.sequencer_bar + 1) end,
+                nil,
+                function() set_layout("piano") end
+            )
+        elseif state.sequencer_layout == "piano" then
+            api.set_navigation(
+                function() select_bar(state.sequencer_bar - 1) end,
+                function() select_bar(state.sequencer_bar + 1) end,
+                function() set_layout("drum") end,
+                function() set_layout("midi_edit") end
+            )
+        else
+            api.set_navigation(nil, nil, function() set_layout("piano") end, nil)
+        end
     end
 
     set_audition_enabled(state.sequencer_layout == "piano")
@@ -278,27 +288,30 @@ return function(api)
         stop_audition()
     end
 
-    -- Row 1: velocity for newly inserted notes.
-    api.draw_horizontal_value_fader(1, C.ORANGE, {
-        group = velocity_group,
-        default_col = 8,
-        default_step = 4,
-        on_press = function()
-            state.sequencer_velocity = horizontal_fader_to_velocity(
-                state.horizontal_fader[velocity_group]
-            )
-        end
-    })
+    if state.sequencer_layout ~= "midi_edit" then
+        -- Row 1: velocity for newly inserted notes.
+        api.draw_horizontal_value_fader(1, C.ORANGE, {
+            group = velocity_group,
+            default_col = 8,
+            default_step = 4,
+            on_press = function()
+                state.sequencer_velocity = horizontal_fader_to_velocity(
+                    state.horizontal_fader[velocity_group]
+                )
+            end
+        })
 
-    -- Row 2: microtuning for newly inserted notes.
-    api.draw_horizontal_fader(2, C.PURPLE, {
-        group = microtune_group,
-        on_press = function()
-            state.sequencer_microtune = balance_to_microtune(
-                state.balance[microtune_group]
-            )
-        end
-    })
+        -- Row 2: microtuning for newly inserted notes.
+        api.draw_horizontal_fader(2, C.PURPLE, {
+            group = microtune_group,
+            on_press = function()
+                state.sequencer_microtune = balance_to_microtune(
+                    state.balance[microtune_group]
+                )
+            end
+        })
+
+    end
 
     if state.sequencer_layout == "drum" then
         -- Existing 4x4 drum-note selector.
@@ -350,123 +363,25 @@ return function(api)
                 return true
             end
         })
+    elseif state.sequencer_layout == "piano" then
+        piano.draw(api, {
+            state = state,
+            safe_redraw = safe_redraw,
+            refresh_display = refresh_display,
+            audition_pitches = audition_pitches,
+            stop_audition = stop_audition,
+            selected_chord_pitches = selected_chord_pitches,
+            selected_pitch = selected_pitch
+        })
     else
-        local octave_col = (state.radio["screen6_octave"] or 44) % 10
-        local key_note = state.radio["screen6_piano_key"] or 51
-        state.radio["screen6_note"] =
-            ((octave_col + 1) * 12) + (PIANO_KEYS[key_note] or 0)
-
-        -- Row 3: note length, default 1/16.
-        for col = 1, 5 do
-            api.drawpad(3, col, LENGTH_GREEN, api.MODE_RADIO, {
-                group = "screen6_length",
-                active_color = LENGTH_SELECTED_GREEN
-            })
-        end
-
-        -- Pad 37: toggle between single-note and chord-entry mode.
-        -- Switching mode starts from a clean, predictable selection.
-        state.toggle[37] = state.sequencer_chord_mode
-        api.drawpad(3, 7, C.DARK_YELLOW or C.YELLOW, api.MODE_TOGGLE, {
-            active = state.sequencer_chord_mode,
-            active_color = C.YELLOW,
-            on_press = function(pad)
-                stop_audition()
-                state.sequencer_chord_mode = pad.active == true
-                state.sequencer_chord = {}
-                for note = 51, 68 do
-                    state.toggle[note] = nil
-                end
-                safe_redraw()
-                reaper.defer(refresh_display)
-            end
+        midi_edit_screen.draw(api, {
+            state = state,
+            sequencer = sequencer,
+            engine = midi_edit_engine
         })
-
-        -- Pad 38: momentary monitor only. It never changes the mode or
-        -- selection; it simply plays the current note/chord while held.
-        api.drawpad(3, 8, C.DARK_YELLOW or C.YELLOW, api.MODE_HIGHLIGHT, {
-            active_color = C.YELLOW,
-            on_press = function()
-                state.sequencer_monitor_held = true
-                if state.sequencer_chord_mode then
-                    audition_pitches(selected_chord_pitches())
-                else
-                    local pitch = selected_pitch()
-                    audition_pitches(pitch and { pitch } or {})
-                end
-            end,
-            on_release = function()
-                state.sequencer_monitor_held = false
-                stop_audition()
-                return true
-            end
-        })
-
-        -- Row 4: octave selection, default pad 4 = C4.
-        for col = 1, 8 do
-            api.drawpad(4, col, OCTAVE_BLUE, api.MODE_RADIO, {
-                group = "screen6_octave",
-                active_color = OCTAVE_SELECTED_BLUE,
-                on_press = function(pad)
-                    -- Store the octave explicitly and redraw immediately so all
-                    -- piano-key callbacks are rebuilt for the newly selected range.
-                    state.radio["screen6_octave"] = 40 + pad.col
-                    local key_note = state.radio["screen6_piano_key"] or 51
-                    local semitone = PIANO_KEYS[key_note] or 0
-                    state.radio["screen6_note"] = ((pad.col + 1) * 12) + semitone
-                    stop_audition()
-                    safe_redraw()
-                    reaper.defer(refresh_display)
-                end
-            })
-        end
-
-        local function draw_piano_key(row, col)
-            local pad_note = (row * 10) + col
-            local pitch = ((octave_col + 1) * 12) + PIANO_KEYS[pad_note]
-
-            if state.sequencer_chord_mode then
-                -- MODE_TOGGLE normally restores its generic saved state. Keep
-                -- that state explicitly synchronized with the absolute-pitch
-                -- chord table so old notes cannot reappear unexpectedly.
-                state.toggle[pad_note] = state.sequencer_chord[pitch] == true
-                api.drawpad(row, col, NOTE_EMPTY_BLUE, api.MODE_TOGGLE, {
-                    active = state.sequencer_chord[pitch] == true,
-                    active_color = NOTE_SELECTED_BLUE,
-                    on_press = function(pad)
-                        state.sequencer_chord[pitch] = pad.active or nil
-                        state.radio["screen6_note"] = pitch
-                        audition_pitches(selected_chord_pitches())
-                        reaper.defer(refresh_display)
-                    end,
-                    on_release = function()
-                        stop_audition()
-                        return true
-                    end
-                })
-            else
-                api.drawpad(row, col, NOTE_EMPTY_BLUE, api.MODE_RADIO, {
-                    group = "screen6_piano_key",
-                    active_color = NOTE_SELECTED_BLUE,
-                    on_press = function()
-                        state.radio["screen6_piano_key"] = pad_note
-                        state.radio["screen6_note"] = pitch
-                        audition_pitches({ pitch })
-                        reaper.defer(refresh_display)
-                    end,
-                    on_release = function()
-                        stop_audition()
-                        return true
-                    end
-                })
-            end
-        end
-
-        for col = 1, 8 do draw_piano_key(5, col) end
-        for _, col in ipairs({ 2, 3, 5, 6, 7 }) do draw_piano_key(6, col) end
-
     end
 
+    if state.sequencer_layout ~= "midi_edit" then
     -- Rows 7 and 8: sixteen sequencer steps. Pressing an occupied step
     -- deletes it; pressing an empty step inserts it with current settings.
     api.drawblock(7, 1, 8, 8, C.GREY, api.MODE_HIGHLIGHT, {
@@ -574,4 +489,5 @@ return function(api)
             return true
         end
     })
+    end
 end
