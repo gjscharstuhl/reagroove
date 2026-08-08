@@ -1,0 +1,40 @@
+is t mogelijk de key op een andere computer te egbruiken ?
+
+Ja, dat kan. Maar voor SSH/GitHub is het meestal beter om op elke computer een eigen SSH-key te maken en beide publieke keys aan hetzelfde GitHub-account toe te voegen.
+
+Op de nieuwe computer:
+
+ssh-keygen -t ed25519 -C "gjscharstuhl@gmail.com"
+
+Gewoon Enter voor de standaardlocatie. Daarna:
+
+cat ~/.ssh/id_ed25519.pub
+
+Kopieer die hele regel en voeg hem op GitHub toe via Settings → SSH and GPG keys → New SSH key. Geef hem bijvoorbeeld de naam van die computer.
+
+Test daarna:
+
+ssh -T git@github.com
+
+Als je krijgt:
+
+Hi gjscharstuhl! You've successfully authenticated...
+
+ben je klaar.
+
+Je bestaande repositories kun je vervolgens bijvoorbeeld ophalen met:
+
+git clone git@github.com:gjscharstuhl/reagroove.git
+Waarom liever een aparte key?
+
+Je kunt ~/.ssh/id_ed25519 en id_ed25519.pub naar de andere computer kopiëren, maar dan hebben beide computers exact dezelfde geheime identiteit. Met aparte keys kun je op GitHub bijvoorbeeld zien:
+
+gertjan-ser9
+studio-pc
+laptop
+
+Als één computer ooit weggaat of opnieuw geïnstalleerd wordt, verwijder je alleen die ene key van GitHub. De andere computer blijft gewoon werken.
+
+Dus: niet je huidige geheime key kopiëren; maak op de andere computer een tweede key. Dat is zowel veiliger als makkelijker te beheren.
+
+

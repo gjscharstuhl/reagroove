@@ -40,6 +40,7 @@ local ACTION_SAVE_QUIT_COL = 8
 local selected_bars = 1
 local selected_track = nil
 local selected_region = nil
+local last_main_entry_serial = nil
 local selected_scope = SCOPE_SELECTED_TRACK
 
 local time_signature_mode = false
@@ -72,7 +73,17 @@ local function clamp(value, minimum, maximum, fallback)
     return value
 end
 
-local function read_main_selection_once()
+local function sync_main_selection_on_entry(api)
+    local entry = api and api._screen0_edit_entry or nil
+
+    if entry and entry.serial ~= last_main_entry_serial then
+        selected_track = clamp(entry.track, 1, 8, 1)
+        selected_region = clamp(entry.region, 1, 8, 1)
+        last_main_entry_serial = entry.serial
+        return
+    end
+
+    -- Fallback for opening Edit before Main has supplied an entry snapshot.
     if not selected_track then
         selected_track = clamp(
             reaper.GetExtState("GJS_MULTI", "ActiveTrack"),
@@ -444,7 +455,7 @@ end
 return function(api, navigation)
     local C = api.COLOR
 
-    read_main_selection_once()
+    sync_main_selection_on_entry(api)
 
     if api.set_screen0_main_active then
         api.set_screen0_main_active(false)
