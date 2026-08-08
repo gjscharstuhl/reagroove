@@ -17,6 +17,7 @@ options:gmem=GJS_X_BRIDGE
 // gmem[303] = selected region length in bars
 // gmem[304] = pattern version (increment after Lua changes notes)
 // gmem[305] = force redraw version
+// gmem[306] = active sixteenth-note steps in selected measure (1..16)
 //
 // gmem[316] .. gmem[331] = velocity for steps 1 .. 16
 //                         0 means no selected note on that step
@@ -40,6 +41,7 @@ last_pattern_version = -1;
 last_force_version = -1;
 last_step = -2;
 last_playing = -1;
+last_active_steps = -1;
 
 buf_midi = 0;
 buf_daw = 256;
@@ -96,7 +98,7 @@ function write_rgb_spec(buffer, target, led, red, green, blue) (
 
 function send_display(selected_bar, current_step, playing, use_gmem)
 local(i, target, led, velocity, red, green, blue, note_here, playhead_here,
-      message_length, mask) (
+      message_length, mask, active_steps) (
 
     // SysEx headers: normal MIDI interface and DAW interface.
     buf_midi[0] = $xF0;
@@ -116,6 +118,7 @@ local(i, target, led, velocity, red, green, blue, note_here, playhead_here,
     buf_daw[6] = $x03;
 
     mask = floor(slider3);
+    active_steps = use_gmem ? max(1, min(16, floor(gmem[gmem_base + 6]))) : 16;
     i = 0;
 
     loop(16,
@@ -131,10 +134,16 @@ local(i, target, led, velocity, red, green, blue, note_here, playhead_here,
         note_here = velocity > 0;
         playhead_here = playing && current_step == i + 1;
 
-        // Base background follows the selected bar.
-        red = get_background(selected_bar, 1);
-        green = get_background(selected_bar, 2);
-        blue = get_background(selected_bar, 3);
+        // Base background follows the selected bar. Pads beyond the
+        // current measure's sixteenth-note count are completely dark.
+        i + 1 > active_steps ? (
+            red = 0; green = 0; blue = 0;
+            note_here = 0; playhead_here = 0;
+        ) : (
+            red = get_background(selected_bar, 1);
+            green = get_background(selected_bar, 2);
+            blue = get_background(selected_bar, 3);
+        );
 
         // Entered note is red. Velocity controls brightness, with a
         // minimum level so quiet notes remain visible.
@@ -187,6 +196,7 @@ selected_bar = use_gmem ? max(1, floor(gmem[gmem_base + 1])) : floor(slider2);
 region_start_qn = use_gmem ? gmem[gmem_base + 2] : 0;
 pattern_version = use_gmem ? floor(gmem[gmem_base + 4]) : floor(slider3);
 force_version = use_gmem ? floor(gmem[gmem_base + 5]) : floor(slider3);
+display_active_steps = use_gmem ? max(1, min(16, floor(gmem[gmem_base + 6]))) : 16;
 
 playing = (play_state & 1) == 1;
 current_step = 0;
@@ -204,8 +214,9 @@ playing && enabled ? (
 
         current_bar == selected_bar ? (
             within_bar_qn = relative_qn - (absolute_bar * measure_qn);
-            current_step = floor(within_bar_qn / (measure_qn / 16)) + 1;
-            current_step = max(1, min(16, current_step));
+            current_step = floor(within_bar_qn / 0.25) + 1;
+            active_steps = use_gmem ? max(1, min(16, floor(gmem[gmem_base + 6]))) : 16;
+            current_step = max(1, min(active_steps, current_step));
         );
     );
 );
@@ -216,7 +227,8 @@ changed =
     pattern_version != last_pattern_version ||
     force_version != last_force_version ||
     current_step != last_step ||
-    playing != last_playing;
+    playing != last_playing ||
+    display_active_steps != last_active_steps;
 
 enabled && changed ? (
     send_display(selected_bar, current_step, playing, use_gmem);
@@ -228,5 +240,6 @@ last_pattern_version = pattern_version;
 last_force_version = force_version;
 last_step = current_step;
 last_playing = playing;
+last_active_steps = display_active_steps;
 
 

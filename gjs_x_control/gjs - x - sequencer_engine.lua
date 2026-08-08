@@ -411,6 +411,44 @@ local function get_bar_qn_range(project, region_start, bar_index)
     return qn_start, qn_end
 end
 
+-- Sequencer pads always represent a sixteenth note (0.25 QN).
+-- Shorter meters therefore expose fewer than 16 pads per measure:
+-- 3/4 and 6/8 = 12, 7/8 = 14, etc.
+local function get_bar_step_count(project, region_start, bar_index)
+    bar_index = math.max(1, math.floor(tonumber(bar_index) or 1))
+
+    local _, first_measure =
+        reaper.TimeMap2_timeToBeats(project, region_start)
+
+    if first_measure == nil then return 16 end
+
+    local measure_index = first_measure + (bar_index - 1)
+    local _, qn_start, qn_end, numerator, denominator =
+        reaper.TimeMap_GetMeasureInfo(project, measure_index)
+
+    numerator = tonumber(numerator)
+    denominator = tonumber(denominator)
+
+    -- One sequencer pad is always one sixteenth note.  Computing the
+    -- count from the meter itself makes the display independent of any
+    -- tempo/QN rounding and gives e.g. 3/4=12, 6/8=12, 7/8=14.
+    if numerator and denominator and numerator > 0 and denominator > 0 then
+        return math.max(1, math.floor((numerator * 16 / denominator) + 0.5))
+    end
+
+    if qn_start and qn_end and qn_end > qn_start then
+        return math.max(1, math.floor(((qn_end - qn_start) / 0.25) + 0.5))
+    end
+
+    return 16
+end
+
+function M.get_step_count(bar_index)
+    local context = M.get_context()
+    if not context.project or not context.region_start then return 16 end
+    return get_bar_step_count(context.project, context.region_start, bar_index or 1)
+end
+
 local function note_exists_at(take, pitch, start_ppq, tolerance_ppq)
     local _, note_count = reaper.MIDI_CountEvts(take)
 
@@ -455,7 +493,7 @@ function M.insert_note(options)
         return false, "Invalid MIDI note."
     end
 
-    if step < 1 or step > 16 then
+    if step < 1 then
         return false, "Invalid sequencer step."
     end
 
@@ -483,7 +521,7 @@ function M.insert_note(options)
         return false, "This bar lies outside the selected region."
     end
 
-    local step_qn = (qn_end - qn_start) / 16
+    local step_qn = 0.25
     local nominal_start_qn = qn_start + ((step - 1) * step_qn)
     local note_start_qn = nominal_start_qn + (step_qn * offset)
     local note_end_qn = note_start_qn + (step_qn * gate)
@@ -552,7 +590,7 @@ function M.delete_note(options)
         return false, "Invalid MIDI note."
     end
 
-    if step < 1 or step > 16 then
+    if step < 1 then
         return false, "Invalid sequencer step."
     end
 
@@ -572,7 +610,12 @@ function M.delete_note(options)
         return false, "The sequencer bar could not be resolved."
     end
 
-    local step_qn = (qn_end - qn_start) / 16
+    local step_count = math.max(1, math.floor(((qn_end - qn_start) / 0.25) + 0.5))
+    if step > step_count then
+        return false, "This step lies outside the current time signature."
+    end
+
+    local step_qn = 0.25
     local wanted_qn = qn_start + ((step - 1) * step_qn)
     local wanted_ppq = reaper.MIDI_GetPPQPosFromProjQN(
         context.take,
@@ -652,7 +695,7 @@ function M.microtune_note(options)
         return false, "Invalid MIDI note."
     end
 
-    if step < 1 or step > 16 then
+    if step < 1 then
         return false, "Invalid sequencer step."
     end
 
@@ -672,7 +715,12 @@ function M.microtune_note(options)
         return false, "The sequencer bar could not be resolved."
     end
 
-    local step_qn = (qn_end - qn_start) / 16
+    local step_count = math.max(1, math.floor(((qn_end - qn_start) / 0.25) + 0.5))
+    if step > step_count then
+        return false, "This step lies outside the current time signature."
+    end
+
+    local step_qn = 0.25
     local nominal_qn = qn_start + ((step - 1) * step_qn)
     local wanted_qn = nominal_qn + (step_qn * offset)
 
@@ -929,6 +977,7 @@ function M.update_main_display()
         reaper.gmem_write(DISPLAY_BASE + 1, 1)
         reaper.gmem_write(DISPLAY_BASE + 2, 0)
         reaper.gmem_write(DISPLAY_BASE + 3, 0)
+        reaper.gmem_write(DISPLAY_BASE + 6, 16)
         clear_display_steps()
         display_pattern_version = display_pattern_version + 1
         reaper.gmem_write(DISPLAY_BASE + 4, display_pattern_version)
@@ -976,7 +1025,7 @@ function M.get_step_pitches(options)
         return result
     end
 
-    local step_qn = (qn_end - qn_start) / 16
+    local step_qn = 0.25
     local _, note_count = reaper.MIDI_CountEvts(context.take)
 
     for note_index = 0, note_count - 1 do
@@ -1030,7 +1079,7 @@ function M.get_step_note_data(options)
         return result
     end
 
-    local step_qn = (qn_end - qn_start) / 16
+    local step_qn = 0.25
     local _, note_count = reaper.MIDI_CountEvts(context.take)
 
     for note_index = 0, note_count - 1 do
@@ -1121,6 +1170,8 @@ function M.update_display(options)
 
     reaper.gmem_write(DISPLAY_BASE + 2, region_start_qn or 0)
     reaper.gmem_write(DISPLAY_BASE + 3, M.get_bar_count())
+    local bar_step_count = M.get_step_count(bar)
+    reaper.gmem_write(DISPLAY_BASE + 6, math.min(16, bar_step_count))
     clear_display_steps()
 
     if context.take and #requested_pitches > 0 then
@@ -1131,7 +1182,7 @@ function M.update_display(options)
         )
 
         if qn_start and qn_end and qn_end > qn_start then
-            local step_qn = (qn_end - qn_start) / 16
+            local step_qn = 0.25
             local step_notes = {}
             local _, note_count = reaper.MIDI_CountEvts(context.take)
 
@@ -1147,7 +1198,7 @@ function M.update_display(options)
                     local relative = (note_qn - qn_start) / step_qn
                     local step = math.floor(relative + 0.5) + 1
 
-                    if step >= 1 and step <= 16
+                    if step >= 1 and step <= math.min(16, bar_step_count)
                     and note_qn >= qn_start - (step_qn * 0.5)
                     and note_qn < qn_end + (step_qn * 0.5) then
                         local entry = step_notes[step]
