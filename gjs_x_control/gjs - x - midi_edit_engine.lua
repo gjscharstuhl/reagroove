@@ -277,15 +277,37 @@ function M.clear_bars(sequencer, bars)
     return true, "cleared"
 end
 
-function M.swing_bars(sequencer, bars, amount)
+function M.swing_bars(sequencer, bars, amount, division_qn, division_label)
     local wanted = bars_lookup(bars)
     if next(wanted) == nil then return false, "Select one or more bars." end
 
     amount = math.max(-1, math.min(1, tonumber(amount) or 0))
+    if math.abs(amount) < 0.000001 then
+        return false, "Swing amount is centered; choose a value left or right first."
+    end
+
+    division_qn = tonumber(division_qn) or 0.25
+    if division_qn <= 0 then return false, "Invalid swing division." end
+    division_label = tostring(division_label or "1/16")
+
     local context, err = require_take(sequencer)
     if not context then return false, err end
 
-    local bar_count = sequencer.get_bar_count()
+    -- Build selected measure ranges. Swing is anchored to the item's musical
+    -- timeline, not to note order, so live-recorded timing can still be classified.
+    local ranges = {}
+    for bar in pairs(wanted) do
+        local qn_start, qn_end = get_bar_qn_range(context, bar)
+        if qn_start and qn_end and qn_end > qn_start then
+            ranges[#ranges + 1] = { bar = bar, qn_start = qn_start, qn_end = qn_end }
+        end
+    end
+    table.sort(ranges, function(a, b) return a.bar < b.bar end)
+    if #ranges == 0 then return false, "The selected bars could not be resolved." end
+
+    -- Use the first resolved bar as the phase anchor. This lets coarse divisions
+    -- such as 1/1 work across consecutive selected measures as well as 1/8 and 1/16.
+    local phase_qn = ranges[1].qn_start
     local changes = {}
     local _, note_count = reaper.MIDI_CountEvts(context.take)
 
@@ -295,16 +317,38 @@ function M.swing_bars(sequencer, bars, amount)
         if ok then
             local start_qn = reaper.MIDI_GetProjQNFromPPQPos(context.take, start_ppq)
             local end_qn = reaper.MIDI_GetProjQNFromPPQPos(context.take, end_ppq)
-            local bar, qn_start, qn_end = bar_for_note_qn(context, start_qn, bar_count)
-            if bar and wanted[bar] then
-                local step_qn = (qn_end - qn_start) / 16
-                local relative = (start_qn - qn_start) / step_qn
-                local nearest = math.max(0, math.min(15, math.floor(relative + 0.5)))
-                -- 0-based odd indices are the offbeat sixteenths.
-                if nearest % 2 == 1 then
-                    local delta_qn = step_qn * 0.5 * amount
-                    local new_start = start_qn + delta_qn
-                    local new_end = end_qn + delta_qn
+
+            local in_selected_bar = false
+            for _, range in ipairs(ranges) do
+                if start_qn >= range.qn_start and start_qn < range.qn_end then
+                    in_selected_bar = true
+                    break
+                end
+            end
+
+            if in_selected_bar then
+                local relative = (start_qn - phase_qn) / division_qn
+                local grid_index = math.floor(relative + 0.5)
+
+                -- Every second grid point is the swung offbeat for the chosen
+                -- division: 1/16 -> alternate sixteenths, 1/8 -> alternate eighths,
+                -- 1/4 -> alternate quarter notes, 1/1 -> alternate whole notes.
+                if grid_index % 2 == 1 then
+                    local nominal_qn = phase_qn + grid_index * division_qn
+                    local delta_qn = division_qn * 0.5 * amount
+                    local duration_qn = math.max(0.000001, end_qn - start_qn)
+
+                    -- Preserve the player's timing offset relative to the straight
+                    -- grid, then add swing. Clamp between neighbouring even-grid
+                    -- anchors so negative swing can never cross the previous anchor.
+                    local timing_offset = start_qn - nominal_qn
+                    local new_start = nominal_qn + timing_offset + delta_qn
+                    local epsilon = 0.000001
+                    local left_anchor = phase_qn + (grid_index - 1) * division_qn
+                    local right_anchor = phase_qn + (grid_index + 1) * division_qn
+                    new_start = math.max(left_anchor + epsilon, math.min(right_anchor - epsilon, new_start))
+                    local new_end = new_start + duration_qn
+
                     changes[#changes + 1] = {
                         index = index,
                         selected = selected,
@@ -318,6 +362,10 @@ function M.swing_bars(sequencer, bars, amount)
                 end
             end
         end
+    end
+
+    if #changes == 0 then
+        return false, "No offbeat " .. division_label .. " notes were found in the selected bars."
     end
 
     reaper.Undo_BeginBlock2(context.project)
@@ -335,7 +383,7 @@ function M.swing_bars(sequencer, bars, amount)
             true
         )
     end
-    finish(context, "Swing ReaGroove MIDI bars")
+    finish(context, "Swing ReaGroove MIDI bars (" .. division_label .. ")")
     return true, "swung"
 end
 

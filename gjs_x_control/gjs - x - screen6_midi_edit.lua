@@ -13,6 +13,15 @@ local ACTION_ORANGE = { 55, 14, 0 }
 local ACTION_ACTIVE = { 127, 40, 0 }
 local SWING_GREEN = { 0, 55, 0 }
 local QUANTIZE_GREEN = { 0, 75, 0 }
+local SWING_CHOICE_YELLOW = { 70, 48, 0 }
+local SWING_CHOICE_SELECTED = { 127, 95, 0 }
+
+local SWING_DIVISIONS = {
+    [1] = { label = "1/16", qn = 0.25 },
+    [2] = { label = "1/8",  qn = 0.5 },
+    [3] = { label = "1/4",  qn = 1.0 },
+    [4] = { label = "1/1",  qn = 4.0 }
+}
 
 local function bar_from_pad(row, col, upper)
     if upper then
@@ -89,6 +98,9 @@ function M.draw(api, context)
         step = 4,
         centered = true
     }
+    state.midi_edit_swing = state.midi_edit_swing or 0
+    state.midi_edit_swing_mode = state.midi_edit_swing_mode or false
+    state.midi_edit_swing_division = state.midi_edit_swing_division or nil
 
     local function toggle_bar(selection, bar)
         if not bar or bar > bar_count then return end
@@ -96,19 +108,34 @@ function M.draw(api, context)
         api.redraw()
     end
 
-    -- Rows 7/8: source measure selection, purple. Dark background, white select.
+    -- Rows 7/8: source measure selection, purple. During the swing workflow
+    -- row 8 becomes a temporary yellow timing-division selector. The existing
+    -- measure selection stays stored and is restored when swing mode ends.
     for row = 7, 8 do
         for col = 1, 8 do
-            local bar = bar_from_pad(row, col, true)
-            local valid = bar and bar <= bar_count
-            api.drawpad(row, col, valid and SOURCE_VALID or SOURCE_DARK, api.MODE_HIGHLIGHT, {
-                active = valid and state.midi_edit_source_bars[bar] == true,
-                active_color = C.WHITE,
-                on_press = valid and function()
-                    toggle_bar(state.midi_edit_source_bars, bar)
-                end or nil,
-                on_release = function() return true end
-            })
+            if state.midi_edit_swing_mode and row == 8 then
+                local division = SWING_DIVISIONS[col]
+                api.drawpad(row, col, division and SWING_CHOICE_YELLOW or SOURCE_DARK, api.MODE_HIGHLIGHT, {
+                    active = division and state.midi_edit_swing_division == col,
+                    active_color = SWING_CHOICE_SELECTED,
+                    on_press = division and function()
+                        state.midi_edit_swing_division = col
+                        api.redraw()
+                    end or nil,
+                    on_release = function() return true end
+                })
+            else
+                local bar = bar_from_pad(row, col, true)
+                local valid = bar and bar <= bar_count
+                api.drawpad(row, col, valid and SOURCE_VALID or SOURCE_DARK, api.MODE_HIGHLIGHT, {
+                    active = valid and state.midi_edit_source_bars[bar] == true,
+                    active_color = C.WHITE,
+                    on_press = valid and function()
+                        toggle_bar(state.midi_edit_source_bars, bar)
+                    end or nil,
+                    on_release = function() return true end
+                })
+            end
         end
     end
 
@@ -128,9 +155,13 @@ function M.draw(api, context)
         end
     end
 
-    -- Row 4: signed swing amount.
+    -- Row 4: signed swing amount. Keep an explicit scalar as well as the
+    -- balance-fader state so the action always uses the value shown on the pads.
     api.draw_horizontal_fader(4, SWING_GREEN, {
-        group = swing_group
+        group = swing_group,
+        on_press = function()
+            state.midi_edit_swing = balance_to_signed(state.balance[swing_group])
+        end
     })
 
     -- Row 3: quantize strength 20..100%, using the same 32-step fader style
@@ -177,8 +208,48 @@ function M.draw(api, context)
             end
         elseif col == 3 then
             callback = function()
+                if not state.midi_edit_swing_mode then
+                    local bars = selected_source()
+                    if #bars == 0 then
+                        report("Select one or more bars before starting swing.")
+                        return
+                    end
+                    state.midi_edit_swing_mode = true
+                    state.midi_edit_swing_division = nil
+                    api.redraw()
+                    return
+                end
+
+                local division = SWING_DIVISIONS[state.midi_edit_swing_division]
+                if not division then
+                    report("Choose a swing division on pad 81, 82, 83 or 84 first.")
+                    return
+                end
+
                 local amount = balance_to_signed(state.balance[swing_group])
-                finish_action(engine.swing_bars(sequencer, selected_source(), amount))
+                state.midi_edit_swing = amount
+                local ok, message = engine.swing_bars(
+                    sequencer,
+                    selected_source(),
+                    amount,
+                    division.qn,
+                    division.label
+                )
+
+                -- A second press on pad 13 always closes the temporary yellow
+                -- swing selector once a division has been chosen. Previously an
+                -- engine error (for example no matching offbeat notes, or a
+                -- centered amount) returned early and left the UI stuck yellow.
+                state.midi_edit_swing_mode = false
+                state.midi_edit_swing_division = nil
+
+                if not ok then
+                    report(message)
+                    api.redraw()
+                    return
+                end
+
+                finish_action(true, message)
             end
         elseif col == 4 then
             callback = function()
@@ -204,6 +275,7 @@ function M.draw(api, context)
         end
 
         api.drawpad(1, col, ACTION_ORANGE, api.MODE_HIGHLIGHT, {
+            active = (col == 3 and state.midi_edit_swing_mode) or false,
             active_color = ACTION_ACTIVE,
             on_press = callback,
             on_release = function() return true end
