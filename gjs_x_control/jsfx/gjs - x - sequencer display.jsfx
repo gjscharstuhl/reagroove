@@ -11,13 +11,14 @@ options:gmem=GJS_X_BRIDGE
 // gmem layout
 // ------------------------------------------------------------
 // Sequencer display uses gmem base slot 300.
-// gmem[300] = enabled (1 only while screen 6 is active)
+// gmem[300] = display mode: 0 off, 1 sequencer, 2 mainscreen bars
 // gmem[301] = selected bar, 1-based
 // gmem[302] = selected region start in quarter notes
 // gmem[303] = selected region length in bars
 // gmem[304] = pattern version (increment after Lua changes notes)
 // gmem[305] = force redraw version
 // gmem[306] = active sixteenth-note steps in selected measure (1..16)
+// gmem[332] = active subproject number (1..8)
 //
 // gmem[316] .. gmem[331] = velocity for steps 1 .. 16
 //                         0 means no selected note on that step
@@ -36,11 +37,16 @@ slider3:0<0,65535,1>Local test pattern mask
 gmem_base = 300;
 
 last_enabled = -1;
+last_mode = -1;
 last_bar = -1;
 last_pattern_version = -1;
 last_force_version = -1;
 last_step = -2;
 last_playing = -1;
+last_clock_heartbeat = -1;
+last_active_project = -1;
+last_region_bars = -1;
+last_current_bar = -1;
 last_active_steps = -1;
 
 buf_midi = 0;
@@ -63,28 +69,33 @@ function step_led(step) local(row, col) (
 );
 
 function get_background(bar, component) local(cycle) (
-    cycle = ((bar - 1) % 3) + 1;
+    cycle = ((bar - 1) % 4) + 1;
 
-    // Dark green, dark orange, dark blue.
+    // Screen 6: dark green, orange, blue and purple.
     cycle == 1 ? (
         component == 1 ? 0 : component == 2 ? 10 : 0;
     ) : cycle == 2 ? (
         component == 1 ? 12 : component == 2 ? 3 : 0;
+    ) : cycle == 3 ? (
+        // Slightly lighter blue than the note-selection block.
+        component == 1 ? 0 : component == 2 ? 4 : 20;
     ) : (
-        component == 1 ? 0 : component == 2 ? 0 : 10;
+        component == 1 ? 8 : component == 2 ? 0 : 18;
     );
 );
 
 function get_playhead(bar, component) local(cycle) (
-    cycle = ((bar - 1) % 3) + 1;
+    cycle = ((bar - 1) % 4) + 1;
 
-    // Bright green, bright orange, bright blue.
+    // Screen 6: bright green, orange, blue and purple.
     cycle == 1 ? (
         component == 1 ? 0 : component == 2 ? 127 : 0;
     ) : cycle == 2 ? (
         component == 1 ? 127 : component == 2 ? 35 : 0;
+    ) : cycle == 3 ? (
+        component == 1 ? 0 : component == 2 ? 45 : 127;
     ) : (
-        component == 1 ? 0 : component == 2 ? 35 : 127;
+        component == 1 ? 75 : component == 2 ? 25 : 127;
     );
 );
 
@@ -181,6 +192,69 @@ local(i, target, led, velocity, red, green, blue, note_here, playhead_here,
     midisend_buf(0, buf_daw, message_length);
 );
 
+function send_main_display(region_bars, previous_region_bars, current_bar, playing)
+local(i, count, target, led, red, green, blue, active_bar, message_length) (
+
+    // Screen 0 already draws rows 7 and 8 grey in Lua. Send only the
+    // pads that represent region bars. If a new region is shorter than
+    // the previous one, restore only those old extra pads to grey.
+    count = max(region_bars, previous_region_bars);
+    count = max(0, min(16, count));
+
+    count > 0 ? (
+        buf_midi[0] = $xF0;
+        buf_midi[1] = $x00;
+        buf_midi[2] = $x20;
+        buf_midi[3] = $x29;
+        buf_midi[4] = $x02;
+        buf_midi[5] = $x0D;
+        buf_midi[6] = $x03;
+
+        buf_daw[0] = $xF0;
+        buf_daw[1] = $x00;
+        buf_daw[2] = $x20;
+        buf_daw[3] = $x29;
+        buf_daw[4] = $x02;
+        buf_daw[5] = $x0C;
+        buf_daw[6] = $x03;
+
+        i = 0;
+        loop(count,
+            target = 7 + (i * 5);
+            led = step_led(i + 1);
+            active_bar = i + 1;
+
+            active_bar <= region_bars ? (
+                // Original main-screen overview colours.
+                red = 83;
+                green = 20;
+                blue = 20;
+
+                playing && active_bar == current_bar ? (
+                    red = 127;
+                    green = 0;
+                    blue = 0;
+                );
+            ) : (
+                // Restore the Lua mainscreen background.
+                red = 32;
+                green = 32;
+                blue = 32;
+            );
+
+            write_rgb_spec(buf_midi, target, led, red, green, blue);
+            write_rgb_spec(buf_daw, target, led, red, green, blue);
+            i += 1;
+        );
+
+        message_length = 8 + (count * 5);
+        buf_midi[message_length - 1] = $xF7;
+        buf_daw[message_length - 1] = $xF7;
+        midisend_buf(0, buf_midi, message_length);
+        midisend_buf(0, buf_daw, message_length);
+    );
+);
+
 @slider
 
 // Force a refresh when testing with sliders.
@@ -188,58 +262,84 @@ last_force_version = -1;
 
 @block
 
-external_enabled = floor(gmem[gmem_base + 0]) == 1;
-use_gmem = external_enabled;
-enabled = external_enabled || slider1 >= 0.5;
+external_mode = floor(gmem[gmem_base + 0]);
+use_gmem = external_mode > 0;
+mode = use_gmem ? external_mode : (slider1 >= 0.5 ? 1 : 0);
+enabled = mode > 0;
 
 selected_bar = use_gmem ? max(1, floor(gmem[gmem_base + 1])) : floor(slider2);
 region_start_qn = use_gmem ? gmem[gmem_base + 2] : 0;
+region_bars = use_gmem ? max(0, floor(gmem[gmem_base + 3])) : max(1, floor(slider2));
 pattern_version = use_gmem ? floor(gmem[gmem_base + 4]) : floor(slider3);
 force_version = use_gmem ? floor(gmem[gmem_base + 5]) : floor(slider3);
 display_active_steps = use_gmem ? max(1, min(16, floor(gmem[gmem_base + 6]))) : 16;
 
-playing = (play_state & 1) == 1;
-current_step = 0;
+// Prefer the clock calculated inside the active subproject. That JSFX
+// sees the correct local beat_position, tempo map and time signature.
+active_project = max(0, min(8, floor(gmem[332])));
+clock_base = 340 + ((max(1, active_project) - 1) * 4);
+clock_heartbeat = active_project > 0 ? floor(gmem[clock_base + 0]) : 0;
+clock_playing = active_project > 0 ? floor(gmem[clock_base + 1]) : 0;
+clock_bar = active_project > 0 ? floor(gmem[clock_base + 2]) : 0;
+clock_step = active_project > 0 ? floor(gmem[clock_base + 3]) : 0;
+clock_available = active_project > 0 && clock_heartbeat > 0;
 
-playing && enabled ? (
-    // Keep sixteen equal steps per musical bar, including non-4/4
-    // signatures. beat_position is measured in quarter notes.
+playing = clock_available ? clock_playing : ((play_state & 1) == 1);
+current_bar = clock_available ? clock_bar : 0;
+current_step = clock_available ? clock_step : 0;
+
+// Fallback keeps the display usable before the subproject clock has written
+// its first audio block, or in a project that has no clock JSFX yet.
+!clock_available && playing && enabled && region_bars > 0 ? (
     measure_qn = max(0.000001, ts_num * 4 / ts_denom);
     relative_qn = beat_position - region_start_qn;
-    region_bars = use_gmem ? max(1, floor(gmem[gmem_base + 3])) : max(1, floor(slider2));
 
     relative_qn >= 0 ? (
         absolute_bar = floor(relative_qn / measure_qn);
         current_bar = (absolute_bar % region_bars) + 1;
-
-        current_bar == selected_bar ? (
-            within_bar_qn = relative_qn - (absolute_bar * measure_qn);
-            current_step = floor(within_bar_qn / 0.25) + 1;
-            active_steps = use_gmem ? max(1, min(16, floor(gmem[gmem_base + 6]))) : 16;
-            current_step = max(1, min(active_steps, current_step));
-        );
+        within_bar_qn = relative_qn - (absolute_bar * measure_qn);
+        current_step = floor(within_bar_qn / 0.25) + 1;
+        current_step = max(1, min(display_active_steps, current_step));
     );
 );
 
+// Screen 6 shows its playhead only while the selected edit bar is playing.
+mode == 1 && current_bar != selected_bar ? current_step = 0;
+
 changed =
     enabled != last_enabled ||
+    mode != last_mode ||
     selected_bar != last_bar ||
+    region_bars != last_region_bars ||
+    current_bar != last_current_bar ||
     pattern_version != last_pattern_version ||
     force_version != last_force_version ||
     current_step != last_step ||
     playing != last_playing ||
+    active_project != last_active_project ||
     display_active_steps != last_active_steps;
 
 enabled && changed ? (
-    send_display(selected_bar, current_step, playing, use_gmem);
+    mode == 2 ? (
+        send_main_display(region_bars, max(0, last_region_bars), current_bar, playing);
+    ) : (
+        send_display(selected_bar, current_step, playing, use_gmem);
+    );
 );
 
 last_enabled = enabled;
+last_mode = mode;
 last_bar = selected_bar;
+last_region_bars = region_bars;
+last_current_bar = current_bar;
 last_pattern_version = pattern_version;
 last_force_version = force_version;
 last_step = current_step;
 last_playing = playing;
+last_clock_heartbeat = clock_heartbeat;
+last_active_project = active_project;
 last_active_steps = display_active_steps;
+
+
 
 

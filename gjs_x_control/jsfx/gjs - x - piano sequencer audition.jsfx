@@ -1,0 +1,50 @@
+desc:gjs: Piano Sequencer Audition
+
+options:gmem=GJS_X_BRIDGE
+
+// Place this JSFX before the instrument that should preview screen 6.
+// Piano pads write their selected score pitch into gmem. This effect
+// turns those states into ordinary MIDI note-on/note-off messages.
+
+slider1:1<1,16,1>MIDI output channel
+
+@init
+AUDITION_ENABLE_SLOT = 1100;
+AUDITION_NOTES_BASE = 1120;
+
+last_enabled = 0;
+i = 0;
+loop(128,
+    last_velocity[i] = 0;
+    i += 1;
+);
+
+@block
+// Preserve all normal incoming MIDI.
+while (midirecv(offset, msg1, msg23)) (
+    midisend(offset, msg1, msg23);
+);
+
+enabled = floor(gmem[AUDITION_ENABLE_SLOT]) == 1;
+channel = max(0, min(15, floor(slider1) - 1));
+
+i = 0;
+loop(128,
+    wanted_velocity = enabled ? floor(gmem[AUDITION_NOTES_BASE + i]) : 0;
+    wanted_velocity = max(0, min(127, wanted_velocity));
+    previous_velocity = last_velocity[i];
+
+    wanted_velocity != previous_velocity ? (
+        previous_velocity > 0 ? (
+            midisend(0, $x80 | channel, i | (0 << 8));
+        );
+        wanted_velocity > 0 ? (
+            midisend(0, $x90 | channel, i | (wanted_velocity << 8));
+        );
+        last_velocity[i] = wanted_velocity;
+    );
+
+    i += 1;
+);
+
+last_enabled = enabled;
