@@ -22,6 +22,12 @@ local save_and_quit = dofile(
 local sequencer = dofile(
     script_dir .. "gjs - x - sequencer_engine.lua"
 )
+local pattern_copy = dofile(
+    script_dir .. "gjs - x - pattern_copy.lua"
+)
+local preset_selector = dofile(
+    script_dir .. "gjs - x - preset_selector.lua"
+)
 
 local SCOPE_SELECTED_TRACK = 1
 local SCOPE_ALL_TRACKS = 2
@@ -35,6 +41,8 @@ local ACTION_CLEAR_COL = 2
 local ACTION_MERGE_COL = 3
 local ACTION_TIME_SIGNATURE_COL = 4
 local ACTION_TRACK_SELECT_COL = 5
+local ACTION_PATTERN_COPY_COL = 6
+local ACTION_PRESET_SELECTOR_COL = 7
 local ACTION_SAVE_QUIT_COL = 8
 
 local selected_bars = 1
@@ -49,6 +57,12 @@ local clear_mode = false
 local clear_items = false
 local clear_fx = false
 local clear_track_mode = 1 -- 1 = armed, 2 = all top-level tracks
+
+local pattern_copy_mode = false
+local copy_from_region = nil
+local copy_to_region = nil
+local copy_track_mode = 1 -- 1 = armed/selected tracks, 2 = all tracks
+local preset_selector_mode = false
 
 local merge_mode = false
 local merge_scope = MERGE_SELECTED_PROJECT
@@ -277,6 +291,92 @@ local function draw_clear_mode(api, C)
             end
         }
     )
+end
+
+
+local function draw_pattern_copy_mode(api, C)
+    local from_dark = { 22, 0, 30 }
+    local to_dark = { 0, 18, 32 }
+
+    -- Row 8: source pattern (FROM).
+    for col = 1, 8 do
+        api.drawpad(8, col, copy_from_region == col and C.WHITE or C.PURPLE, api.MODE_HIGHLIGHT, {
+            active_color = C.WHITE,
+            on_press = function(pad)
+                copy_from_region = pad.col
+                api.redraw()
+            end
+        })
+    end
+
+    -- Row 7: target pattern (TO).
+    for col = 1, 8 do
+        api.drawpad(7, col, copy_to_region == col and C.WHITE or C.LIGHT_BLUE, api.MODE_HIGHLIGHT, {
+            active_color = C.WHITE,
+            on_press = function(pad)
+                copy_to_region = pad.col
+                api.redraw()
+            end
+        })
+    end
+
+    -- Same track-scope choice as Clear: armed/selected tracks or all tracks.
+    api.drawstrip(4, 1, 2, C.GREEN, api.MODE_RADIO, {
+        group = "edit_copy_track_mode",
+        selected_row = 4,
+        selected_col = copy_track_mode,
+        active_color = C.WHITE,
+        on_press = function(pad)
+            copy_track_mode = pad.col
+            api.redraw()
+        end
+    })
+
+    -- Keep the selected subproject visible on row 2.
+    api.drawstrip(2, 1, 8, C.ORANGE, api.MODE_RADIO, {
+        group = "edit_copy_track",
+        selected_col = selected_track,
+        active_color = C.WHITE,
+        on_press = function(pad)
+            selected_track = pad.col
+            api.redraw()
+        end
+    })
+
+    -- Pad 16 executes. Pad 17 cancels this sub-mode.
+    api.drawpad(1, ACTION_PATTERN_COPY_COL, C.GREEN, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            if copy_from_region and copy_to_region then
+                local ok, err = pattern_copy.copy(
+                    selected_track,
+                    copy_from_region,
+                    copy_to_region,
+                    {
+                        track_mode = copy_track_mode == 2 and "all" or "armed"
+                    }
+                )
+                if ok then
+                    pattern_copy_mode = false
+                    copy_from_region = nil
+                    copy_to_region = nil
+                elseif err then
+                    reaper.ShowConsoleMsg("Pattern copy failed: " .. tostring(err) .. "\n")
+                end
+            end
+            api.redraw()
+        end
+    })
+
+    api.drawpad(1, ACTION_PRESET_SELECTOR_COL, C.RED, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            pattern_copy_mode = false
+            copy_from_region = nil
+            copy_to_region = nil
+            api.redraw()
+        end
+    })
 end
 
 local function execute_merge()
@@ -509,6 +609,19 @@ return function(api, navigation)
         return
     end
 
+    if pattern_copy_mode then
+        draw_pattern_copy_mode(api, C)
+        return
+    end
+
+    if preset_selector_mode then
+        preset_selector.draw(
+            api, C, selected_track,
+            function() preset_selector_mode = false end
+        )
+        return
+    end
+
     api.drawstrip(
         8, 1, 8,
         C.PURPLE,
@@ -614,6 +727,14 @@ return function(api, navigation)
                     time_signature_mode = true
                 elseif pad.col == ACTION_TRACK_SELECT_COL then
                     track_select_mode = true
+                elseif pad.col == ACTION_PATTERN_COPY_COL then
+                    pattern_copy_mode = true
+                    copy_from_region = selected_region
+                    copy_to_region = nil
+                    copy_track_mode = 1
+                elseif pad.col == ACTION_PRESET_SELECTOR_COL then
+                    preset_selector.open(selected_track)
+                    preset_selector_mode = true
                 elseif pad.col == ACTION_SAVE_QUIT_COL then
                     save_and_quit.run()
                 end

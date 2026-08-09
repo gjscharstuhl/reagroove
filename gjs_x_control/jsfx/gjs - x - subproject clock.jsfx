@@ -55,9 +55,8 @@ active_project == project_number && display_mode > 0 ? (
             current_bar = wrapped_bar + 1;
 
             within_bar_qn = relative_qn - (absolute_bar * measure_qn);
-            active_steps = max(1, min(16, floor((measure_qn / 0.25) + 0.5)));
-            current_step = floor(within_bar_qn / 0.25) + 1;
-            current_step = max(1, min(active_steps, current_step));
+            current_step = floor(within_bar_qn / (measure_qn / 16)) + 1;
+            current_step = max(1, min(16, current_step));
         );
     );
 
