@@ -8,6 +8,9 @@
 
 local M = {}
 local MAX_VISIBLE_TRACKS = 16
+local staged_subproject = nil
+local staged_armed = {}
+local staged_selected = nil
 
 local function get_project(subproject_number)
     subproject_number = tonumber(subproject_number)
@@ -144,7 +147,39 @@ function M.select(subproject_number, track_number, armed)
 end
 
 
+function M.open(subproject_number)
+    local project = get_project(subproject_number)
+    local tracks = get_top_level_tracks(project)
+    staged_subproject = subproject_number
+    staged_armed = {}
+    staged_selected = nil
+    for number, track in ipairs(tracks) do
+        staged_armed[number] = reaper.GetMediaTrackInfo_Value(track, "I_RECARM") > 0.5
+        if reaper.IsTrackSelected(track) then staged_selected = number end
+    end
+    if not staged_selected and #tracks > 0 then staged_selected = 1 end
+end
+
+local function apply_staged(subproject_number)
+    local project = get_project(subproject_number)
+    local tracks = get_top_level_tracks(project)
+    if not project then return false end
+    for index = 0, reaper.CountTracks(project) - 1 do
+        local track = reaper.GetTrack(project, index)
+        if track then reaper.SetTrackSelected(track, false) end
+    end
+    for number, track in ipairs(tracks) do
+        reaper.SetMediaTrackInfo_Value(track, "I_RECARM", staged_armed[number] and 1 or 0)
+        reaper.SetMediaTrackInfo_Value(track, "I_AUTOMODE", 0)
+        if number == staged_selected then reaper.SetTrackSelected(track, true) end
+    end
+    reaper.TrackList_AdjustWindows(false)
+    reaper.UpdateArrange()
+    return true
+end
+
 function M.draw(api, C, subproject_number, close_callback)
+    if staged_subproject ~= subproject_number then M.open(subproject_number) end
     local project = get_project(subproject_number)
     local top_level_tracks = get_top_level_tracks(project)
     local track_count = #top_level_tracks
@@ -161,11 +196,7 @@ function M.draw(api, C, subproject_number, close_callback)
         local available = track ~= nil
 
         if available then
-            local armed =
-                reaper.GetMediaTrackInfo_Value(
-                    track,
-                    "I_RECARM"
-                ) > 0.5
+            local armed = staged_armed[number] == true
 
             state.toggle[note] = armed
 
@@ -178,12 +209,8 @@ function M.draw(api, C, subproject_number, close_callback)
                     active_color = C.WHITE,
 
                     on_press = function(pad)
-                        M.select(
-                            subproject_number,
-                            number,
-                            pad.active
-                        )
-
+                        staged_armed[number] = pad.active
+                        staged_selected = number
                         api.redraw()
                     end
                 }
@@ -200,24 +227,27 @@ function M.draw(api, C, subproject_number, close_callback)
         end
     end
 
-    -- Action pad 5 closes this mode.
-    api.drawpad(
-        1,
-        5,
-        C.BLUE,
-        api.MODE_HIGHLIGHT,
-        {
-            active_color = C.WHITE,
+    -- Universal edit controls: 11 confirm, 12 cancel.
+    api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            apply_staged(subproject_number)
+            staged_subproject = nil
+            if close_callback then close_callback() end
+            api.redraw()
+        end
+    })
 
-            on_press = function()
-                if close_callback then
-                    close_callback()
-                end
-
-                api.redraw()
-            end
-        }
-    )
+    api.drawpad(1, 2, C.RED, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            staged_subproject = nil
+            staged_armed = {}
+            staged_selected = nil
+            if close_callback then close_callback() end
+            api.redraw()
+        end
+    })
 end
 
 return M

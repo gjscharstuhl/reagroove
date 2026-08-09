@@ -51,6 +51,7 @@ local selected_region = nil
 local last_main_entry_serial = nil
 local selected_scope = SCOPE_SELECTED_TRACK
 
+local resize_mode = false
 local time_signature_mode = false
 local track_select_mode = false
 local clear_mode = false
@@ -162,6 +163,77 @@ local function execute_clear()
     return false
 end
 
+local function draw_resize_mode(api, C)
+    -- Bars: rows 8-7, same selector as the main edit page.
+    api.drawstrip(8, 1, 8, C.PURPLE, api.MODE_RADIO, {
+        group = "edit_resize_value_1_16",
+        selected_row = selected_bars <= 8 and 8 or 7,
+        selected_col = selected_bars <= 8 and selected_bars or selected_bars - 8,
+        active_color = C.WHITE,
+        on_press = function(pad)
+            selected_bars = pad.col
+            api.redraw()
+        end
+    })
+    api.drawstrip(7, 1, 8, C.PURPLE, api.MODE_RADIO, {
+        group = "edit_resize_value_1_16",
+        selected_row = selected_bars <= 8 and 8 or 7,
+        selected_col = selected_bars <= 8 and selected_bars or selected_bars - 8,
+        active_color = C.WHITE,
+        on_press = function(pad)
+            selected_bars = 8 + pad.col
+            api.redraw()
+        end
+    })
+
+    api.drawstrip(6, 1, 8, C.LIGHT_BLUE, api.MODE_RADIO, {
+        group = "edit_resize_region",
+        selected_col = selected_region,
+        active_color = C.WHITE,
+        on_press = function(pad)
+            selected_region = pad.col
+            api.redraw()
+        end
+    })
+
+    api.drawstrip(4, 6, 8, C.GREEN, api.MODE_RADIO, {
+        group = "edit_resize_scope",
+        selected_col = 5 + selected_scope,
+        active_color = C.WHITE,
+        on_press = function(pad)
+            selected_scope = pad.col - 5
+            api.redraw()
+        end
+    })
+
+    api.drawstrip(2, 1, 8, C.ORANGE, api.MODE_RADIO, {
+        group = "edit_resize_track",
+        selected_col = selected_track,
+        active_color = C.WHITE,
+        on_press = function(pad)
+            selected_track = pad.col
+            api.redraw()
+        end
+    })
+
+    -- Universal edit controls: 11 confirm, 12 cancel.
+    api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            execute_resize()
+            resize_mode = false
+            api.redraw()
+        end
+    })
+    api.drawpad(1, 2, C.RED, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            resize_mode = false
+            api.redraw()
+        end
+    })
+end
+
 local function draw_clear_mode(api, C)
     local off_items = { 30, 20, 0 }
     local off_fx = { 24, 0, 30 }
@@ -261,11 +333,10 @@ local function draw_clear_mode(api, C)
         }
     )
 
-    -- Pad 2 confirms; pad 5 closes without clearing.
+    -- Universal edit controls: 11 confirm, 12 cancel.
     api.drawpad(
-        1,
-        ACTION_CLEAR_COL,
-        C.BLUE,
+        1, 1,
+        C.GREEN,
         api.MODE_HIGHLIGHT,
         {
             active_color = C.WHITE,
@@ -279,9 +350,8 @@ local function draw_clear_mode(api, C)
     )
 
     api.drawpad(
-        1,
-        ACTION_TRACK_SELECT_COL,
-        C.BLUE,
+        1, 2,
+        C.RED,
         api.MODE_HIGHLIGHT,
         {
             active_color = C.WHITE,
@@ -343,8 +413,8 @@ local function draw_pattern_copy_mode(api, C)
         end
     })
 
-    -- Pad 16 executes. Pad 17 cancels this sub-mode.
-    api.drawpad(1, ACTION_PATTERN_COPY_COL, C.GREEN, api.MODE_HIGHLIGHT, {
+    -- Universal edit controls: 11 confirm, 12 cancel.
+    api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
         active_color = C.WHITE,
         on_press = function()
             if copy_from_region and copy_to_region then
@@ -352,23 +422,21 @@ local function draw_pattern_copy_mode(api, C)
                     selected_track,
                     copy_from_region,
                     copy_to_region,
-                    {
-                        track_mode = copy_track_mode == 2 and "all" or "armed"
-                    }
+                    { track_mode = copy_track_mode == 2 and "all" or "armed" }
                 )
                 if ok then
                     pattern_copy_mode = false
                     copy_from_region = nil
                     copy_to_region = nil
                 elseif err then
-                    reaper.ShowConsoleMsg("Pattern copy failed: " .. tostring(err) .. "\n")
+                    reaper.ShowConsoleMsg("Pattern copy failed: " .. tostring(err) .. "\\n")
                 end
             end
             api.redraw()
         end
     })
 
-    api.drawpad(1, ACTION_PRESET_SELECTOR_COL, C.RED, api.MODE_HIGHLIGHT, {
+    api.drawpad(1, 2, C.RED, api.MODE_HIGHLIGHT, {
         active_color = C.WHITE,
         on_press = function()
             pattern_copy_mode = false
@@ -519,37 +587,35 @@ local function draw_merge_mode(api, C)
         }
     )
 
-    api.drawpad(
-        1,
-        ACTION_CLEAR_COL,
-        C.RED,
-        api.MODE_HIGHLIGHT,
-        {
-            active_color = C.WHITE,
-            on_press = function()
-                merge_sequence[#merge_sequence] = nil
-                api.redraw()
+    -- Universal edit controls: 11 confirm, 12 cancel.
+    api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            if execute_merge() then
+                merge_mode = false
+                merge_sequence = {}
             end
-        }
-    )
+            api.redraw()
+        end
+    })
 
-    api.drawpad(
-        1,
-        ACTION_MERGE_COL,
-        C.GREEN,
-        api.MODE_HIGHLIGHT,
-        {
-            active_color = C.WHITE,
-            on_press = function()
-                if execute_merge() then
-                    merge_mode = false
-                    merge_sequence = {}
-                end
+    api.drawpad(1, 2, C.RED, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            merge_mode = false
+            merge_sequence = {}
+            api.redraw()
+        end
+    })
 
-                api.redraw()
-            end
-        }
-    )
+    -- Pad 13 removes the last source pattern while building the merge.
+    api.drawpad(1, 3, C.ORANGE, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            merge_sequence[#merge_sequence] = nil
+            api.redraw()
+        end
+    })
 end
 
 return function(api, navigation)
@@ -579,6 +645,11 @@ return function(api, navigation)
     end
 
     api.drawblock(8, 1, 1, 8, C.OFF, api.MODE_NONE)
+
+    if resize_mode then
+        draw_resize_mode(api, C)
+        return
+    end
 
     if time_signature_mode then
         time_signature.draw(
@@ -712,7 +783,7 @@ return function(api, navigation)
             active_color = C.WHITE,
             on_press = function(pad)
                 if pad.col == ACTION_RESIZE_COL then
-                    execute_resize()
+                    resize_mode = true
                 elseif pad.col == ACTION_CLEAR_COL then
                     -- Start every Clear session with both actions disabled.
                     clear_items = false
@@ -726,6 +797,7 @@ return function(api, navigation)
                     time_signature.open()
                     time_signature_mode = true
                 elseif pad.col == ACTION_TRACK_SELECT_COL then
+                    subproject_track.open(selected_track)
                     track_select_mode = true
                 elseif pad.col == ACTION_PATTERN_COPY_COL then
                     pattern_copy_mode = true

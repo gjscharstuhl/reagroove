@@ -169,7 +169,7 @@ function M.draw(api, C, on_close)
             selected_col = selected_numerator,
             active_color = C.WHITE,
             on_press = function(pad)
-                M.apply(pad.col, selected_denominator)
+                selected_numerator = pad.col
                 api.redraw()
             end
         }
@@ -186,27 +186,30 @@ function M.draw(api, C, on_close)
             selected_col = selected_denominator,
             active_color = C.WHITE,
             on_press = function(pad)
-                M.apply(selected_numerator, pad.col)
+                selected_denominator = pad.col
                 api.redraw()
             end
         }
     )
 
-    -- Pad 1,4 closes the time-signature editor.
-    api.drawpad(
-        1, 4,
-        C.BLUE,
-        api.MODE_HIGHLIGHT,
-        {
-            active_color = C.WHITE,
-            on_press = function()
-                if on_close then
-                    on_close()
-                end
-                api.redraw()
-            end
-        }
-    )
+    -- Universal edit controls: 11 confirm, 12 cancel.
+    api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            M.apply(selected_numerator, selected_denominator)
+            if on_close then on_close() end
+            api.redraw()
+        end
+    })
+
+    api.drawpad(1, 2, C.RED, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            read_main_time_signature()
+            if on_close then on_close() end
+            api.redraw()
+        end
+    })
 end
 
 function M.get_selected()
