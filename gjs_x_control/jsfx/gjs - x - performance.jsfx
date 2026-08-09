@@ -1,4 +1,4 @@
-desc:gjs: Launchpad Performance DEBUG NOTE-OFF
+desc:gjs: Launchpad Performance
 
 options:gmem=GJS_X_BRIDGE
 
@@ -128,6 +128,7 @@ function feedback_pad(note,state) (
 
 @block
 performance_screen = floor(gmem[PERFORMANCE_SCREEN_SLOT]) == 1;
+
 layout = performance_screen ? floor(gmem[LAYOUT_SLOT]) : 0;
 octave_shift = max(-3,min(4,floor(gmem[OCTAVE_SLOT])));
 redraw_version=floor(gmem[REDRAW_SLOT]);
@@ -157,10 +158,8 @@ while(midirecv(offset,msg1,msg23)) (
 
     launchpad_note ? (
         !performance_screen ? (
-            // Outside screen 7: do not reinterpret MIDI. This lets a normal
-            // keyboard monitor/record its real MIDI notes unchanged. Launchpad
-            // piano translation exists only in screen-7 piano performance.
-            handled=0;
+            // PERFORMANCE-ONLY gate: outside screen 7, swallow Launchpad pad events.
+            handled=1;
         ) : layout==1 ? (
             // Drum mode: pass original note/channel, but own LED feedback.
             is_on ? feedback_pad(note,1) : is_off ? feedback_pad(note,0);
@@ -210,11 +209,12 @@ while(midirecv(offset,msg1,msg23)) (
         );
     );
 
+    !performance_screen ? handled=1;
     !handled ? midisend(offset,msg1,msg23);
 );
 
-// Screen-6 piano audition. This is independent of screen-7 performance mode.
-enabled=floor(gmem[AUDITION_ENABLE_SLOT])==1;
+// PERFORMANCE-ONLY: audition is disabled outside screen 7 as requested.
+enabled=0;
 i=0;
 loop(128,
     wanted=enabled?floor(gmem[AUDITION_NOTES_BASE+i]):0;
@@ -226,3 +226,4 @@ loop(128,
     );
     i+=1;
 );
+
