@@ -564,6 +564,25 @@ local function update_selection(track_number, selection)
     return true
 end
 
+
+function Pattern.get_selected_region(track_number)
+    track_number = tonumber(track_number)
+    if not track_number then return nil end
+    track_number = math.floor(track_number)
+
+    local selection = selections[track_number]
+    if selection and selection.region then
+        return selection.region
+    end
+
+    local project = get_pattern_project(track_number)
+    if project and current_region_number then
+        return current_region_number(project)
+    end
+
+    return nil
+end
+
 function Pattern.get_visual_state(track_number, region_number)
     local selection = selections[track_number]
 

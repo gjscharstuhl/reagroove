@@ -93,7 +93,7 @@ local function sync_main_selection_on_entry(api)
 
     if entry and entry.serial ~= last_main_entry_serial then
         selected_track = clamp(entry.track, 1, 8, 1)
-        selected_region = clamp(entry.region, 1, 8, 1)
+        selected_region = clamp(entry.pattern or entry.region, 1, 8, 1)
         last_main_entry_serial = entry.serial
         return
     end
@@ -783,6 +783,10 @@ return function(api, navigation)
             active_color = C.WHITE,
             on_press = function(pad)
                 if pad.col == ACTION_RESIZE_COL then
+                    -- Resize starts from the pattern currently selected on
+                    -- the Edit overview. Do not fall back to an old resize
+                    -- radio-group selection from a previous session.
+                    selected_region = clamp(selected_region, 1, 8, 1)
                     resize_mode = true
                 elseif pad.col == ACTION_CLEAR_COL then
                     -- Start every Clear session with both actions disabled.
