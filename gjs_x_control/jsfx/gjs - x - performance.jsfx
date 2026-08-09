@@ -1,4 +1,4 @@
-desc:gjs: Launchpad Performance DEBUG NOTE-OFF
+desc:gjs: Launchpad Performance
 
 options:gmem=GJS_X_BRIDGE
 
@@ -160,10 +160,10 @@ while(midirecv(offset,msg1,msg23)) (
 
     launchpad_note ? (
         !performance_screen ? (
-            // Outside screen 7: do not reinterpret MIDI. This lets a normal
-            // keyboard monitor/record its real MIDI notes unchanged. Launchpad
-            // piano translation exists only in screen-7 piano performance.
-            handled=0;
+            // Outside screen 7, swallow raw Launchpad pad MIDI.
+            // Screen-6 piano audition is generated separately below on outch,
+            // avoiding a duplicate raw note on channel 1.
+            handled=1;
         ) : layout==1 ? (
             // Drum mode: pass original note/channel, but own LED feedback.
             is_on ? feedback_pad(note,1) : is_off ? feedback_pad(note,0);
