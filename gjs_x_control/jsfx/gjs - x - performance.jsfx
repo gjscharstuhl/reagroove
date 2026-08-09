@@ -217,7 +217,10 @@ while(midirecv(offset,msg1,msg23)) (
 );
 
 // Screen-6 piano audition. This is independent of screen-7 performance mode.
-enabled=floor(gmem[AUDITION_ENABLE_SLOT])==1;
+// Audition belongs exclusively to screen 6. On entry to Performance force it
+// off immediately; the last_velocity loop below then sends note-offs for every
+// audition note that was still active, preventing stale gmem notes from sounding.
+enabled=!performance_screen && floor(gmem[AUDITION_ENABLE_SLOT])==1;
 i=0;
 loop(128,
     wanted=enabled?floor(gmem[AUDITION_NOTES_BASE+i]):0;
