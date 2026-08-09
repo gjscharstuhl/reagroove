@@ -1710,16 +1710,20 @@ local function draw_current_screen()
             local screen6_midi_edit = screen6_state
                 and screen6_state.sequencer_layout == "midi_edit"
 
-            if LP.current_screen == 6
+            if LP.current_screen == 7 then
+                -- Screen 7 is fully rendered by the Performance JSFX.
+                LP.matrix_screen_active = true
+            elseif LP.current_screen == 6
             and not screen6_midi_edit
             and Bridge.set_matrix_rows_rgb then
                 -- Drum/piano reserve rows 7/8 for the sequencer display JSFX.
                 Bridge.set_matrix_rows_rgb(LP.framebuffer, 1, 6)
+                LP.matrix_screen_active = true
             else
-                -- MIDI edit owns all eight rows because the display JSFX is off.
+                -- MIDI edit and normal matrix screens own all eight rows.
                 Bridge.set_matrix_rgb(LP.framebuffer)
+                LP.matrix_screen_active = true
             end
-            LP.matrix_screen_active = true
         else
             reaper.ShowConsoleMsg(
                 "Matrix tekenen mislukt: Bridge.set_matrix_rgb ontbreekt.\n"
@@ -1777,6 +1781,11 @@ local function update_performance_mode()
         PERFORMANCE_MODE_SLOT,
         enabled and 1 or 0
     )
+
+    if not enabled then
+        reaper.gmem_write(1200, 0)
+        reaper.gmem_write(1202, (reaper.gmem_read(1202) or 0) + 1)
+    end
 end
 
 local function select_screen(screen)

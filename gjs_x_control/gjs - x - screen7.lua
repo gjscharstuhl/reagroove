@@ -1,48 +1,36 @@
+-- ============================================================
+-- gjs - x - screen7.lua
+-- Performance screen controller. The JSFX owns the 8x8 matrix.
+-- ============================================================
+
+local GMEM_NAME = "GJS_X_BRIDGE"
+local PERF_LAYOUT_SLOT = 1200 -- 0 off, 1 drums, 2 piano
+local PERF_REDRAW_SLOT = 1202
+
 local function drawscreen7(api)
-    local C = api.COLOR
-    local H = api.MODE_HIGHLIGHT
+    local state = api.get_screen_state and api.get_screen_state(7) or nil
+    if state and not state.performance_layout then
+        state.performance_layout = "drums"
+    end
 
-    -- Magenta
-    api.drawpad(7,4,C.MAGENTA,H)
-    api.drawpad(7,5,C.MAGENTA,H)
+    local function set_layout(layout)
+        if state then state.performance_layout = layout end
+        reaper.gmem_attach(GMEM_NAME)
+        reaper.gmem_write(PERF_LAYOUT_SLOT, layout == "piano" and 2 or 1)
+        reaper.gmem_write(PERF_REDRAW_SLOT, (reaper.gmem_read(PERF_REDRAW_SLOT) or 0) + 1)
+    end
 
-    api.drawpad(6,4,C.MAGENTA,H)
-    api.drawpad(6,5,C.MAGENTA,H)
+    reaper.gmem_attach(GMEM_NAME)
+    set_layout(state and state.performance_layout or "drums")
 
-    -- Wit / Geel / Paars
-    api.drawpad(5,2,C.WHITE,H)
-    api.drawpad(5,3,C.YELLOW,H)
-    api.drawpad(5,4,C.MAGENTA,H)
-    api.drawpad(5,5,C.PURPLE,H)
-    api.drawpad(5,6,C.YELLOW,H)
-    api.drawpad(5,7,C.WHITE,H)
+    api.set_navigation(
+        function() set_layout("drums") end,
+        function() set_layout("piano") end,
+        nil,
+        nil
+    )
 
-    -- Groen / Blauw / Cyan
-    api.drawpad(4,2,C.GREEN,H)
-    api.drawpad(4,3,C.BLUE,H)
-    api.drawpad(4,4,C.LIGHT_BLUE,H)
-    api.drawpad(4,5,C.LIGHT_BLUE,H)
-    api.drawpad(4,6,C.BLUE,H)
-    api.drawpad(4,7,C.GREEN,H)
-
-    -- Oranje / Geel
-    api.drawpad(3,2,C.ORANGE,H)
-    api.drawpad(3,4,C.YELLOW,H)
-    api.drawpad(3,5,C.YELLOW,H)
-    api.drawpad(3,7,C.ORANGE,H)
-
-    -- Lichtpaars / Oranje
-    api.drawpad(2,2,C.LIGHT_PURPLE,H)
-    api.drawpad(2,4,C.ORANGE,H)
-    api.drawpad(2,5,C.ORANGE,H)
-    api.drawpad(2,7,C.LIGHT_PURPLE,H)
-
-    -- Rood
-    api.drawpad(1,4,C.RED,H)
-    api.drawpad(1,5,C.RED,H)
-    
-    reaper.gmem_attach("GJS_X_BRIDGE")
-	reaper.gmem_write(1000, 0)
+    -- No matrix pads are drawn here. The Performance JSFX owns all 64 LEDs.
 end
 
 return drawscreen7

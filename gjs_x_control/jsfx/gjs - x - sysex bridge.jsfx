@@ -25,6 +25,105 @@ buf_midi = 0;
 buf_daw = 128;
 
 
+
+// ============================================================
+// Screen-7 performance rendering (owned by the hardware bridge)
+// ============================================================
+PERFORMANCE_SCREEN_SLOT = 100;
+PERF_LAYOUT_SLOT = 1200;
+PERF_OCTAVE_SLOT = 1201;
+PERF_REDRAW_SLOT = 1202;
+PERF_FEEDBACK_SEQ_SLOT = 1203;
+PERF_FEEDBACK_NOTE_SLOT = 1204;
+PERF_FEEDBACK_STATE_SLOT = 1205;
+last_perf_layout = -1;
+last_perf_octave = 999;
+last_perf_redraw = -1;
+last_perf_feedback_seq = -1;
+
+function perf_clamp(v) ( max(0,min(127,floor(v))); );
+
+function perf_write_rgb(buffer,target,led,r,g,b) (
+    buffer[target]=$x03;
+    buffer[target+1]=perf_clamp(led);
+    buffer[target+2]=perf_clamp(r);
+    buffer[target+3]=perf_clamp(g);
+    buffer[target+4]=perf_clamp(b);
+);
+
+function perf_drum_rgb(note,component) local(row,col,r,g,b) (
+    row=floor(note/10); col=note%10; r=0; g=0; b=0;
+    (row==7 && (col==4 || col==5)) || (row==6 && (col==4 || col==5)) ? (r=127;b=80;);
+    row==5 ? (
+        col==2 || col==7 ? (r=127;g=127;b=127;);
+        col==3 || col==6 ? (r=127;g=110;);
+        col==4 ? (r=127;b=80;);
+        col==5 ? (r=60;b=127;);
+    );
+    row==4 ? (
+        col==2 || col==7 ? g=127;
+        col==3 || col==6 ? b=127;
+        col==4 || col==5 ? (g=70;b=127;);
+    );
+    row==3 ? (
+        col==2 || col==7 ? (r=127;g=40;);
+        col==4 || col==5 ? (r=127;g=110;);
+    );
+    row==2 ? (
+        col==2 || col==7 ? (r=75;g=25;b=127;);
+        col==4 || col==5 ? (r=127;g=40;);
+    );
+    row==1 && (col==4 || col==5) ? r=55;
+    component==1?r:component==2?g:b;
+);
+
+function perf_piano_key(note) local(row,col,pair,semi,valid) (
+    row=floor(note/10); col=note%10; pair=floor((row-1)/2); semi=-1; valid=0;
+    row%2==1 ? (
+        col==1?semi=0:col==2?semi=2:col==3?semi=4:col==4?semi=5:col==5?semi=7:col==6?semi=9:col==7?semi=11:col==8?semi=12;
+        valid=1;
+    ) : (
+        col==2?semi=1:col==3?semi=3:col==5?semi=6:col==6?semi=8:col==7?semi=10;
+        semi>=0 ? valid=1;
+    );
+    valid ? pair*12+semi : -1;
+);
+
+function perf_send_one(led,r,g,b) local(len) (
+    buf_perf_midi=1400; buf_perf_daw=1440;
+    buf_perf_midi[0]=$xF0;buf_perf_midi[1]=$x00;buf_perf_midi[2]=$x20;buf_perf_midi[3]=$x29;buf_perf_midi[4]=$x02;buf_perf_midi[5]=$x0D;buf_perf_midi[6]=$x03;
+    buf_perf_daw[0]=$xF0;buf_perf_daw[1]=$x00;buf_perf_daw[2]=$x20;buf_perf_daw[3]=$x29;buf_perf_daw[4]=$x02;buf_perf_daw[5]=$x0C;buf_perf_daw[6]=$x03;
+    perf_write_rgb(buf_perf_midi,7,led,r,g,b);perf_write_rgb(buf_perf_daw,7,led,r,g,b);
+    buf_perf_midi[12]=$xF7;buf_perf_daw[12]=$xF7;
+    midisend_buf(0,buf_perf_midi,13);midisend_buf(0,buf_perf_daw,13);
+);
+
+function perf_base_rgb(note,layout,component) local(k,r,g,b) (
+    r=0;g=0;b=0;
+    layout==1 ? (r=perf_drum_rgb(note,1);g=perf_drum_rgb(note,2);b=perf_drum_rgb(note,3);) :
+    layout==2 ? (
+        note==41 || note==48 ? (r=0;g=100;b=0;) : (
+            note==21 || note==28 ? (r=100;g=65;b=0;) : (
+                k=perf_piano_key(note); k>=0 ? (b=22;);
+            );
+        );
+    );
+    component==1?r:component==2?g:b;
+);
+
+function perf_draw_layout(layout) local(i,row,col,n,target,r,g,b,len) (
+    buf_pm=1600;buf_pd=2000;
+    buf_pm[0]=$xF0;buf_pm[1]=$x00;buf_pm[2]=$x20;buf_pm[3]=$x29;buf_pm[4]=$x02;buf_pm[5]=$x0D;buf_pm[6]=$x03;
+    buf_pd[0]=$xF0;buf_pd[1]=$x00;buf_pd[2]=$x20;buf_pd[3]=$x29;buf_pd[4]=$x02;buf_pd[5]=$x0C;buf_pd[6]=$x03;
+    i=0; loop(64,
+        row=floor(i/8)+1;col=(i%8)+1;n=row*10+col;target=7+i*5;
+        r=perf_base_rgb(n,layout,1);g=perf_base_rgb(n,layout,2);b=perf_base_rgb(n,layout,3);
+        perf_write_rgb(buf_pm,target,n,r,g,b);perf_write_rgb(buf_pd,target,n,r,g,b);i+=1;
+    );
+    len=8+64*5;buf_pm[len-1]=$xF7;buf_pd[len-1]=$xF7;
+    midisend_buf(0,buf_pm,len);midisend_buf(0,buf_pd,len);
+);
+
 @block
 
 sequence = floor(gmem[0]);
@@ -339,4 +438,28 @@ sequence != last_sequence ? (
 
 );
 
+// Screen-7 layout and feedback are sent by this JSFX because this bridge is
+// the one routed to the Launchpad hardware outputs.
+perf_screen = floor(gmem[PERFORMANCE_SCREEN_SLOT]) == 1;
+perf_layout = perf_screen ? floor(gmem[PERF_LAYOUT_SLOT]) : 0;
+perf_octave = floor(gmem[PERF_OCTAVE_SLOT]);
+perf_redraw = floor(gmem[PERF_REDRAW_SLOT]);
+
+(perf_layout != last_perf_layout || perf_octave != last_perf_octave || perf_redraw != last_perf_redraw) ? (
+    perf_draw_layout(perf_layout);
+    last_perf_layout=perf_layout;last_perf_octave=perf_octave;last_perf_redraw=perf_redraw;
+);
+
+perf_feedback_seq=floor(gmem[PERF_FEEDBACK_SEQ_SLOT]);
+perf_feedback_seq != last_perf_feedback_seq ? (
+    last_perf_feedback_seq=perf_feedback_seq;
+    perf_note=floor(gmem[PERF_FEEDBACK_NOTE_SLOT]);
+    perf_pressed=floor(gmem[PERF_FEEDBACK_STATE_SLOT]);
+    perf_pressed ? perf_send_one(perf_note,127,0,0) : (
+        perf_send_one(perf_note,
+            perf_base_rgb(perf_note,perf_layout,1),
+            perf_base_rgb(perf_note,perf_layout,2),
+            perf_base_rgb(perf_note,perf_layout,3));
+    );
+);
 
