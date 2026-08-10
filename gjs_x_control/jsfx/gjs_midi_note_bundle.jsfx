@@ -41,8 +41,26 @@ tags:midi note bundle mapper learn utility
 
 =============================================================================
 */
+
+slider1:60<0,127,1>Bundle 1 Output Note
+slider2:61<0,127,1>Bundle 2 Output Note
+slider3:62<0,127,1>Bundle 3 Output Note
+slider4:63<0,127,1>Bundle 4 Output Note
+slider5:64<0,127,1>Bundle 5 Output Note
+slider6:65<0,127,1>Bundle 6 Output Note
+slider7:66<0,127,1>Bundle 7 Output Note
+slider8:67<0,127,1>Bundle 8 Output Note
+slider9:68<0,127,1>Bundle 9 Output Note
+slider10:69<0,127,1>Bundle 10 Output Note
+slider11:70<0,127,1>Bundle 11 Output Note
+slider12:71<0,127,1>Bundle 12 Output Note
+slider13:72<0,127,1>Bundle 13 Output Note
+slider14:73<0,127,1>Bundle 14 Output Note
+slider15:74<0,127,1>Bundle 15 Output Note
+slider16:75<0,127,1>Bundle 16 Output Note
 slider17:0<0,16,1{All,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>MIDI Input Channel
 slider18:0<0,16,1{Same as input,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>MIDI Output Channel
+slider19:0<0,1000000,1>-Mapping State Revision
 
 options:gfx_hz=30
 in_pin:none
@@ -115,11 +133,19 @@ slider_show(slider13, 0);
 slider_show(slider14, 0);
 slider_show(slider15, 0);
 slider_show(slider16, 0);
+slider_show(slider19, 0);
 
 
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+function MarkMappingDirty()
+(
+    slider19 += 1;
+    slider19 > 1000000 ? slider19 = 0;
+    sliderchange(slider19);
+);
 
 function Clamp(value, minimum, maximum)
 (
@@ -211,25 +237,31 @@ local(note)
     );
 
     BUNDLE_COUNT_BASE[bundle] = 0;
+    MarkMappingDirty();
 );
 
 function LearnNote(bundle, note)
-local(old_bundle)
+local(old_bundle, changed)
 (
     old_bundle = MAP_BASE[note];
+    changed = 0;
 
     // Move the note from another bundle if needed.
     old_bundle >= 0 && old_bundle != bundle ? (
         MAP_BASE[note] = bundle;
         RecountBundle(old_bundle);
         RecountBundle(bundle);
+        changed = 1;
     )
     :
     // Add a previously unassigned note.
     old_bundle < 0 ? (
         MAP_BASE[note] = bundle;
         RecountBundle(bundle);
+        changed = 1;
     );
+
+    changed ? MarkMappingDirty();
 );
 
 function GetNoteName(note)
@@ -390,6 +422,10 @@ while(midirecv(offset, msg1, msg2, msg3))
 
 @serialize
 
+// Version tag + learned input mapping. The hidden revision slider above makes
+// REAPER mark this non-slider state as changed whenever Learn/Clear edits it.
+serialize_version = 2;
+file_var(0, serialize_version);
 file_mem(0, MAP_BASE, NUM_NOTES);
 
 // Rebuild the displayed input counts after loading a project or preset.
