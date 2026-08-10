@@ -41,23 +41,8 @@ tags:midi note bundle mapper learn utility
 
 =============================================================================
 */
-
-slider1:60<0,127,1>Bundle 1 Output Note
-slider2:61<0,127,1>Bundle 2 Output Note
-slider3:62<0,127,1>Bundle 3 Output Note
-slider4:63<0,127,1>Bundle 4 Output Note
-slider5:64<0,127,1>Bundle 5 Output Note
-slider6:65<0,127,1>Bundle 6 Output Note
-slider7:66<0,127,1>Bundle 7 Output Note
-slider8:67<0,127,1>Bundle 8 Output Note
-slider9:68<0,127,1>Bundle 9 Output Note
-slider10:69<0,127,1>Bundle 10 Output Note
-slider11:70<0,127,1>Bundle 11 Output Note
-slider12:71<0,127,1>Bundle 12 Output Note
-slider13:72<0,127,1>Bundle 13 Output Note
-slider14:73<0,127,1>Bundle 14 Output Note
-slider15:74<0,127,1>Bundle 15 Output Note
-slider16:75<0,127,1>Bundle 16 Output Note
+slider17:0<0,16,1{All,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>MIDI Input Channel
+slider18:0<0,16,1{Same as input,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>MIDI Output Channel
 
 options:gfx_hz=30
 in_pin:none
@@ -277,10 +262,15 @@ local(pc, octave)
 
 @block
 
+input_channel_filter = floor(slider17); // 0=All, 1..16=user-facing MIDI channel
+output_channel_setting = floor(slider18); // 0=Same as input, 1..16=fixed output
+
 while(midirecv(offset, msg1, msg2, msg3))
 (
     status = msg1 & $xF0;
     channel = msg1 & $x0F;
+    channel_matches = input_channel_filter == 0 || channel == input_channel_filter - 1;
+    mapped_output_channel = output_channel_setting == 0 ? channel : output_channel_setting - 1;
     input_note = msg2 & $x7F;
 
     is_note_on =
@@ -296,7 +286,7 @@ while(midirecv(offset, msg1, msg2, msg3))
 
     // Input Learn mode:
     // Every incoming Note On is assigned to the selected bundle.
-    is_note_on && active_input_learn_bundle >= 0 ? (
+    channel_matches && is_note_on && active_input_learn_bundle >= 0 ? (
         LearnNote(active_input_learn_bundle, input_note);
     );
 
@@ -308,7 +298,7 @@ while(midirecv(offset, msg1, msg2, msg3))
         active_output_learn_bundle = -1;
     );
 
-    bundle = MAP_BASE[input_note];
+    bundle = channel_matches ? MAP_BASE[input_note] : -1;
 
     // ------------------------------------------------------------------------
     // Bundled Note On
@@ -320,7 +310,7 @@ while(midirecv(offset, msg1, msg2, msg3))
             HELD_BUNDLE_BASE[input_note] = bundle;
 
             BUNDLE_HELD_BASE[bundle] += 1;
-            BUNDLE_CHAN_BASE[bundle] = channel;
+            BUNDLE_CHAN_BASE[bundle] = mapped_output_channel;
 
             // Only the first held source note sends an output Note On.
             BUNDLE_HELD_BASE[bundle] == 1 ? (
@@ -328,7 +318,7 @@ while(midirecv(offset, msg1, msg2, msg3))
 
                 midisend(
                     offset,
-                    $x90 | channel,
+                    $x90 | mapped_output_channel,
                     output_note,
                     msg3
                 );
@@ -378,7 +368,7 @@ while(midirecv(offset, msg1, msg2, msg3))
 
         midisend(
             offset,
-            $xA0 | channel,
+            $xA0 | mapped_output_channel,
             output_note,
             msg3
         );
@@ -891,4 +881,5 @@ loop(NUM_BUNDLES,
 );
 
 last_mouse_cap = mouse_cap;
+
 
