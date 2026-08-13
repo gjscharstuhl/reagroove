@@ -526,8 +526,26 @@ return function(api, navigation)
 			
 				reaper.SetExtState("GJS_X", "ActiveTrack", tostring(pad.col), true)
 				reaper.ShowConsoleMsg("naar pad:"..pad.col.."\n")
+
+                -- When Main switches instrument, show the region that was
+                -- last selected for that instrument in Pattern/Screen 1.
+                if api.pattern
+                and type(api.pattern.get_selected_region) == "function"
+                and api.set_main_region then
+                    local remembered_region =
+                        api.pattern.get_selected_region(pad.col) or 1
+                    api.set_main_region(remembered_region)
+                end
+
 				if pad.col>1 then trmanager.Armtracks(pad.col) end
 				trmanager.show()
+
+                -- The region row was already drawn before this track press.
+                -- Redraw Main so the remembered region for the newly selected
+                -- instrument becomes visible immediately.
+                if api.redraw then
+                    api.redraw()
+                end
             end
         }
     )

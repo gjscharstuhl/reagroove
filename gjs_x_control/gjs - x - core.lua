@@ -287,6 +287,12 @@ local function set_screen1_track_and_region(track, region)
     state.radio["pattern_track_" .. track] = row * 10 + region
 end
 
+local function set_main_region(region)
+    region = math.max(1, math.min(8, math.floor(tonumber(region) or 1)))
+    local state = get_screen_state(0)
+    state.radio["regions"] = 60 + region
+end
+
 local function set_scene_pattern(track, region)
     -- Scene/pattern feedback only. Never touch screen 0 or REAPER track selection.
     set_screen1_track_and_region(track, region)
@@ -2166,6 +2172,7 @@ API.get_screen_state = get_screen_state
 API.set_track_and_region = set_track_and_region
 API.set_scene_pattern = set_scene_pattern
 API.set_screen1_track_and_region = set_screen1_track_and_region
+API.set_main_region = set_main_region
 API.send_pad_color = send_pad_color
 API.select_screen = select_screen
 API.redraw = draw_current_screen

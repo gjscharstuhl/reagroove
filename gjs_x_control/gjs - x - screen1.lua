@@ -52,6 +52,16 @@ return function(api)
                         track,
                         region
                     )
+
+                    -- Mirror only the region when Screen 1 edits the same
+                    -- instrument that is currently active in Main.
+                    local main_track = tonumber(
+                        reaper.GetExtState("GJS_X", "ActiveTrack")
+                    ) or 1
+
+                    if main_track == track and api.set_main_region then
+                        api.set_main_region(region)
+                    end
                 end
             }
         )
