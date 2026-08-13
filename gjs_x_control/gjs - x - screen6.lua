@@ -195,17 +195,8 @@ if pad.row == 8 then return pad.col end
                                                                                            reaper.TimeMap2_QNToTime(context.project, qn_end)
                                                                                     end
 
-                                                                                    local function apply_sequencer_loop_range()
-                                                                                    local context = sequencer.get_context()
+                                                                                    local function set_sequencer_loop_range(context, start_pos, end_pos)
                                                                                     if not context or not context.project then return false end
-
-                                                                                        local start_pos, end_pos
-                                                                                        if state.sequencer_loop_bar then
-                                                                                            start_pos, end_pos = get_bar_time_range(context, state.sequencer_bar)
-                                                                                        else
-                                                                                            start_pos, end_pos = context.region_start, context.region_end
-                                                                                        end
-
                                                                                         if not start_pos or not end_pos or end_pos <= start_pos then
                                                                                             return false
                                                                                         end
@@ -222,10 +213,128 @@ if pad.row == 8 then return pad.col end
                                                                                         return true
                                                                                     end
 
-                                                                                    -- Re-entering this screen with bar-loop enabled should immediately
-                                                                                    -- restore the selected bar as the loop range.
+                                                                                    local function apply_sequencer_region_loop_range()
+                                                                                    local context = sequencer.get_context()
+                                                                                    if not context or not context.project then return false end
+                                                                                        return set_sequencer_loop_range(
+                                                                                            context,
+                                                                                            context.region_start,
+                                                                                            context.region_end
+                                                                                        )
+                                                                                    end
+
+                                                                                    local function apply_sequencer_bar_loop_range()
+                                                                                    local context = sequencer.get_context()
+                                                                                    if not context or not context.project then return false end
+                                                                                        local start_pos, end_pos = get_bar_time_range(context, state.sequencer_bar)
+                                                                                        return set_sequencer_loop_range(context, start_pos, end_pos)
+                                                                                    end
+
+                                                                                    local function find_current_bar_end(context, play_pos)
+                                                                                    local count = sequencer.get_bar_count()
+                                                                                    for bar_index = 1, count do
+                                                                                        local start_pos, end_pos = get_bar_time_range(context, bar_index)
+                                                                                        if start_pos and end_pos
+                                                                                        and play_pos >= start_pos
+                                                                                        and play_pos < end_pos then
+                                                                                            return end_pos
+                                                                                        end
+                                                                                    end
+                                                                                    return context.region_end
+                                                                                    end
+
+                                                                                    local function arm_sequencer_bar_loop()
+                                                                                    if not state.sequencer_loop_bar then return false end
+                                                                                        state.sequencer_loop_pending = true
+
+                                                                                        local context = sequencer.get_context()
+                                                                                        if not context or not context.project then return false end
+                                                                                        local play_state = reaper.GetPlayStateEx(context.project) or 0
+
+                                                                                        -- While stopped there is no boundary to wait for.
+                                                                                        if (play_state & 1) == 0 then
+                                                                                            state.sequencer_loop_pending = false
+                                                                                            state.sequencer_loop_trigger_pos = nil
+                                                                                            if apply_sequencer_bar_loop_range() then
+                                                                                                local bar_start = get_bar_time_range(context, state.sequencer_bar)
+                                                                                                if bar_start then
+                                                                                                    reaper.SetEditCurPos2(context.project, bar_start, false, false)
+                                                                                                end
+                                                                                                return true
+                                                                                            end
+                                                                                            return false
+                                                                                        end
+
+                                                                                        -- Let the bar that is playing now finish first. At its next beat 1
+                                                                                        -- we jump to the selected bar and start the one-bar loop there.
+                                                                                        local play_pos = reaper.GetPlayPositionEx(context.project)
+                                                                                        state.sequencer_loop_last_play_pos = play_pos
+                                                                                        state.sequencer_loop_trigger_pos = play_pos
+                                                                                            and find_current_bar_end(context, play_pos)
+                                                                                            or nil
+
+                                                                                        -- Until that boundary, keep the complete region looping.
+                                                                                        return apply_sequencer_region_loop_range()
+                                                                                    end
+
+                                                                                    local function activate_pending_bar_loop(context)
+                                                                                    local bar_start = get_bar_time_range(context, state.sequencer_bar)
+                                                                                    if not bar_start then return false end
+
+                                                                                        if not apply_sequencer_bar_loop_range() then return false end
+
+                                                                                        -- seekplay=true: during playback, jump immediately to beat 1
+                                                                                        -- of the selected bar after the current bar has completed.
+                                                                                        reaper.SetEditCurPos2(context.project, bar_start, false, true)
+                                                                                        state.sequencer_loop_pending = false
+                                                                                        state.sequencer_loop_trigger_pos = nil
+                                                                                        state.sequencer_loop_last_play_pos = bar_start
+                                                                                        return true
+                                                                                    end
+
+                                                                                    local function update_pending_sequencer_bar_loop()
+                                                                                    if not state.sequencer_loop_bar or not state.sequencer_loop_pending then return end
+
+                                                                                        local context = sequencer.get_context()
+                                                                                        if not context or not context.project then return end
+                                                                                        local play_state = reaper.GetPlayStateEx(context.project) or 0
+                                                                                        if (play_state & 1) == 0 then
+                                                                                            state.sequencer_loop_pending = false
+                                                                                            state.sequencer_loop_trigger_pos = nil
+                                                                                            apply_sequencer_bar_loop_range()
+                                                                                            return
+                                                                                        end
+
+                                                                                        local play_pos = reaper.GetPlayPositionEx(context.project)
+                                                                                        if play_pos == nil then return end
+
+                                                                                        local trigger_pos = state.sequencer_loop_trigger_pos
+                                                                                        if not trigger_pos then
+                                                                                            state.sequencer_loop_trigger_pos = find_current_bar_end(context, play_pos)
+                                                                                            state.sequencer_loop_last_play_pos = play_pos
+                                                                                            return
+                                                                                        end
+
+                                                                                        local previous = state.sequencer_loop_last_play_pos
+                                                                                        local crossed_boundary = play_pos >= trigger_pos
+
+                                                                                        -- If the current bar was the final bar of the region, playback may
+                                                                                        -- wrap to region_start between deferred updates. Detect that wrap as
+                                                                                        -- the same next-bar boundary instead of waiting a whole region.
+                                                                                        if not crossed_boundary and previous and play_pos < previous then
+                                                                                            crossed_boundary = true
+                                                                                        end
+
+                                                                                        state.sequencer_loop_last_play_pos = play_pos
+
+                                                                                        if crossed_boundary then
+                                                                                            activate_pending_bar_loop(context)
+                                                                                        end
+                                                                                    end
+
+                                                                                    -- Re-entering this screen with bar-loop enabled re-arms it safely.
                                                                                     if state.sequencer_loop_bar then
-                                                                                        apply_sequencer_loop_range()
+                                                                                        arm_sequencer_bar_loop()
                                                                                     end
 
                                                                                     local function sequencer_midi_channel()
@@ -356,6 +465,7 @@ if pad.row == 8 then return pad.col end
                                                                                                                                         refresh_display()
                                                                                                                                         end
                                                                                                                                         end
+                                                                                                                                        update_pending_sequencer_bar_loop()
                                                                                                                                         reaper.defer(keep_display_synced)
                                                                                                                                         end
 
@@ -375,7 +485,7 @@ if pad.row == 8 then return pad.col end
                                                                                                                                                 local new_bar = math.max(1, math.min(bar_count, bar))
                                                                                                                                                 if new_bar == state.sequencer_bar then return end
                                                                                                                                                     state.sequencer_bar = new_bar
-                                                                                                                                                    if state.sequencer_loop_bar then apply_sequencer_loop_range() end
+                                                                                                                                                    if state.sequencer_loop_bar then arm_sequencer_bar_loop() end
                                                                                                                                                     refresh_display()
                                                                                                                                                     end
 
@@ -494,7 +604,12 @@ if pad.row == 8 then return pad.col end
                                                                                                                                                                                         active_color = LOOP_CYAN_ACTIVE,
                                                                                                                                                                                         on_press = function(pad)
                                                                                                                                                                                         state.sequencer_loop_bar = pad.active == true
-                                                                                                                                                                                        apply_sequencer_loop_range()
+                                                                                                                                                                                        if state.sequencer_loop_bar then
+                                                                                                                                                                                            arm_sequencer_bar_loop()
+                                                                                                                                                                                        else
+                                                                                                                                                                                            state.sequencer_loop_pending = false
+                                                                                                                                                                                            apply_sequencer_region_loop_range()
+                                                                                                                                                                                        end
                                                                                                                                                                                         end
                                                                                                                                                                                     })
 
