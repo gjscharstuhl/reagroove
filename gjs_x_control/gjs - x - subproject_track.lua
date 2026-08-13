@@ -7,6 +7,8 @@
 -- ============================================================
 
 local M = {}
+local trmanager = include("trackmanager.lua")
+
 local MAX_VISIBLE_TRACKS = 16
 local staged_subproject = nil
 local staged_armed = {}
@@ -231,10 +233,18 @@ function M.draw(api, C, subproject_number, close_callback)
     api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
         active_color = C.WHITE,
         on_press = function()
+            trmanager.clear(subproject_number)
+            for i= 1 , #staged_armed do
+				if staged_armed[i] then 
+					reaper.ShowConsoleMsg("staged:"..i.."\n") 
+					trmanager.insert(subproject_number,i-1)
+				end
+            end
             apply_staged(subproject_number)
             staged_subproject = nil
             if close_callback then close_callback() end
             api.redraw()
+            trmanager.show()
         end
     })
 

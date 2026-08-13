@@ -8,6 +8,7 @@ local script_path = debug.getinfo(1, "S").source:sub(2)
 local script_dir = script_path:match("(.*[\\/])") or ""
 local sequencer = dofile(script_dir .. "gjs - x - sequencer_engine.lua")
 local main_display_generation = 0
+local trmanager = include("trackmanager.lua")
 
 return function(api, navigation)
     local C = api.COLOR
@@ -139,27 +140,25 @@ return function(api, navigation)
         return track, region
     end
 
-    local function select_current_pattern()
-        if not api.pattern
-        or type(api.pattern.select) ~= "function" then
-            return
-        end
 
-        local track, region =
-            get_selected_track_and_region()
+	local function getactivetrack()
+		local track =     reaper.GetExtState(
+        "GJS_X",
+        "ActiveTrack"
+        )
+       return tonumber(track)
+    
+	end
+		
+	local function select_current_pattern()
+		local track, region = get_selected_track_and_region()
 
-        -- Mirror the chosen combination to screen 1 before queueing it.
-        if api.set_screen1_track_and_region then
-            api.set_screen1_track_and_region(track, region)
-        end
+		if api.set_screen1_track_and_region then
+			api.set_screen1_track_and_region(track, region)
+		end
 
-        -- Only screen 0 may change the active REAPER track.
-        if type(api.pattern.activate_track) == "function" then
-            api.pattern.activate_track(track)
-        end
-
-        api.pattern.select(track, region)
-    end
+		api.pattern.select(track, region)
+	end
 
     local current_page = 1
     if api.get_page then
@@ -518,8 +517,17 @@ return function(api, navigation)
             selected_col = 1,
             active_color = api.SELECT_COLOR,
 
-            on_press = function()
-                select_current_pattern()
+            on_press = function(pad)
+                --select_current_pattern()
+                
+                local currenttrack=getactivetrack()
+                reaper.ShowConsoleMsg("van pad:"..currenttrack.."\n")
+				if currenttrack>1 then trmanager.DisArmAllTracks(currenttrack) end
+			
+				reaper.SetExtState("GJS_X", "ActiveTrack", tostring(pad.col), true)
+				reaper.ShowConsoleMsg("naar pad:"..pad.col.."\n")
+				if pad.col>1 then trmanager.Armtracks(pad.col) end
+				trmanager.show()
             end
         }
     )
@@ -566,8 +574,9 @@ return function(api, navigation)
                 refresh_main_display()
             end
         end
-
+		
         reaper.defer(keep_main_display_synced)
+
     end
 
     -- Defer once so the JSFX repaint happens after core sends the full matrix.

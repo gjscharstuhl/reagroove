@@ -5,6 +5,7 @@
 
 reaper.SetExtState("GJS_X", "Page", "1", true)
 
+reaper.SetExtState("GJS_X", "ActiveTrack", "1", true)
 ------------------------------------------------------------
 -- Global include()
 ------------------------------------------------------------
@@ -61,6 +62,9 @@ _G.GJS_X_PATTERN = pattern
 
 local core = include("gjs - x - core.lua")
 if not core then return end
+     
+local trman = include("trackmanager.lua") 
+                                                                                                                                                             
                                                                                                                                                                   
 ------------------------------------  ------------------------
 -- Screens
@@ -102,7 +106,7 @@ local function startup_clear()
 end
 
 -- Comment this line if you want to keep the current jam.
--- startup_clear()
+startup_clear()
 
 ------------------------------------------------------------
 -- Start

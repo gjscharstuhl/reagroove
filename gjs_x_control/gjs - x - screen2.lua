@@ -38,6 +38,7 @@ return function(api)
     }
 
     local GLOBAL_FX_TRACKS = {
+        "master",
         "Reverb1",
         "Delay",
         "Chorus",
@@ -45,7 +46,7 @@ return function(api)
         "Filter",
         "Fuzz",
         "Reverb2",
-        "Delay2"
+
     }
 
     local function normalized_name(name)

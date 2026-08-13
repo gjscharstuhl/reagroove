@@ -18,6 +18,7 @@ function M.run()
         reaper.SelectProjectInstance(current)
     end
     reaper.Main_OnCommand(40004,0)
+    os.execute("systemctl poweroff")
 end
 
 return M
