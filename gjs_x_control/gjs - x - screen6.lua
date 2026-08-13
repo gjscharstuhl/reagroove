@@ -19,6 +19,8 @@ local OCTAVE_BLUE = { 0, 20, 55 }
 local OCTAVE_SELECTED_BLUE = { 0, 65, 127 }
 local LENGTH_GREEN = { 0, 10, 0 }
 local LENGTH_SELECTED_GREEN = { 0, 127, 0 }
+local LOOP_CYAN = { 0, 28, 28 }
+local LOOP_CYAN_ACTIVE = { 0, 127, 127 }
 
 local display_generation = 0
 local screen6_was_active = false
@@ -100,6 +102,7 @@ if pad.row == 8 then return pad.col end
                                                     state.sequencer_microtune = state.sequencer_microtune or 0
                                                     state.sequencer_chord = state.sequencer_chord or {}
                                                     state.sequencer_chord_mode = state.sequencer_chord_mode or false
+                                                    if state.sequencer_loop_bar == nil then state.sequencer_loop_bar = false end
 
                                                     local function set_audition_enabled(enabled)
                                                     reaper.gmem_attach("GJS_X_BRIDGE")
@@ -172,6 +175,58 @@ if pad.row == 8 then return pad.col end
 
                                                                                     local bar_count = sequencer.get_bar_count()
                                                                                     state.sequencer_bar = math.max(1, math.min(bar_count, state.sequencer_bar))
+
+                                                                                    local function get_bar_time_range(context, bar_index)
+                                                                                    if not context or not context.project or context.region_start == nil then
+                                                                                        return nil, nil
+                                                                                    end
+                                                                                    local _, first_measure = reaper.TimeMap2_timeToBeats(
+                                                                                        context.project,
+                                                                                        context.region_start
+                                                                                    )
+                                                                                    if first_measure == nil then return nil, nil end
+                                                                                    local measure_index = math.floor(first_measure) + math.max(0, bar_index - 1)
+                                                                                    local ok, qn_start, qn_end = reaper.TimeMap_GetMeasureInfo(
+                                                                                        context.project,
+                                                                                        measure_index
+                                                                                    )
+                                                                                    if not ok or not qn_start or not qn_end then return nil, nil end
+                                                                                    return reaper.TimeMap2_QNToTime(context.project, qn_start),
+                                                                                           reaper.TimeMap2_QNToTime(context.project, qn_end)
+                                                                                    end
+
+                                                                                    local function apply_sequencer_loop_range()
+                                                                                    local context = sequencer.get_context()
+                                                                                    if not context or not context.project then return false end
+
+                                                                                        local start_pos, end_pos
+                                                                                        if state.sequencer_loop_bar then
+                                                                                            start_pos, end_pos = get_bar_time_range(context, state.sequencer_bar)
+                                                                                        else
+                                                                                            start_pos, end_pos = context.region_start, context.region_end
+                                                                                        end
+
+                                                                                        if not start_pos or not end_pos or end_pos <= start_pos then
+                                                                                            return false
+                                                                                        end
+
+                                                                                        reaper.GetSet_LoopTimeRange2(
+                                                                                            context.project,
+                                                                                            true,
+                                                                                            false,
+                                                                                            start_pos,
+                                                                                            end_pos,
+                                                                                            false
+                                                                                        )
+                                                                                        reaper.UpdateArrange()
+                                                                                        return true
+                                                                                    end
+
+                                                                                    -- Re-entering this screen with bar-loop enabled should immediately
+                                                                                    -- restore the selected bar as the loop range.
+                                                                                    if state.sequencer_loop_bar then
+                                                                                        apply_sequencer_loop_range()
+                                                                                    end
 
                                                                                     local function sequencer_midi_channel()
                                                                                     reaper.gmem_attach("GJS_X_BRIDGE")
@@ -320,6 +375,7 @@ if pad.row == 8 then return pad.col end
                                                                                                                                                 local new_bar = math.max(1, math.min(bar_count, bar))
                                                                                                                                                 if new_bar == state.sequencer_bar then return end
                                                                                                                                                     state.sequencer_bar = new_bar
+                                                                                                                                                    if state.sequencer_loop_bar then apply_sequencer_loop_range() end
                                                                                                                                                     refresh_display()
                                                                                                                                                     end
 
@@ -430,6 +486,33 @@ if pad.row == 8 then return pad.col end
                                                                                                                                                                                             )
                                                                                                                                                                                             return true
                                                                                                                                                                                             end
+                                                                                                                                                                                    })
+
+                                                                                                                                                                                    -- Pad 58: toggle between looping the selected bar and the whole region.
+                                                                                                                                                                                    state.toggle[58] = state.sequencer_loop_bar == true
+                                                                                                                                                                                    api.drawpad(5, 8, LOOP_CYAN, api.MODE_TOGGLE, {
+                                                                                                                                                                                        active_color = LOOP_CYAN_ACTIVE,
+                                                                                                                                                                                        on_press = function(pad)
+                                                                                                                                                                                        state.sequencer_loop_bar = pad.active == true
+                                                                                                                                                                                        apply_sequencer_loop_range()
+                                                                                                                                                                                        end
+                                                                                                                                                                                    })
+
+                                                                                                                                                                                    -- Pad 48: repeat the consecutive filled bars from bar 1 through the region.
+                                                                                                                                                                                    api.drawpad(4, 8, C.YELLOW, api.MODE_HIGHLIGHT, {
+                                                                                                                                                                                        active_color = C.WHITE,
+                                                                                                                                                                                        on_press = function()
+                                                                                                                                                                                        local success, result = midi_edit_engine.copy_filled_bars_to_rest(sequencer)
+                                                                                                                                                                                        if not success then
+                                                                                                                                                                                            report_error(result)
+                                                                                                                                                                                            return
+                                                                                                                                                                                        end
+                                                                                                                                                                                        refresh_display()
+                                                                                                                                                                                        end,
+                                                                                                                                                                                        on_release = function()
+                                                                                                                                                                                        api.send_pad_rgb(4, 8, C.YELLOW)
+                                                                                                                                                                                        return true
+                                                                                                                                                                                        end
                                                                                                                                                                                     })
                                                                                                                                                                                     elseif state.sequencer_layout == "piano" then
                                                                                                                                                                                         piano.draw(api, {

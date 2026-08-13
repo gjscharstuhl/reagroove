@@ -249,6 +249,105 @@ function M.copy_bar_to_many(sequencer, source_bar, destination_bars)
     return true, "copied"
 end
 
+function M.copy_filled_bars_to_rest(sequencer)
+    local context, err = require_take(sequencer)
+    if not context then return false, err end
+
+    local bar_count = math.max(1, math.floor(tonumber(sequencer.get_bar_count()) or 1))
+    if bar_count <= 1 then
+        return true, "nothing_to_copy"
+    end
+
+    -- The source phrase is the consecutive run of non-empty bars starting at bar 1.
+    -- Example: only bar 1 filled -> 1,1,1,1... ; bars 1+2 filled -> 1,2,1,2...
+    local notes_by_bar = {}
+    local _, note_count = reaper.MIDI_CountEvts(context.take)
+
+    for bar = 1, bar_count do
+        notes_by_bar[bar] = {}
+    end
+
+    for index = 0, note_count - 1 do
+        local ok, selected, muted, start_ppq, end_ppq, channel, pitch, velocity =
+            reaper.MIDI_GetNote(context.take, index)
+        if ok then
+            local start_qn = reaper.MIDI_GetProjQNFromPPQPos(context.take, start_ppq)
+            local end_qn = reaper.MIDI_GetProjQNFromPPQPos(context.take, end_ppq)
+            local bar, bar_start = bar_for_note_qn(context, start_qn, bar_count)
+            if bar and bar_start then
+                notes_by_bar[bar][#notes_by_bar[bar] + 1] = {
+                    selected = selected,
+                    muted = muted,
+                    offset_qn = start_qn - bar_start,
+                    length_qn = math.max(0.000001, end_qn - start_qn),
+                    channel = channel,
+                    pitch = pitch,
+                    velocity = velocity
+                }
+            end
+        end
+    end
+
+    local source_length = 0
+    for bar = 1, bar_count do
+        if #notes_by_bar[bar] == 0 then break end
+        source_length = bar
+    end
+
+    if source_length == 0 then
+        return false, "Bar 1 is empty; there is no phrase to repeat."
+    end
+    if source_length >= bar_count then
+        return true, "nothing_to_copy"
+    end
+
+    local destination_indices = {}
+    for index = 0, note_count - 1 do
+        local ok, _, _, start_ppq = reaper.MIDI_GetNote(context.take, index)
+        if ok then
+            local start_qn = reaper.MIDI_GetProjQNFromPPQPos(context.take, start_ppq)
+            local bar = bar_for_note_qn(context, start_qn, bar_count)
+            if bar and bar > source_length then
+                destination_indices[#destination_indices + 1] = index
+            end
+        end
+    end
+
+    reaper.Undo_BeginBlock2(context.project)
+    reaper.MIDI_DisableSort(context.take)
+
+    for i = #destination_indices, 1, -1 do
+        reaper.MIDI_DeleteNote(context.take, destination_indices[i])
+    end
+
+    for destination_bar = source_length + 1, bar_count do
+        local source_bar = ((destination_bar - 1) % source_length) + 1
+        local dst_start, dst_end = get_bar_qn_range(context, destination_bar)
+        if dst_start and dst_end then
+            for _, note in ipairs(notes_by_bar[source_bar]) do
+                local start_qn = dst_start + note.offset_qn
+                if start_qn < dst_end then
+                    local end_qn = math.min(dst_end, start_qn + note.length_qn)
+                    reaper.MIDI_InsertNote(
+                        context.take,
+                        note.selected,
+                        note.muted,
+                        reaper.MIDI_GetPPQPosFromProjQN(context.take, start_qn),
+                        reaper.MIDI_GetPPQPosFromProjQN(context.take, end_qn),
+                        note.channel,
+                        note.pitch,
+                        note.velocity,
+                        true
+                    )
+                end
+            end
+        end
+    end
+
+    finish(context, "Repeat filled ReaGroove bars through region")
+    return true, source_length
+end
+
 function M.clear_bars(sequencer, bars)
     local wanted = bars_lookup(bars)
     if next(wanted) == nil then return false, "Select one or more bars." end

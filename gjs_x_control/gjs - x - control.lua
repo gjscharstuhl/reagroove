@@ -106,7 +106,7 @@ local function startup_clear()
 end
 
 -- Comment this line if you want to keep the current jam.
--- startup_clear()
+--startup_clear()
 
 ------------------------------------------------------------
 -- Start
