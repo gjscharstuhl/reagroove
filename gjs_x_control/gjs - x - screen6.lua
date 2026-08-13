@@ -613,6 +613,26 @@ if pad.row == 8 then return pad.col end
                                                                                                                                                                                         end
                                                                                                                                                                                     })
 
+                                                                                                                                                                                    -- Pad 38: same quick repeat, but only for the selected drum sample.
+                                                                                                                                                                                    api.drawpad(3, 8, C.YELLOW, api.MODE_HIGHLIGHT, {
+                                                                                                                                                                                        active_color = C.WHITE,
+                                                                                                                                                                                        on_press = function()
+                                                                                                                                                                                        local success, result = midi_edit_engine.copy_filled_bars_to_rest_for_pitch(
+                                                                                                                                                                                            sequencer,
+                                                                                                                                                                                            selected_pitch()
+                                                                                                                                                                                        )
+                                                                                                                                                                                        if not success then
+                                                                                                                                                                                            report_error(result)
+                                                                                                                                                                                            return
+                                                                                                                                                                                        end
+                                                                                                                                                                                        refresh_display()
+                                                                                                                                                                                        end,
+                                                                                                                                                                                        on_release = function()
+                                                                                                                                                                                        api.send_pad_rgb(3, 8, C.YELLOW)
+                                                                                                                                                                                        return true
+                                                                                                                                                                                        end
+                                                                                                                                                                                    })
+
                                                                                                                                                                                     -- Pad 48: repeat the consecutive filled bars from bar 1 through the region.
                                                                                                                                                                                     api.drawpad(4, 8, C.YELLOW, api.MODE_HIGHLIGHT, {
                                                                                                                                                                                         active_color = C.WHITE,
