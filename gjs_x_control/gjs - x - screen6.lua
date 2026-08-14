@@ -598,9 +598,9 @@ if pad.row == 8 then return pad.col end
                                                                                                                                                                                             end
                                                                                                                                                                                     })
 
-                                                                                                                                                                                    -- Pad 58: toggle between looping the selected bar and the whole region.
-                                                                                                                                                                                    state.toggle[58] = state.sequencer_loop_bar == true
-                                                                                                                                                                                    api.drawpad(5, 8, LOOP_CYAN, api.MODE_TOGGLE, {
+                                                                                                                                                                                    -- Pad 68: toggle between looping the selected bar and the whole region.
+                                                                                                                                                                                    state.toggle[68] = state.sequencer_loop_bar == true
+                                                                                                                                                                                    api.drawpad(6, 8, LOOP_CYAN, api.MODE_TOGGLE, {
                                                                                                                                                                                         active_color = LOOP_CYAN_ACTIVE,
                                                                                                                                                                                         on_press = function(pad)
                                                                                                                                                                                         state.sequencer_loop_bar = pad.active == true
@@ -613,8 +613,8 @@ if pad.row == 8 then return pad.col end
                                                                                                                                                                                         end
                                                                                                                                                                                     })
 
-                                                                                                                                                                                    -- Pad 38: same quick repeat, but only for the selected drum sample.
-                                                                                                                                                                                    api.drawpad(3, 8, C.YELLOW, api.MODE_HIGHLIGHT, {
+                                                                                                                                                                                    -- Pad 48: quick repeat, but only for the selected drum sample.
+                                                                                                                                                                                    api.drawpad(4, 8, C.YELLOW, api.MODE_HIGHLIGHT, {
                                                                                                                                                                                         active_color = C.WHITE,
                                                                                                                                                                                         on_press = function()
                                                                                                                                                                                         local success, result = midi_edit_engine.copy_filled_bars_to_rest_for_pitch(
@@ -628,13 +628,13 @@ if pad.row == 8 then return pad.col end
                                                                                                                                                                                         refresh_display()
                                                                                                                                                                                         end,
                                                                                                                                                                                         on_release = function()
-                                                                                                                                                                                        api.send_pad_rgb(3, 8, C.YELLOW)
+                                                                                                                                                                                        api.send_pad_rgb(4, 8, C.YELLOW)
                                                                                                                                                                                         return true
                                                                                                                                                                                         end
                                                                                                                                                                                     })
 
-                                                                                                                                                                                    -- Pad 48: repeat the consecutive filled bars from bar 1 through the region.
-                                                                                                                                                                                    api.drawpad(4, 8, C.YELLOW, api.MODE_HIGHLIGHT, {
+                                                                                                                                                                                    -- Pad 58: repeat the consecutive filled bars from bar 1 through the region.
+                                                                                                                                                                                    api.drawpad(5, 8, C.YELLOW, api.MODE_HIGHLIGHT, {
                                                                                                                                                                                         active_color = C.WHITE,
                                                                                                                                                                                         on_press = function()
                                                                                                                                                                                         local success, result = midi_edit_engine.copy_filled_bars_to_rest(sequencer)
@@ -645,7 +645,33 @@ if pad.row == 8 then return pad.col end
                                                                                                                                                                                         refresh_display()
                                                                                                                                                                                         end,
                                                                                                                                                                                         on_release = function()
-                                                                                                                                                                                        api.send_pad_rgb(4, 8, C.YELLOW)
+                                                                                                                                                                                        api.send_pad_rgb(5, 8, C.YELLOW)
+                                                                                                                                                                                        return true
+                                                                                                                                                                                        end
+                                                                                                                                                                                    })
+
+                                                                                                                                                                                    -- Pad 38: delete the selected sample in the current time scope.
+                                                                                                                                                                                    -- Bar-loop on = selected bar only; bar-loop off = complete region.
+                                                                                                                                                                                    api.drawpad(3, 8, C.ORANGE, api.MODE_HIGHLIGHT, {
+                                                                                                                                                                                        active_color = C.WHITE,
+                                                                                                                                                                                        on_press = function()
+                                                                                                                                                                                        local bars = nil
+                                                                                                                                                                                        if state.sequencer_loop_bar then
+                                                                                                                                                                                            bars = { state.sequencer_bar }
+                                                                                                                                                                                        end
+                                                                                                                                                                                        local success, result = midi_edit_engine.clear_pitch_in_bars(
+                                                                                                                                                                                            sequencer,
+                                                                                                                                                                                            selected_pitch(),
+                                                                                                                                                                                            bars
+                                                                                                                                                                                        )
+                                                                                                                                                                                        if not success then
+                                                                                                                                                                                            report_error(result)
+                                                                                                                                                                                            return
+                                                                                                                                                                                        end
+                                                                                                                                                                                        refresh_display()
+                                                                                                                                                                                        end,
+                                                                                                                                                                                        on_release = function()
+                                                                                                                                                                                        api.send_pad_rgb(3, 8, C.ORANGE)
                                                                                                                                                                                         return true
                                                                                                                                                                                         end
                                                                                                                                                                                     })

@@ -436,6 +436,47 @@ function M.copy_filled_bars_to_rest_for_pitch(sequencer, target_pitch)
     return true, source_length
 end
 
+
+function M.clear_pitch_in_bars(sequencer, target_pitch, bars)
+    target_pitch = tonumber(target_pitch)
+    if target_pitch == nil then return false, "No sample selected." end
+    target_pitch = math.max(0, math.min(127, math.floor(target_pitch)))
+
+    local context, err = require_take(sequencer)
+    if not context then return false, err end
+
+    local bar_count = math.max(1, math.floor(tonumber(sequencer.get_bar_count()) or 1))
+    local wanted = nil
+    if bars ~= nil then
+        wanted = bars_lookup(bars)
+        if next(wanted) == nil then return false, "Select one or more bars." end
+    end
+
+    local delete_indices = {}
+    local _, note_count = reaper.MIDI_CountEvts(context.take)
+    for index = 0, note_count - 1 do
+        local ok, _, _, start_ppq, _, _, pitch = reaper.MIDI_GetNote(context.take, index)
+        if ok and pitch == target_pitch then
+            local should_delete = wanted == nil
+            if wanted ~= nil then
+                local start_qn = reaper.MIDI_GetProjQNFromPPQPos(context.take, start_ppq)
+                local bar = bar_for_note_qn(context, start_qn, bar_count)
+                should_delete = bar ~= nil and wanted[bar] == true
+            end
+            if should_delete then delete_indices[#delete_indices + 1] = index end
+        end
+    end
+
+    reaper.Undo_BeginBlock2(context.project)
+    reaper.MIDI_DisableSort(context.take)
+    for i = #delete_indices, 1, -1 do
+        reaper.MIDI_DeleteNote(context.take, delete_indices[i])
+    end
+
+    finish(context, "Clear selected ReaGroove sample")
+    return true, #delete_indices
+end
+
 function M.clear_bars(sequencer, bars)
     local wanted = bars_lookup(bars)
     if next(wanted) == nil then return false, "Select one or more bars." end
