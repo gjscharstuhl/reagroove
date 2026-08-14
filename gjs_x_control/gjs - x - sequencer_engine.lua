@@ -1233,9 +1233,8 @@ if not region_start then
                                                                                                                                 -- In chord mode, show the step when every selected chord pitch
                                                                                                                                 -- is present. Extra notes on the same step must not hide the
                                                                                                                                 -- chord indicator.
-                                                                                                                                -- Existing selected-note values remain exactly 1..127.
-                                                                                                                                -- 256 is a display-only marker meaning: another pitch/sample
-                                                                                                                                -- exists on this step, but the selected one does not.
+                                                                                                                                -- Display state per step:
+                                                                                                                                -- 0 = empty, 1..127 = selected pitch velocity, 256 = other MIDI note(s).
                                                                                                                                 reaper.gmem_write(
                                                                                                                                     DISPLAY_BASE + 15 + step,
                                                                                                                                     matches and math.max(1, entry.velocity)

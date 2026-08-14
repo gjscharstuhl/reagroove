@@ -157,17 +157,11 @@ local(i, target, led, velocity, red, green, blue, note_here, other_note_here, pl
             blue = get_background(selected_bar, 3);
         );
 
-        // Another pitch/sample exists on this step. Use a dimmed version of
-        // the bar's bright/playhead colour so the hue stays clearly green,
-        // orange, blue or purple. Red remains exclusive to the selected note.
+        // Other pitches/samples on this step: same bar hue, brighter background.
         other_note_here && i + 1 <= active_steps ? (
-            // Launchpad RGB has coarse response at low values, so make this
-            // deliberately brighter than the background while retaining its hue.
-            cycle = ((selected_bar - 1) % 4) + 1;
-            cycle == 1 ? (red=0;   green=45; blue=0;) :
-            cycle == 2 ? (red=55;  green=18; blue=0;) :
-            cycle == 3 ? (red=0;   green=18; blue=65;) :
-                         (red=38;  green=8;  blue=62;);
+            red = min(127, get_background(selected_bar, 1) * 3);
+            green = min(127, get_background(selected_bar, 2) * 3);
+            blue = min(127, get_background(selected_bar, 3) * 3);
         );
 
         // Entered note is red. Velocity controls brightness, with a
