@@ -102,8 +102,8 @@ function perf_base_rgb(note,layout,component) local(k,r,g,b) (
     r=0;g=0;b=0;
     layout==1 ? (r=perf_drum_rgb(note,1);g=perf_drum_rgb(note,2);b=perf_drum_rgb(note,3);) :
     layout==2 ? (
-        note==41 || note==48 ? (r=127;g=127;b=0;) : ( // transpose = yellow
-            note==21 || note==28 ? (r=0;g=127;b=0;) : ( // octave = green
+        note==41 || note==48 ? (r=100;g=65;b=0;) : (
+            note==21 || note==28 ? (r=0;g=100;b=0;) : (
                 k=perf_piano_key(note); k>=0 ? (b=22;);
             );
         );

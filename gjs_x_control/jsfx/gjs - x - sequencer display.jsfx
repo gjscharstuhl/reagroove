@@ -108,7 +108,7 @@ function write_rgb_spec(buffer, target, led, red, green, blue) (
 );
 
 function send_display(selected_bar, current_step, playing, use_gmem)
-local(i, target, led, velocity, red, green, blue, note_here, playhead_here,
+local(i, target, led, velocity, red, green, blue, note_here, other_note_here, playhead_here,
       message_length, mask, active_steps) (
 
     // SysEx headers: normal MIDI interface and DAW interface.
@@ -142,7 +142,8 @@ local(i, target, led, velocity, red, green, blue, note_here, playhead_here,
             velocity = (mask & (1 << i)) ? 127 : 0;
         );
 
-        note_here = velocity > 0;
+        other_note_here = velocity >= 256;
+        note_here = velocity > 0 && velocity < 256;
         playhead_here = playing && current_step == i + 1;
 
         // Base background follows the selected bar. Pads beyond the
@@ -154,6 +155,19 @@ local(i, target, led, velocity, red, green, blue, note_here, playhead_here,
             red = get_background(selected_bar, 1);
             green = get_background(selected_bar, 2);
             blue = get_background(selected_bar, 3);
+        );
+
+        // Another pitch/sample exists on this step. Use a dimmed version of
+        // the bar's bright/playhead colour so the hue stays clearly green,
+        // orange, blue or purple. Red remains exclusive to the selected note.
+        other_note_here && i + 1 <= active_steps ? (
+            // Launchpad RGB has coarse response at low values, so make this
+            // deliberately brighter than the background while retaining its hue.
+            cycle = ((selected_bar - 1) % 4) + 1;
+            cycle == 1 ? (red=0;   green=45; blue=0;) :
+            cycle == 2 ? (red=55;  green=18; blue=0;) :
+            cycle == 3 ? (red=0;   green=18; blue=65;) :
+                         (red=38;  green=8;  blue=62;);
         );
 
         // Entered note is red. Velocity controls brightness, with a
