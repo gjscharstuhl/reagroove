@@ -15,6 +15,9 @@ local SWING_GREEN = { 0, 55, 0 }
 local QUANTIZE_GREEN = { 0, 75, 0 }
 local SWING_CHOICE_YELLOW = { 70, 48, 0 }
 local SWING_CHOICE_SELECTED = { 127, 95, 0 }
+local TIME_START_COLOR = { 55, 0, 70 }
+local TIME_END_COLOR = { 0, 45, 90 }
+local TIME_SELECTED = { 127, 127, 127 }
 
 local SWING_DIVISIONS = {
     [1] = { label = "1/16", qn = 0.25 },
@@ -101,6 +104,9 @@ function M.draw(api, context)
     state.midi_edit_swing = state.midi_edit_swing or 0
     state.midi_edit_swing_mode = state.midi_edit_swing_mode or false
     state.midi_edit_swing_division = state.midi_edit_swing_division or nil
+    state.midi_edit_time_selection_mode = state.midi_edit_time_selection_mode or false
+    state.midi_edit_time_start_bar = state.midi_edit_time_start_bar or nil
+    state.midi_edit_time_end_bar = state.midi_edit_time_end_bar or nil
 
     local function toggle_bar(selection, bar)
         if not bar or bar > bar_count then return end
@@ -108,9 +114,55 @@ function M.draw(api, context)
         api.redraw()
     end
 
-    -- Rows 7/8: source measure selection, purple. During the swing workflow
-    -- row 8 becomes a temporary yellow timing-division selector. The existing
-    -- measure selection stays stored and is restored when swing mode ends.
+    local function get_bar_time_range(bar)
+        local seq_context = sequencer.get_context()
+        if not seq_context or not seq_context.project or seq_context.region_start == nil then
+            return nil, nil, seq_context
+        end
+        local _, first_measure = reaper.TimeMap2_timeToBeats(
+            seq_context.project,
+            seq_context.region_start
+        )
+        if first_measure == nil then return nil, nil, seq_context end
+        local measure_index = math.floor(first_measure) + math.max(0, bar - 1)
+        local ok, qn_start, qn_end = reaper.TimeMap_GetMeasureInfo(
+            seq_context.project,
+            measure_index
+        )
+        if not ok or not qn_start or not qn_end then return nil, nil, seq_context end
+        return reaper.TimeMap2_QNToTime(seq_context.project, qn_start),
+               reaper.TimeMap2_QNToTime(seq_context.project, qn_end),
+               seq_context
+    end
+
+    local function apply_time_selection()
+        local start_bar = math.max(1, math.min(bar_count,
+            tonumber(state.midi_edit_time_start_bar) or tonumber(state.sequencer_bar) or 1))
+        local end_bar = math.max(start_bar, math.min(bar_count,
+            tonumber(state.midi_edit_time_end_bar) or start_bar))
+        state.midi_edit_time_start_bar = start_bar
+        state.midi_edit_time_end_bar = end_bar
+
+        local start_pos, _, seq_context = get_bar_time_range(start_bar)
+        local _, end_pos = get_bar_time_range(end_bar)
+        if not seq_context or not seq_context.project or not start_pos or not end_pos then
+            report("The selected time range could not be resolved.")
+            return false
+        end
+        reaper.GetSet_LoopTimeRange2(
+            seq_context.project,
+            true,
+            false,
+            start_pos,
+            end_pos,
+            false
+        )
+        reaper.UpdateArrange()
+        return true
+    end
+
+    -- Rows 7/8 normally select source measures. In Time Selection mode they
+    -- select exactly one START measure.
     for row = 7, 8 do
         for col = 1, 8 do
             if state.midi_edit_swing_mode and row == 8 then
@@ -127,31 +179,64 @@ function M.draw(api, context)
             else
                 local bar = bar_from_pad(row, col, true)
                 local valid = bar and bar <= bar_count
-                api.drawpad(row, col, valid and SOURCE_VALID or SOURCE_DARK, api.MODE_HIGHLIGHT, {
-                    active = valid and state.midi_edit_source_bars[bar] == true,
-                    active_color = C.WHITE,
-                    on_press = valid and function()
-                        toggle_bar(state.midi_edit_source_bars, bar)
-                    end or nil,
-                    on_release = function() return true end
-                })
+                if state.midi_edit_time_selection_mode then
+                    api.drawpad(row, col, valid and TIME_START_COLOR or SOURCE_DARK, api.MODE_HIGHLIGHT, {
+                        active = valid and state.midi_edit_time_start_bar == bar,
+                        active_color = TIME_SELECTED,
+                        on_press = valid and function()
+                            state.midi_edit_time_start_bar = bar
+                            if (state.midi_edit_time_end_bar or bar) < bar then
+                                state.midi_edit_time_end_bar = bar
+                            end
+                            apply_time_selection()
+                            api.redraw()
+                        end or nil,
+                        on_release = function() return true end
+                    })
+                else
+                    api.drawpad(row, col, valid and SOURCE_VALID or SOURCE_DARK, api.MODE_HIGHLIGHT, {
+                        active = valid and state.midi_edit_source_bars[bar] == true,
+                        active_color = C.WHITE,
+                        on_press = valid and function()
+                            toggle_bar(state.midi_edit_source_bars, bar)
+                        end or nil,
+                        on_release = function() return true end
+                    })
+                end
             end
         end
     end
 
-    -- Rows 5/6: destination measure selection, blue.
+    -- Rows 5/6 normally select destination measures. In Time Selection mode
+    -- they select exactly one END measure.
     for row = 5, 6 do
         for col = 1, 8 do
             local bar = bar_from_pad(row, col, false)
             local valid = bar and bar <= bar_count
-            api.drawpad(row, col, valid and TARGET_VALID or TARGET_DARK, api.MODE_HIGHLIGHT, {
-                active = valid and state.midi_edit_target_bars[bar] == true,
-                active_color = C.WHITE,
-                on_press = valid and function()
-                    toggle_bar(state.midi_edit_target_bars, bar)
-                end or nil,
-                on_release = function() return true end
-            })
+            if state.midi_edit_time_selection_mode then
+                api.drawpad(row, col, valid and TIME_END_COLOR or TARGET_DARK, api.MODE_HIGHLIGHT, {
+                    active = valid and state.midi_edit_time_end_bar == bar,
+                    active_color = TIME_SELECTED,
+                    on_press = valid and function()
+                        state.midi_edit_time_end_bar = bar
+                        if (state.midi_edit_time_start_bar or bar) > bar then
+                            state.midi_edit_time_start_bar = bar
+                        end
+                        apply_time_selection()
+                        api.redraw()
+                    end or nil,
+                    on_release = function() return true end
+                })
+            else
+                api.drawpad(row, col, valid and TARGET_VALID or TARGET_DARK, api.MODE_HIGHLIGHT, {
+                    active = valid and state.midi_edit_target_bars[bar] == true,
+                    active_color = C.WHITE,
+                    on_press = valid and function()
+                        toggle_bar(state.midi_edit_target_bars, bar)
+                    end or nil,
+                    on_release = function() return true end
+                })
+            end
         end
     end
 
@@ -189,7 +274,7 @@ function M.draw(api, context)
         api.redraw()
     end
 
-    -- Row 1: orange action keys. 15/16 are reserved for future functions.
+    -- Row 1: orange action keys. Pad 15 opens Time Selection; pad 16 is reserved.
     for col = 1, 8 do
         local callback = nil
 
@@ -214,6 +299,7 @@ function M.draw(api, context)
                         report("Select one or more bars before starting swing.")
                         return
                     end
+                    state.midi_edit_time_selection_mode = false
                     state.midi_edit_swing_mode = true
                     state.midi_edit_swing_division = nil
                     api.redraw()
@@ -258,6 +344,22 @@ function M.draw(api, context)
                 )
                 finish_action(engine.quantize_bars(sequencer, selected_source(), strength))
             end
+        elseif col == 5 then
+            callback = function()
+                if not state.midi_edit_time_selection_mode then
+                    local current_bar = math.max(1, math.min(bar_count,
+                        tonumber(state.sequencer_bar) or 1))
+                    state.midi_edit_time_selection_mode = true
+                    state.midi_edit_swing_mode = false
+                    state.midi_edit_swing_division = nil
+                    state.midi_edit_time_start_bar = current_bar
+                    state.midi_edit_time_end_bar = current_bar
+                    apply_time_selection()
+                else
+                    state.midi_edit_time_selection_mode = false
+                end
+                api.redraw()
+            end
         elseif col == 7 then
             callback = function()
                 local ok, message = engine.undo(sequencer)
@@ -275,7 +377,9 @@ function M.draw(api, context)
         end
 
         api.drawpad(1, col, ACTION_ORANGE, api.MODE_HIGHLIGHT, {
-            active = (col == 3 and state.midi_edit_swing_mode) or false,
+            active = (col == 3 and state.midi_edit_swing_mode)
+                  or (col == 5 and state.midi_edit_time_selection_mode)
+                  or false,
             active_color = ACTION_ACTIVE,
             on_press = callback,
             on_release = function() return true end
