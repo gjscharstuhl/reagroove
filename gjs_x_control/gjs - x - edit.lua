@@ -28,6 +28,9 @@ local pattern_copy = dofile(
 local preset_selector = dofile(
     script_dir .. "gjs - x - preset_selector.lua"
 )
+local pattern_slots = dofile(
+    script_dir .. "gjs - x - pattern_slots.lua"
+)
 
 local SCOPE_SELECTED_TRACK = 1
 local SCOPE_ALL_TRACKS = 2
@@ -44,6 +47,8 @@ local ACTION_TRACK_SELECT_COL = 5
 local ACTION_PATTERN_COPY_COL = 6
 local ACTION_PRESET_SELECTOR_COL = 7
 local ACTION_SAVE_QUIT_COL = 8
+local ACTION_PATTERN_SLOTS_ROW = 2
+local ACTION_PATTERN_SLOTS_COL = 1
 
 local selected_bars = 1
 local selected_track = nil
@@ -64,6 +69,9 @@ local copy_from_region = nil
 local copy_to_region = nil
 local copy_track_mode = 1 -- 1 = armed/selected tracks, 2 = all tracks
 local preset_selector_mode = false
+local pattern_slots_mode = false
+local pattern_slot_selected = 1
+local pattern_slot_save_mode = false
 
 local merge_mode = false
 local merge_scope = MERGE_SELECTED_PROJECT
@@ -618,6 +626,88 @@ local function draw_merge_mode(api, C)
     })
 end
 
+local function draw_pattern_slots_mode(api, C)
+    local LOAD_EMPTY = { 0, 0, 10 }
+    local LOAD_FULL = { 0, 0, 70 }
+    local SAVE_EMPTY = { 10, 3, 0 }
+    local SAVE_FULL = { 70, 22, 0 }
+    local existing = pattern_slots.scan_existing(selected_track)
+
+    local function pad_to_slot(row, col)
+        return ((8 - row) * 8) + col
+    end
+
+    local function slot_background(row, col)
+        local slot = pad_to_slot(row, col)
+        if slot == pattern_slot_selected then
+            return C.WHITE
+        end
+        if pattern_slot_save_mode then
+            return existing[slot] and SAVE_FULL or SAVE_EMPTY
+        end
+        return existing[slot] and LOAD_FULL or LOAD_EMPTY
+    end
+
+    -- 56 pattern slots: rows 8 through 2.
+    api.drawblock(8, 1, 2, 8, C.OFF, api.MODE_HIGHLIGHT, {
+        background_rgb = slot_background,
+        active_color = C.WHITE,
+        on_press = function(pad)
+            pattern_slot_selected = pad_to_slot(pad.row, pad.col)
+            api.redraw()
+        end
+    })
+
+    -- 11 confirm, 12 exit, 13 load/save toggle.
+    api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            local ok, err
+            if pattern_slot_save_mode then
+                ok, err = pattern_slots.save(
+                    pattern_slot_selected,
+                    selected_track,
+                    selected_region
+                )
+            else
+                ok, err = pattern_slots.load(
+                    pattern_slot_selected,
+                    selected_track,
+                    selected_region
+                )
+            end
+
+            if not ok and err then
+                reaper.ShowConsoleMsg("Pattern slots: " .. tostring(err) .. "\n")
+            elseif ok then
+                pattern_slots_mode = false
+            end
+            api.redraw()
+        end
+    })
+
+    api.drawpad(1, 2, C.RED, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            pattern_slots_mode = false
+            api.redraw()
+        end
+    })
+
+    api.drawpad(
+        1, 3,
+        pattern_slot_save_mode and C.ORANGE or C.YELLOW,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+            on_press = function()
+                pattern_slot_save_mode = not pattern_slot_save_mode
+                api.redraw()
+            end
+        }
+    )
+end
+
 return function(api, navigation)
     local C = api.COLOR
 
@@ -693,6 +783,11 @@ return function(api, navigation)
         return
     end
 
+    if pattern_slots_mode then
+        draw_pattern_slots_mode(api, C)
+        return
+    end
+
     api.drawstrip(
         8, 1, 8,
         C.PURPLE,
@@ -761,7 +856,7 @@ return function(api, navigation)
     )
 
     api.drawstrip(
-        2, 1, 8,
+        3, 1, 8,
         C.ORANGE,
         api.MODE_RADIO,
         {
@@ -775,44 +870,51 @@ return function(api, navigation)
         }
     )
 
-    api.drawstrip(
-        1, 1, 8,
+    api.drawblock(
+        2, 1, 1, 8,
         C.BLUE,
         api.MODE_HIGHLIGHT,
         {
             active_color = C.WHITE,
             on_press = function(pad)
-                if pad.col == ACTION_RESIZE_COL then
-                    -- Resize starts from the pattern currently selected on
-                    -- the Edit overview. Do not fall back to an old resize
-                    -- radio-group selection from a previous session.
-                    selected_region = clamp(selected_region, 1, 8, 1)
-                    resize_mode = true
-                elseif pad.col == ACTION_CLEAR_COL then
-                    -- Start every Clear session with both actions disabled.
-                    clear_items = false
-                    clear_fx = false
-                    clear_track_mode = 1
-                    clear_mode = true
-                elseif pad.col == ACTION_MERGE_COL then
-                    merge_mode = true
-                    merge_sequence = {}
-                elseif pad.col == ACTION_TIME_SIGNATURE_COL then
-                    time_signature.open()
-                    time_signature_mode = true
-                elseif pad.col == ACTION_TRACK_SELECT_COL then
-                    subproject_track.open(selected_track)
-                    track_select_mode = true
-                elseif pad.col == ACTION_PATTERN_COPY_COL then
-                    pattern_copy_mode = true
-                    copy_from_region = selected_region
-                    copy_to_region = nil
-                    copy_track_mode = 1
-                elseif pad.col == ACTION_PRESET_SELECTOR_COL then
-                    preset_selector.open(selected_track)
-                    preset_selector_mode = true
-                elseif pad.col == ACTION_SAVE_QUIT_COL then
-                    save_and_quit.run()
+                if pad.row == ACTION_PATTERN_SLOTS_ROW
+                   and pad.col == ACTION_PATTERN_SLOTS_COL then
+                    pattern_slot_selected = 1
+                    pattern_slot_save_mode = false
+                    pattern_slots_mode = true
+                elseif pad.row == 1 then
+                    if pad.col == ACTION_RESIZE_COL then
+                        -- Resize starts from the pattern currently selected on
+                        -- the Edit overview. Do not fall back to an old resize
+                        -- radio-group selection from a previous session.
+                        selected_region = clamp(selected_region, 1, 8, 1)
+                        resize_mode = true
+                    elseif pad.col == ACTION_CLEAR_COL then
+                        -- Start every Clear session with both actions disabled.
+                        clear_items = false
+                        clear_fx = false
+                        clear_track_mode = 1
+                        clear_mode = true
+                    elseif pad.col == ACTION_MERGE_COL then
+                        merge_mode = true
+                        merge_sequence = {}
+                    elseif pad.col == ACTION_TIME_SIGNATURE_COL then
+                        time_signature.open()
+                        time_signature_mode = true
+                    elseif pad.col == ACTION_TRACK_SELECT_COL then
+                        subproject_track.open(selected_track)
+                        track_select_mode = true
+                    elseif pad.col == ACTION_PATTERN_COPY_COL then
+                        pattern_copy_mode = true
+                        copy_from_region = selected_region
+                        copy_to_region = nil
+                        copy_track_mode = 1
+                    elseif pad.col == ACTION_PRESET_SELECTOR_COL then
+                        preset_selector.open(selected_track)
+                        preset_selector_mode = true
+                    elseif pad.col == ACTION_SAVE_QUIT_COL then
+                        save_and_quit.run()
+                    end
                 end
 
                 api.redraw()
