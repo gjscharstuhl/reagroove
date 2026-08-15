@@ -515,6 +515,12 @@ local function insert_pattern_file(project, track, region, path, stretch_audio)
     reaper.SetMediaItemTake_Source(take, media_source)
     reaper.SetMediaItemInfo_Value(item, "D_POSITION", region.start_pos)
 
+    -- Same visual fix used after recording: when Free Item Positioning is
+    -- enabled, make a newly imported/loaded pattern use the full track lane
+    -- height so the complete waveform is immediately visible.
+    reaper.SetMediaItemInfo_Value(item, "F_FREEMODE_Y", 0.0)
+    reaper.SetMediaItemInfo_Value(item, "F_FREEMODE_H", 1.0)
+
     local target_length = region.end_pos - region.start_pos
     reaper.SetMediaItemInfo_Value(item, "D_LENGTH", target_length)
 
