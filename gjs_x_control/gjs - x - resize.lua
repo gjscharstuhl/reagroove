@@ -494,16 +494,18 @@ function M.resize_selected_region_all_projects(
     local main_proj = reaper.EnumProjects(0, "")
 
     if main_proj then
-        begin_project_undo(main_proj)
+        if create_undo_points then begin_project_undo(main_proj) end
 
         resize_main_region_to_scene_length(region_number)
 
-        end_project_undo(
-            main_proj,
-            "Resize main region "
-            .. tostring(region_number)
-            .. " to scene length"
-        )
+        if create_undo_points then
+            end_project_undo(
+                main_proj,
+                "Resize main region "
+                .. tostring(region_number)
+                .. " to scene length"
+            )
+        end
     end
 
     reaper.PreventUIRefresh(-1)
@@ -520,10 +522,11 @@ function M.resize_selected_region_all_projects(
     return true
 end
 
-function M.resize_selected_region_selected_project(
+local function resize_selected_region_selected_project_impl(
     active_track,
     region_number,
-    bars
+    bars,
+    create_undo_points
 )
     active_track = tonumber(active_track)
     region_number = tonumber(region_number)
@@ -559,7 +562,7 @@ function M.resize_selected_region_selected_project(
 
     reaper.PreventUIRefresh(1)
 
-    begin_project_undo(proj)
+    if create_undo_points then begin_project_undo(proj) end
 
     resize_region_to_bars(
         proj,
@@ -568,28 +571,32 @@ function M.resize_selected_region_selected_project(
         true
     )
 
-    end_project_undo(
-        proj,
-        "Resize region "
-        .. tostring(region_number)
-        .. " to "
-        .. tostring(bars)
-        .. " bars"
-    )
+    if create_undo_points then
+        end_project_undo(
+            proj,
+            "Resize region "
+            .. tostring(region_number)
+            .. " to "
+            .. tostring(bars)
+            .. " bars"
+        )
+    end
 
     local main_proj = reaper.EnumProjects(0, "")
 
     if main_proj then
-        begin_project_undo(main_proj)
+        if create_undo_points then begin_project_undo(main_proj) end
 
         resize_main_region_to_scene_length(region_number)
 
-        end_project_undo(
-            main_proj,
-            "Resize main region "
-            .. tostring(region_number)
-            .. " to scene length"
-        )
+        if create_undo_points then
+            end_project_undo(
+                main_proj,
+                "Resize main region "
+                .. tostring(region_number)
+                .. " to scene length"
+            )
+        end
     end
 
     reaper.PreventUIRefresh(-1)
@@ -599,6 +606,26 @@ function M.resize_selected_region_selected_project(
     reaper.UpdateArrange()
 
     return true
+end
+
+function M.resize_selected_region_selected_project(
+    active_track,
+    region_number,
+    bars
+)
+    return resize_selected_region_selected_project_impl(
+        active_track, region_number, bars, true
+    )
+end
+
+function M.resize_selected_region_selected_project_no_undo(
+    active_track,
+    region_number,
+    bars
+)
+    return resize_selected_region_selected_project_impl(
+        active_track, region_number, bars, false
+    )
 end
 
 return M

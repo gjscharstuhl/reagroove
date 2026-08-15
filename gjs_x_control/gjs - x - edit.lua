@@ -72,6 +72,7 @@ local preset_selector_mode = false
 local pattern_slots_mode = false
 local pattern_slot_selected = 1
 local pattern_slot_save_mode = false
+local pattern_preview_session = nil
 
 local merge_mode = false
 local merge_scope = MERGE_SELECTED_PROJECT
@@ -654,6 +655,34 @@ local function draw_pattern_slots_mode(api, C)
         active_color = C.WHITE,
         on_press = function(pad)
             pattern_slot_selected = pad_to_slot(pad.row, pad.col)
+
+            if not pattern_slot_save_mode and existing[pattern_slot_selected] then
+                if not pattern_preview_session then
+                    local session, begin_err = pattern_slots.begin_preview(
+                        selected_track,
+                        selected_region
+                    )
+                    pattern_preview_session = session
+                    if not session and begin_err then
+                        reaper.ShowConsoleMsg(
+                            "Pattern preview: " .. tostring(begin_err) .. "\n"
+                        )
+                    end
+                end
+
+                if pattern_preview_session then
+                    local ok, err = pattern_slots.preview_load(
+                        pattern_preview_session,
+                        pattern_slot_selected
+                    )
+                    if not ok and err then
+                        reaper.ShowConsoleMsg(
+                            "Pattern preview: " .. tostring(err) .. "\n"
+                        )
+                    end
+                end
+            end
+
             api.redraw()
         end
     })
@@ -670,11 +699,10 @@ local function draw_pattern_slots_mode(api, C)
                     selected_region
                 )
             else
-                ok, err = pattern_slots.load(
-                    pattern_slot_selected,
-                    selected_track,
-                    selected_region
-                )
+                -- Load mode is already live-previewed by pressing a slot pad.
+                -- Confirm simply accepts the currently previewed project state.
+                ok, err = pattern_slots.confirm_preview(pattern_preview_session)
+                pattern_preview_session = nil
             end
 
             if not ok and err then
@@ -689,6 +717,15 @@ local function draw_pattern_slots_mode(api, C)
     api.drawpad(1, 2, C.RED, api.MODE_HIGHLIGHT, {
         active_color = C.WHITE,
         on_press = function()
+            if pattern_preview_session then
+                local ok, err = pattern_slots.cancel_preview(pattern_preview_session)
+                pattern_preview_session = nil
+                if not ok and err then
+                    reaper.ShowConsoleMsg(
+                        "Pattern preview cancel: " .. tostring(err) .. "\n"
+                    )
+                end
+            end
             pattern_slots_mode = false
             api.redraw()
         end
@@ -701,7 +738,32 @@ local function draw_pattern_slots_mode(api, C)
         {
             active_color = C.WHITE,
             on_press = function()
-                pattern_slot_save_mode = not pattern_slot_save_mode
+                if not pattern_slot_save_mode then
+                    -- Leaving load-preview mode for save: restore the original
+                    -- state first, so a preview can never accidentally be saved.
+                    if pattern_preview_session then
+                        local ok, err = pattern_slots.cancel_preview(pattern_preview_session)
+                        pattern_preview_session = nil
+                        if not ok and err then
+                            reaper.ShowConsoleMsg(
+                                "Pattern preview: " .. tostring(err) .. "\n"
+                            )
+                        end
+                    end
+                    pattern_slot_save_mode = true
+                else
+                    pattern_slot_save_mode = false
+                    local session, err = pattern_slots.begin_preview(
+                        selected_track,
+                        selected_region
+                    )
+                    pattern_preview_session = session
+                    if not session and err then
+                        reaper.ShowConsoleMsg(
+                            "Pattern preview: " .. tostring(err) .. "\n"
+                        )
+                    end
+                end
                 api.redraw()
             end
         }
@@ -881,6 +943,17 @@ return function(api, navigation)
                    and pad.col == ACTION_PATTERN_SLOTS_COL then
                     pattern_slot_selected = 1
                     pattern_slot_save_mode = false
+                    pattern_preview_session = nil
+                    local session, err = pattern_slots.begin_preview(
+                        selected_track,
+                        selected_region
+                    )
+                    pattern_preview_session = session
+                    if not session and err then
+                        reaper.ShowConsoleMsg(
+                            "Pattern preview: " .. tostring(err) .. "\n"
+                        )
+                    end
                     pattern_slots_mode = true
                 elseif pad.row == 1 then
                     if pad.col == ACTION_RESIZE_COL then

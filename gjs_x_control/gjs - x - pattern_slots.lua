@@ -481,6 +481,99 @@ local function insert_pattern_file(project, track, region, path)
     return true
 end
 
+
+local function snapshot_regions(project)
+    local snapshot = {}
+    if not project then return snapshot end
+    local regions = get_regions(project)
+    for _, region in ipairs(regions) do
+        snapshot[#snapshot + 1] = {
+            id = region.id,
+            start_pos = region.start_pos,
+            end_pos = region.end_pos,
+            name = region.name
+        }
+    end
+    return snapshot
+end
+
+local function restore_regions(project, snapshot)
+    if not project or not snapshot then return end
+    for _, region in ipairs(snapshot) do
+        reaper.SetProjectMarker2(
+            project,
+            region.id,
+            true,
+            region.start_pos,
+            region.end_pos,
+            region.name or ""
+        )
+    end
+end
+
+local function snapshot_all_items(project)
+    local snapshot = {}
+    if not project then return snapshot end
+
+    for track_index = 0, reaper.CountTracks(project) - 1 do
+        local track = reaper.GetTrack(project, track_index)
+        if track then
+            for item_index = 0, reaper.CountTrackMediaItems(track) - 1 do
+                local item = reaper.GetTrackMediaItem(track, item_index)
+                local ok, chunk = reaper.GetItemStateChunk(item, "", false)
+                if ok and chunk then
+                    snapshot[#snapshot + 1] = {
+                        track_index = track_index,
+                        chunk = chunk
+                    }
+                end
+            end
+        end
+    end
+
+    return snapshot
+end
+
+local function restore_all_items(project, snapshot)
+    if not project or not snapshot then return false end
+
+    for track_index = 0, reaper.CountTracks(project) - 1 do
+        local track = reaper.GetTrack(project, track_index)
+        if track then
+            for item_index = reaper.CountTrackMediaItems(track) - 1, 0, -1 do
+                local item = reaper.GetTrackMediaItem(track, item_index)
+                reaper.DeleteTrackMediaItem(track, item)
+            end
+        end
+    end
+
+    for _, saved in ipairs(snapshot) do
+        local track = reaper.GetTrack(project, saved.track_index)
+        if track then
+            local item = reaper.AddMediaItemToTrack(track)
+            if item then
+                reaper.SetItemStateChunk(item, saved.chunk, false)
+            end
+        end
+    end
+
+    return true
+end
+
+local function restore_preview_snapshot(session)
+    if not session or not session.project then
+        return false, "Geen geldige pattern-preview actief."
+    end
+
+    reaper.PreventUIRefresh(1)
+    restore_regions(session.project, session.project_regions)
+    restore_all_items(session.project, session.project_items)
+    restore_regions(session.main_project, session.main_regions)
+    reaper.PreventUIRefresh(-1)
+    reaper.UpdateArrange()
+    return true
+end
+
 function M.scan_existing(track_number)
     local existing = {}
     track_number = valid_track_number(track_number)
@@ -519,7 +612,7 @@ function M.save(slot, track_number, region_number)
     return ok, err
 end
 
-function M.load(slot, track_number, region_number)
+local function load_impl(slot, track_number, region_number, create_undo)
     slot = valid_slot(slot)
     track_number = valid_track_number(track_number)
     if not slot or not track_number or not PATTERN_DIR then
@@ -544,35 +637,95 @@ function M.load(slot, track_number, region_number)
     local current_bars = region_bars(project, region)
     if not current_bars then return false, "Doelregionlengte kon niet worden bepaald." end
 
-    reaper.Undo_BeginBlock2(project)
+    if create_undo then reaper.Undo_BeginBlock2(project) end
 
     if current_bars ~= target_bars then
-        local resized = resize.resize_selected_region_selected_project(
-            track_number,
-            region_number,
-            target_bars
-        )
+        local resize_fn = create_undo
+            and resize.resize_selected_region_selected_project
+            or resize.resize_selected_region_selected_project_no_undo
+        local resized = resize_fn(track_number, region_number, target_bars)
         if resized == false then
-            reaper.Undo_EndBlock2(project, "GJS-X load pattern", -1)
+            if create_undo then reaper.Undo_EndBlock2(project, "GJS-X load pattern", -1) end
             return false, "Doelregion kon niet worden resized."
         end
     end
 
     region = get_region(project, region_number)
     if not region then
-        reaper.Undo_EndBlock2(project, "GJS-X load pattern", -1)
+        if create_undo then reaper.Undo_EndBlock2(project, "GJS-X load pattern", -1) end
         return false, "Doelregion niet meer gevonden na resize."
     end
 
-    -- Re-resolve the first record-armed track after resize, in case project state changed.
     track = get_first_armed_internal_track(project) or track
     delete_region_items_on_track(track, region)
     clear_item_selection(project)
 
     local ok, err = insert_pattern_file(project, track, region, path)
     reaper.UpdateArrange()
-    reaper.Undo_EndBlock2(project, "GJS-X load pattern " .. pattern_stem(track_number, slot), -1)
+    if create_undo then
+        reaper.Undo_EndBlock2(project, "GJS-X load pattern " .. pattern_stem(track_number, slot), -1)
+    end
     return ok, err
+end
+
+function M.load(slot, track_number, region_number)
+    return load_impl(slot, track_number, region_number, true)
+end
+
+function M.begin_preview(track_number, region_number)
+    track_number = valid_track_number(track_number)
+    region_number = math.floor(tonumber(region_number) or 0)
+    if not track_number or region_number < 1 or region_number > 8 then
+        return nil, "Ongeldige track of region voor pattern-preview."
+    end
+
+    local project = get_project(track_number)
+    if not project then return nil, "Geselecteerde track/project niet gevonden." end
+    local region = get_region(project, region_number)
+    if not region then return nil, "Geselecteerde region niet gevonden." end
+    if not get_first_armed_internal_track(project) then
+        return nil, "Geen record-armed track in het subproject gevonden."
+    end
+
+    local main_project = reaper.EnumProjects(0, "")
+    return {
+        track_number = track_number,
+        region_number = region_number,
+        project = project,
+        main_project = main_project,
+        project_regions = snapshot_regions(project),
+        project_items = snapshot_all_items(project),
+        main_regions = snapshot_regions(main_project),
+        active = true
+    }
+end
+
+function M.preview_load(session, slot)
+    if not session or not session.active then
+        return false, "Geen actieve pattern-preview."
+    end
+
+    local restored, restore_err = restore_preview_snapshot(session)
+    if not restored then return false, restore_err end
+
+    return load_impl(
+        slot,
+        session.track_number,
+        session.region_number,
+        false
+    )
+end
+
+function M.cancel_preview(session)
+    if not session or not session.active then return true end
+    local ok, err = restore_preview_snapshot(session)
+    session.active = false
+    return ok, err
+end
+
+function M.confirm_preview(session)
+    if session then session.active = false end
+    return true
 end
 
 return M
