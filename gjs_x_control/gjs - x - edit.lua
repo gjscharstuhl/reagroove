@@ -31,6 +31,9 @@ local preset_selector = dofile(
 local pattern_slots = dofile(
     script_dir .. "gjs - x - pattern_slots.lua"
 )
+local exporter = dofile(
+    script_dir .. "gjs - x - export.lua"
+)
 
 local SCOPE_SELECTED_TRACK = 1
 local SCOPE_ALL_TRACKS = 2
@@ -49,6 +52,8 @@ local ACTION_PRESET_SELECTOR_COL = 7
 local ACTION_SAVE_QUIT_COL = 8
 local ACTION_PATTERN_SLOTS_ROW = 2
 local ACTION_PATTERN_SLOTS_COL = 1
+local ACTION_EXPORT_ROW = 2
+local ACTION_EXPORT_COL = 2
 
 local selected_bars = 1
 local selected_track = nil
@@ -70,6 +75,7 @@ local copy_to_region = nil
 local copy_track_mode = 1 -- 1 = armed/selected tracks, 2 = all tracks
 local preset_selector_mode = false
 local pattern_slots_mode = false
+local export_mode = false
 local pattern_slot_selected = 1
 local pattern_slot_save_mode = false
 local pattern_preview_session = nil
@@ -899,6 +905,14 @@ return function(api, navigation)
         return
     end
 
+    if export_mode then
+        exporter.draw(api, C, function()
+            export_mode = false
+            api.redraw()
+        end)
+        return
+    end
+
     if pattern_slots_mode then
         draw_pattern_slots_mode(api, C)
         return
@@ -993,7 +1007,11 @@ return function(api, navigation)
         {
             active_color = C.WHITE,
             on_press = function(pad)
-                if pad.row == ACTION_PATTERN_SLOTS_ROW
+                if pad.row == ACTION_EXPORT_ROW
+                   and pad.col == ACTION_EXPORT_COL then
+                    exporter.open()
+                    export_mode = true
+                elseif pad.row == ACTION_PATTERN_SLOTS_ROW
                    and pad.col == ACTION_PATTERN_SLOTS_COL then
                     pattern_slot_selected = 1
                     pattern_slot_save_mode = false
