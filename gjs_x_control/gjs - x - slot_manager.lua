@@ -694,12 +694,21 @@ function M.save(slot)
 
         project_name = safe_name(project_name)
 
-        local destination = string.format(
-            "%s/%02d-%s.rpp",
-            directory,
-            entry.number,
-            project_name
-        )
+        local destination
+        if project_name:lower() == "liverec" then
+            -- Live recording is the one project that keeps its fixed name.
+            destination = string.format(
+                "%s/liverec.rpp",
+                directory
+            )
+        else
+            destination = string.format(
+                "%s/%02d-%s.rpp",
+                directory,
+                entry.number,
+                project_name
+            )
+        end
 
         reaper.Main_SaveProjectEx(
             entry.project,

@@ -31,6 +31,9 @@ local preset_selector = dofile(
 local pattern_slots = dofile(
     script_dir .. "gjs - x - pattern_slots.lua"
 )
+local live_record = dofile(
+    script_dir .. "gjs - x - live_record.lua"
+)
 local exporter = dofile(
     script_dir .. "gjs - x - export.lua"
 )
@@ -996,6 +999,25 @@ return function(api, navigation)
             on_press = function(pad)
                 selected_track = pad.col
                 api.redraw()
+            end
+        }
+    )
+
+    -- Pad 58: live-record toggle for liverec.rpp.
+    -- Visible on the normal Edit overview.
+    -- Green = record off, red = recording.
+    api.drawpad(
+        5, 8,
+        live_record.is_recording() and C.RED or C.GREEN,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+            on_press = function()
+                live_record.toggle()
+                api.redraw()
+            end,
+            on_release = function()
+                return true
             end
         }
     )
