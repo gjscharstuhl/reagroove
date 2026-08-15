@@ -73,6 +73,7 @@ local pattern_slots_mode = false
 local pattern_slot_selected = 1
 local pattern_slot_save_mode = false
 local pattern_preview_session = nil
+local pattern_audio_stretch = true -- pad 14: audio follows region length by default
 
 local merge_mode = false
 local merge_scope = MERGE_SELECTED_PROJECT
@@ -673,7 +674,8 @@ local function draw_pattern_slots_mode(api, C)
                 if pattern_preview_session then
                     local ok, err = pattern_slots.preview_load(
                         pattern_preview_session,
-                        pattern_slot_selected
+                        pattern_slot_selected,
+                        pattern_audio_stretch
                     )
                     if not ok and err then
                         reaper.ShowConsoleMsg(
@@ -768,6 +770,34 @@ local function draw_pattern_slots_mode(api, C)
             end
         }
     )
+
+
+    -- 14 audio load behaviour toggle. ON (default): stretch the audio to the
+    -- existing region. OFF: old behaviour, resize the region to the sample.
+    api.drawpad(1, 4, pattern_audio_stretch and C.BLUE or C.OFF, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            pattern_audio_stretch = not pattern_audio_stretch
+
+            -- While auditioning, immediately re-apply the selected slot from
+            -- the original preview snapshot so the difference is audible.
+            if not pattern_slot_save_mode
+                and pattern_preview_session
+                and existing[pattern_slot_selected] then
+                local ok, err = pattern_slots.preview_load(
+                    pattern_preview_session,
+                    pattern_slot_selected,
+                    pattern_audio_stretch
+                )
+                if not ok and err then
+                    reaper.ShowConsoleMsg(
+                        "Pattern stretch: " .. tostring(err) .. "\n"
+                    )
+                end
+            end
+            api.redraw()
+        end
+    })
 end
 
 return function(api, navigation)

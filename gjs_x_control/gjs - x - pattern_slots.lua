@@ -461,7 +461,7 @@ local function delete_region_items_on_track(track, region)
     end
 end
 
-local function insert_pattern_file(project, track, region, path)
+local function insert_pattern_file(project, track, region, path, stretch_audio)
     local media_source = reaper.PCM_Source_CreateFromFile(path)
     if not media_source then return false, "Patternbestand kon niet door REAPER worden geopend." end
 
@@ -476,7 +476,21 @@ local function insert_pattern_file(project, track, region, path)
 
     reaper.SetMediaItemTake_Source(take, media_source)
     reaper.SetMediaItemInfo_Value(item, "D_POSITION", region.start_pos)
-    reaper.SetMediaItemInfo_Value(item, "D_LENGTH", region.end_pos - region.start_pos)
+
+    local target_length = region.end_pos - region.start_pos
+    reaper.SetMediaItemInfo_Value(item, "D_LENGTH", target_length)
+
+    -- Audio stretch mode: keep the region fixed and fit the complete source
+    -- inside it. The take playrate makes the sample follow the musical
+    -- length/BPM of the current region. Preserve pitch while changing rate.
+    if stretch_audio and not reaper.TakeIsMIDI(take) and target_length > EPSILON then
+        local source_length, length_is_qn = reaper.GetMediaSourceLength(media_source)
+        if source_length and source_length > EPSILON and not length_is_qn then
+            reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", source_length / target_length)
+            reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+        end
+    end
+
     reaper.SetMediaItemSelected(item, true)
     return true
 end
@@ -612,14 +626,14 @@ function M.save(slot, track_number, region_number)
     return ok, err
 end
 
-local function load_impl(slot, track_number, region_number, create_undo)
+local function load_impl(slot, track_number, region_number, create_undo, stretch_audio)
     slot = valid_slot(slot)
     track_number = valid_track_number(track_number)
     if not slot or not track_number or not PATTERN_DIR then
         return false, "Ongeldig patternslot, tracknummer of HOME ontbreekt."
     end
 
-    local path = find_pattern_file(track_number, slot)
+    local path, is_midi = find_pattern_file(track_number, slot)
     if not path then return false, "Dit patternslot bestaat niet voor de geselecteerde track." end
 
     local project = get_project(track_number)
@@ -639,7 +653,10 @@ local function load_impl(slot, track_number, region_number, create_undo)
 
     if create_undo then reaper.Undo_BeginBlock2(project) end
 
-    if current_bars ~= target_bars then
+    -- MIDI always keeps the existing behaviour: the region follows the
+    -- pattern length. For audio this only happens when stretch mode is off.
+    local resize_region_to_pattern = is_midi or not stretch_audio
+    if resize_region_to_pattern and current_bars ~= target_bars then
         local resize_fn = create_undo
             and resize.resize_selected_region_selected_project
             or resize.resize_selected_region_selected_project_no_undo
@@ -660,7 +677,7 @@ local function load_impl(slot, track_number, region_number, create_undo)
     delete_region_items_on_track(track, region)
     clear_item_selection(project)
 
-    local ok, err = insert_pattern_file(project, track, region, path)
+    local ok, err = insert_pattern_file(project, track, region, path, stretch_audio and not is_midi)
     reaper.UpdateArrange()
     if create_undo then
         reaper.Undo_EndBlock2(project, "GJS-X load pattern " .. pattern_stem(track_number, slot), -1)
@@ -668,8 +685,9 @@ local function load_impl(slot, track_number, region_number, create_undo)
     return ok, err
 end
 
-function M.load(slot, track_number, region_number)
-    return load_impl(slot, track_number, region_number, true)
+function M.load(slot, track_number, region_number, stretch_audio)
+    if stretch_audio == nil then stretch_audio = true end
+    return load_impl(slot, track_number, region_number, true, stretch_audio)
 end
 
 function M.begin_preview(track_number, region_number)
@@ -700,7 +718,7 @@ function M.begin_preview(track_number, region_number)
     }
 end
 
-function M.preview_load(session, slot)
+function M.preview_load(session, slot, stretch_audio)
     if not session or not session.active then
         return false, "Geen actieve pattern-preview."
     end
@@ -708,11 +726,13 @@ function M.preview_load(session, slot)
     local restored, restore_err = restore_preview_snapshot(session)
     if not restored then return false, restore_err end
 
+    if stretch_audio == nil then stretch_audio = true end
     return load_impl(
         slot,
         session.track_number,
         session.region_number,
-        false
+        false,
+        stretch_audio
     )
 end
 
