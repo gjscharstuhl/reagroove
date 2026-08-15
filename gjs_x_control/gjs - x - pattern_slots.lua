@@ -678,6 +678,15 @@ local function load_impl(slot, track_number, region_number, create_undo, stretch
     clear_item_selection(project)
 
     local ok, err = insert_pattern_file(project, track, region, path, stretch_audio and not is_midi)
+
+    -- The resize engine selects the resized region immediately after resizing,
+    -- but pattern loading continues afterwards (delete/insert/select item).
+    -- Reselect at the very end so live preview/toggle mode leaves the newly
+    -- sized region as the active edit/time-selection context as well.
+    if ok and resize.select_region then
+        resize.select_region(track_number, region_number)
+    end
+
     reaper.UpdateArrange()
     if create_undo then
         reaper.Undo_EndBlock2(project, "GJS-X load pattern " .. pattern_stem(track_number, slot), -1)

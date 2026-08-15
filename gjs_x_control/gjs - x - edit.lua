@@ -686,6 +686,12 @@ local function draw_pattern_slots_mode(api, C)
             end
 
             api.redraw()
+        end,
+
+        -- The press redraws this block with the new selected slot.
+        -- Prevent MODE_HIGHLIGHT release from restoring the old LED colour.
+        on_release = function()
+            return true
         end
     })
 
@@ -767,14 +773,21 @@ local function draw_pattern_slots_mode(api, C)
                     end
                 end
                 api.redraw()
+            end,
+
+            -- Keep the newly redrawn load/save state visible on release.
+            on_release = function()
+                return true
             end
         }
     )
 
 
-    -- 14 audio load behaviour toggle. ON (default): stretch the audio to the
-    -- existing region. OFF: old behaviour, resize the region to the sample.
-    api.drawpad(1, 4, pattern_audio_stretch and C.BLUE or C.OFF, api.MODE_HIGHLIGHT, {
+    -- 14 audio load behaviour toggle. BLUE (default): stretch audio to the
+    -- existing region. PURPLE: resize the region to the sample length.
+    -- Use HIGHLIGHT so the core actually dispatches on_press; on_release=true
+    -- prevents the old pad instance from restoring its pre-redraw colour.
+    api.drawpad(1, 4, pattern_audio_stretch and C.BLUE or C.PURPLE, api.MODE_HIGHLIGHT, {
         active_color = C.WHITE,
         on_press = function()
             pattern_audio_stretch = not pattern_audio_stretch
@@ -796,6 +809,12 @@ local function draw_pattern_slots_mode(api, C)
                 end
             end
             api.redraw()
+        end,
+
+        -- The press redraws pad 14 immediately in its new blue/purple state.
+        -- Do not let MODE_HIGHLIGHT release restore the old colour afterwards.
+        on_release = function()
+            return true
         end
     })
 end

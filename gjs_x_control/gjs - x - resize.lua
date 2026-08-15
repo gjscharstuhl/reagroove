@@ -1,6 +1,6 @@
 -- ============================================================
 -- Screen 0 resize engine
--- Version 02 - select resized region after operation
+-- Version 03 - always reselect resized region after operation
 -- ============================================================
 --
 -- Page 2: resize all 8 regions in all subprojects
@@ -601,6 +601,8 @@ local function resize_selected_region_selected_project_impl(
 
     reaper.PreventUIRefresh(-1)
 
+    -- Resizing can move the time selection/region context. Restore the
+    -- operated region explicitly so edit mode stays focused on it.
     select_region(active_track, region_number)
 
     reaper.UpdateArrange()
@@ -626,6 +628,13 @@ function M.resize_selected_region_selected_project_no_undo(
     return resize_selected_region_selected_project_impl(
         active_track, region_number, bars, false
     )
+end
+
+-- Public helper for callers that continue modifying the project after a
+-- resize. Those later operations can change the edit/time-selection context,
+-- so they can explicitly reselect the operated region once they are done.
+function M.select_region(active_track, region_number)
+    return select_region(active_track, region_number)
 end
 
 return M
