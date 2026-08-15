@@ -214,6 +214,47 @@ local function get_track_name(track, fallback)
     return fallback or "Track"
 end
 
+local function copy_track_fx_chain_state(source_track, destination_track)
+    local ok_source, source_chunk =
+        reaper.GetTrackStateChunk(source_track, "", false)
+    local ok_destination, destination_chunk =
+        reaper.GetTrackStateChunk(destination_track, "", false)
+
+    if not ok_source or not ok_destination
+       or not source_chunk or not destination_chunk then
+        return
+    end
+
+    -- REAPER stores the track FX-chain power state on the top-level
+    -- "FX 0/1" line in the track chunk.  Copy that exact line rather than
+    -- relying on API properties that do not cover every REAPER version/state.
+    local source_fx_line =
+        source_chunk:match("[\r\n](%s*FX%s+[%-%d]+)[\r\n]")
+
+    if not source_fx_line then return end
+
+    local replaced = false
+    destination_chunk = destination_chunk:gsub(
+        "([\r\n])%s*FX%s+[%-%d]+([\r\n])",
+        function(prefix, suffix)
+            if replaced then
+                return prefix .. "FX 1" .. suffix
+            end
+            replaced = true
+            return prefix .. source_fx_line .. suffix
+        end,
+        1
+    )
+
+    if replaced then
+        reaper.SetTrackStateChunk(
+            destination_track,
+            destination_chunk,
+            false
+        )
+    end
+end
+
 local function copy_track_settings(source_track, destination_track, fallback_name)
     local name = get_track_name(source_track, fallback_name)
     reaper.GetSetMediaTrackInfo_String(destination_track, "P_NAME", name, true)
@@ -221,7 +262,7 @@ local function copy_track_settings(source_track, destination_track, fallback_nam
     local numeric_keys = {
         "D_VOL", "D_PAN", "D_WIDTH", "B_PHASE", "B_MUTE",
         "I_SOLO", "I_NCHAN", "I_PANMODE", "B_MAINSEND", "I_MIDIHWOUT",
-        "D_PANLAW", "I_AUTOMODE", "B_SHOWINMIXER", "B_SHOWINTCP"
+        "D_PANLAW", "I_AUTOMODE", "B_SHOWINMIXER", "B_SHOWINTCP", "I_FXEN"
     }
 
     for _, key in ipairs(numeric_keys) do
@@ -232,14 +273,41 @@ local function copy_track_settings(source_track, destination_track, fallback_nam
     -- Copy the normal FX chain. Folder routing is rebuilt separately below.
     local fx_count = reaper.TrackFX_GetCount(source_track)
     for fx = 0, fx_count - 1 do
+        local destination_fx = reaper.TrackFX_GetCount(destination_track)
+
         reaper.TrackFX_CopyToTrack(
             source_track,
             fx,
             destination_track,
-            reaper.TrackFX_GetCount(destination_track),
+            destination_fx,
             false
         )
+
+        -- Preserve the exact FX enabled/bypass state from the source.
+        -- TrackFX_CopyToTrack copies the processor, but the live enabled
+        -- state is restored explicitly here.
+        if type(reaper.TrackFX_GetEnabled) == "function"
+           and type(reaper.TrackFX_SetEnabled) == "function" then
+            local enabled = reaper.TrackFX_GetEnabled(source_track, fx)
+            reaper.TrackFX_SetEnabled(
+                destination_track,
+                destination_fx,
+                enabled
+            )
+        end
+
+        if type(reaper.TrackFX_GetOffline) == "function"
+           and type(reaper.TrackFX_SetOffline) == "function" then
+            local offline = reaper.TrackFX_GetOffline(source_track, fx)
+            reaper.TrackFX_SetOffline(
+                destination_track,
+                destination_fx,
+                offline
+            )
+        end
     end
+
+    copy_track_fx_chain_state(source_track, destination_track)
 end
 
 local function copy_master_settings(source_project, destination_project)
@@ -250,7 +318,7 @@ local function copy_master_settings(source_project, destination_project)
 
     local numeric_keys = {
         "D_VOL", "D_PAN", "D_WIDTH", "B_PHASE", "B_MUTE",
-        "I_SOLO", "I_NCHAN", "I_PANMODE"
+        "I_SOLO", "I_NCHAN", "I_PANMODE", "I_FXEN"
     }
     for _, key in ipairs(numeric_keys) do
         reaper.SetMediaTrackInfo_Value(
@@ -261,11 +329,38 @@ local function copy_master_settings(source_project, destination_project)
 
     local fx_count = reaper.TrackFX_GetCount(source_master)
     for fx = 0, fx_count - 1 do
+        local destination_fx = reaper.TrackFX_GetCount(destination_master)
+
         reaper.TrackFX_CopyToTrack(
-            source_master, fx, destination_master,
-            reaper.TrackFX_GetCount(destination_master), false
+            source_master,
+            fx,
+            destination_master,
+            destination_fx,
+            false
         )
+
+        if type(reaper.TrackFX_GetEnabled) == "function"
+           and type(reaper.TrackFX_SetEnabled) == "function" then
+            local enabled = reaper.TrackFX_GetEnabled(source_master, fx)
+            reaper.TrackFX_SetEnabled(
+                destination_master,
+                destination_fx,
+                enabled
+            )
+        end
+
+        if type(reaper.TrackFX_GetOffline) == "function"
+           and type(reaper.TrackFX_SetOffline) == "function" then
+            local offline = reaper.TrackFX_GetOffline(source_master, fx)
+            reaper.TrackFX_SetOffline(
+                destination_master,
+                destination_fx,
+                offline
+            )
+        end
     end
+
+    copy_track_fx_chain_state(source_master, destination_master)
 end
 
 local function copy_project_timing(source_project, destination_project)
@@ -810,10 +905,306 @@ local function build_arrangement_project(entries, route_to_main_buses)
     reaper.TrackList_AdjustWindows(false)
     reaper.UpdateArrange()
 
-    return destination_project, groups
+    return destination_project, groups, main_group
 end
 
-local function select_only_tracks(project, tracks)
+
+local select_only_tracks
+
+local function collect_main_stem_buses(main_group, main_source_project)
+    local buses = {}
+    if not main_group
+       or not main_group.destination_by_source
+       or not main_source_project then
+        return buses
+    end
+
+    -- Main mixer stem buses are tracks 2..9 in REAPER's visible numbering:
+    -- master, 16PADS, Bass, Guitar R, Guitar S, Synth, Synth1, Synth2.
+    for source_index = 1, 8 do
+        local source_track = reaper.GetTrack(main_source_project, source_index)
+        local destination_track =
+            source_track and main_group.destination_by_source[source_track] or nil
+        if destination_track then
+            buses[#buses + 1] = destination_track
+        end
+    end
+    return buses
+end
+
+local function track_contains_midi(track)
+    for item_index = 0, reaper.CountTrackMediaItems(track) - 1 do
+        local item = reaper.GetTrackMediaItem(track, item_index)
+        for take_index = 0, reaper.CountTakes(item) - 1 do
+            local take = reaper.GetTake(item, take_index)
+            if take and reaper.TakeIsMIDI(take) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function disable_noninstrument_fx(project)
+    for track_index = 0, reaper.CountTracks(project) - 1 do
+        local track = reaper.GetTrack(project, track_index)
+        local has_midi = track_contains_midi(track)
+
+        local instrument_index = -1
+        if has_midi and type(reaper.TrackFX_GetInstrument) == "function" then
+            instrument_index = reaper.TrackFX_GetInstrument(track)
+        end
+
+        local fx_count = reaper.TrackFX_GetCount(track)
+        for fx = 0, fx_count - 1 do
+            -- Dry audio tracks: every FX off.
+            -- Dry MIDI tracks: keep only the actual instrument FX alive;
+            -- all insert FX before/after it are disabled.
+            local keep_enabled = has_midi and (fx == instrument_index)
+
+            if type(reaper.TrackFX_SetEnabled) == "function" then
+                reaper.TrackFX_SetEnabled(track, fx, keep_enabled)
+            end
+        end
+    end
+end
+
+local function remove_global_fx_sends(
+    project,
+    main_group,
+    main_source_project
+)
+    if not project or not main_group
+       or not main_group.destination_by_source
+       or not main_source_project then
+        return
+    end
+
+    local destination_by_source = main_group.destination_by_source
+    local global_fx_tracks = {}
+
+    -- In the main project the MASTER FX folder starts at visible track 10
+    -- (zero-based source index 9).  Everything from there onward belongs to
+    -- the global effects/returns section rather than the eight instrument buses.
+    for source_index = 9, reaper.CountTracks(main_source_project) - 1 do
+        local source_track = reaper.GetTrack(
+            main_source_project,
+            source_index
+        )
+        local destination_track =
+            source_track and destination_by_source[source_track] or nil
+        if destination_track then
+            global_fx_tracks[destination_track] = true
+        end
+    end
+
+    -- Keep normal source -> main-bus routing intact.  Remove only sends whose
+    -- destination is one of the copied global FX/return tracks.
+    for track_index = 0, reaper.CountTracks(project) - 1 do
+        local track = reaper.GetTrack(project, track_index)
+
+        for send_index = reaper.GetTrackNumSends(track, 0) - 1, 0, -1 do
+            local destination =
+                reaper.GetTrackSendInfo_Value(
+                    track,
+                    0,
+                    send_index,
+                    "P_DESTTRACK"
+                )
+
+            if destination and global_fx_tracks[destination] then
+                reaper.RemoveTrackSend(track, 0, send_index)
+            end
+        end
+    end
+
+    -- The global FX/return tracks themselves should not contribute anything
+    -- to a Dry stem.
+    for track, _ in pairs(global_fx_tracks) do
+        if reaper.ValidatePtr2(project, track, "MediaTrack*") then
+            reaper.SetMediaTrackInfo_Value(track, "B_MUTE", 1)
+        end
+    end
+end
+
+local function render_bus_tracks_to_stems(project, buses, wet)
+    if #buses == 0 then
+        return false, "Geen stem-bussen gevonden in het hoofdproject."
+    end
+
+    local directory, directory_err = ensure_export_directory()
+    if not directory then
+        return false, directory_err
+    end
+
+    local audio_dir =
+        directory .. (wet and "/audio_wet" or "/audio_dry")
+    reaper.RecursiveCreateDirectory(audio_dir, 0)
+
+    local names = {}
+    for i, bus in ipairs(buses) do
+        names[i] = get_track_name(bus, string.format("Stem %d", i))
+    end
+
+    -- Render each bus separately. REAPER's project render setting was treating
+    -- the eight selected buses as one combined source, hence v15 produced one
+    -- stem. Soloing one bus at a time and rendering the master mix preserves
+    -- all downstream sends/returns/master FX for Wet.
+    local rendered_files = {}
+    local total_tracks = reaper.CountTracks(project)
+
+    -- Save the original mute/solo state.  Do not solo the stem bus:
+    -- with explicit sends that can exclude its upstream source tracks and
+    -- produce a perfectly valid but silent render.
+    local original_mute = {}
+    local original_solo = {}
+    for track_index = 0, total_tracks - 1 do
+        local track = reaper.GetTrack(project, track_index)
+        original_mute[track] =
+            reaper.GetMediaTrackInfo_Value(track, "B_MUTE")
+        original_solo[track] =
+            reaper.GetMediaTrackInfo_Value(track, "I_SOLO")
+        reaper.SetMediaTrackInfo_Value(track, "I_SOLO", 0)
+    end
+
+    for bus_index, bus in ipairs(buses) do
+        -- Isolate at the source/input side instead of muting the mixer buses.
+        -- The target main bus, MASTER FX returns and real master remain fully
+        -- active, so Wet includes the global effects generated by this stem.
+        for track_index = 0, total_tracks - 1 do
+            local track = reaper.GetTrack(project, track_index)
+            reaper.SetMediaTrackInfo_Value(
+                track, "B_MUTE", original_mute[track] or 0
+            )
+        end
+
+        for other_index, other_bus in ipairs(buses) do
+            reaper.SetMediaTrackInfo_Value(other_bus, "B_MUTE", 0)
+
+            if other_index ~= bus_index then
+                -- Find tracks whose explicit send feeds this non-target main
+                -- bus and mute only those source tracks. Do not mute return/FX
+                -- tracks downstream of the selected bus.
+                for track_index = 0, total_tracks - 1 do
+                    local source_track = reaper.GetTrack(project, track_index)
+                    local send_count = reaper.GetTrackNumSends(source_track, 0)
+
+                    for send_index = 0, send_count - 1 do
+                        local destination =
+                            reaper.GetTrackSendInfo_Value(
+                                source_track, 0, send_index, "P_DESTTRACK"
+                            )
+                        if destination == other_bus then
+                            reaper.SetMediaTrackInfo_Value(
+                                source_track, "B_MUTE", 1
+                            )
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
+        local safe_name = names[bus_index]:gsub("[^%w%-%._ ]", "_")
+        local file_base = string.format("%02d-%s", bus_index, safe_name)
+        local full_path = audio_dir .. "/" .. file_base .. ".wav"
+
+        reaper.GetSetProjectInfo(project, "RENDER_SETTINGS", 0, true)
+        reaper.GetSetProjectInfo(project, "RENDER_BOUNDSFLAG", 1, true)
+        reaper.GetSetProjectInfo(project, "RENDER_CHANNELS", 2, true)
+        reaper.GetSetProjectInfo(project, "RENDER_ADDTOPROJ", 0, true)
+
+        if type(reaper.GetSetProjectInfo_String) == "function" then
+            reaper.GetSetProjectInfo_String(
+                project, "RENDER_FILE", audio_dir, true
+            )
+            reaper.GetSetProjectInfo_String(
+                project, "RENDER_PATTERN", file_base, true
+            )
+        end
+
+        reaper.Main_OnCommandEx(41824, 0, project)
+        rendered_files[#rendered_files + 1] = full_path
+    end
+
+    -- Restore temporary mixer states before dismantling the render project.
+    for track_index = 0, total_tracks - 1 do
+        local track = reaper.GetTrack(project, track_index)
+        if track then
+            reaper.SetMediaTrackInfo_Value(
+                track, "B_MUTE", original_mute[track] or 0
+            )
+            reaper.SetMediaTrackInfo_Value(
+                track, "I_SOLO", original_solo[track] or 0
+            )
+        end
+    end
+
+    -- Remove the temporary complete mixer. The final project is deliberately
+    -- only eight plain audio tracks.
+    for index = reaper.CountTracks(project) - 1, 0, -1 do
+        local track = reaper.GetTrack(project, index)
+        reaper.DeleteTrack(track)
+    end
+
+    for index, file_path in ipairs(rendered_files) do
+        local track = add_destination_track(project)
+        reaper.GetSetMediaTrackInfo_String(
+            track, "P_NAME", names[index], true
+        )
+        reaper.SetMediaTrackInfo_Value(track, "I_FOLDERDEPTH", 0)
+        reaper.SetMediaTrackInfo_Value(track, "B_MAINSEND", 1)
+
+        local item = reaper.AddMediaItemToTrack(track)
+        local take = item and reaper.AddTakeToMediaItem(item) or nil
+        local source = reaper.PCM_Source_CreateFromFile(file_path)
+
+        if item and take and source then
+            reaper.SetMediaItemTake_Source(take, source)
+            reaper.SetMediaItemInfo_Value(item, "D_POSITION", 0)
+
+            local length, is_qn =
+                reaper.GetMediaSourceLength(source)
+            if length and length > 0 then
+                reaper.SetMediaItemInfo_Value(item, "D_LENGTH", length)
+            end
+
+            -- Force REAPER to refresh/build the waveform for the newly
+            -- attached rendered source, just like the import/record flows.
+            if type(reaper.PCM_Source_BuildPeaks) == "function" then
+                reaper.PCM_Source_BuildPeaks(source, 0)
+            end
+            if type(reaper.UpdateItemInProject) == "function" then
+                reaper.UpdateItemInProject(item)
+            end
+        else
+            return false,
+                "Kon gerenderde stem niet terugplaatsen: " .. file_path
+        end
+    end
+
+    reaper.TrackList_AdjustWindows(false)
+    reaper.UpdateArrange()
+
+    -- Rebuild missing peak displays after all eight files have been attached.
+    -- Action 40441: Peaks: Rebuild peaks for selected items.
+    if type(reaper.Main_OnCommandEx) == "function" then
+        for index = 0, reaper.CountMediaItems(project) - 1 do
+            local item = reaper.GetMediaItem(project, index)
+            reaper.SetMediaItemSelected(item, true)
+        end
+        reaper.Main_OnCommandEx(40441, 0, project)
+        for index = 0, reaper.CountMediaItems(project) - 1 do
+            local item = reaper.GetMediaItem(project, index)
+            reaper.SetMediaItemSelected(item, false)
+        end
+        reaper.UpdateArrange()
+    end
+
+    return true
+end
+
+select_only_tracks = function(project, tracks)
     for index = 0, reaper.CountTracks(project) - 1 do
         local track = reaper.GetTrack(project, index)
         reaper.SetTrackSelected(track, false)
@@ -912,7 +1303,9 @@ function M.export_reaper_project()
     return true
 end
 
-function M.export_stems()
+function M.export_stems(wet)
+    if wet == nil then wet = true end
+
     local entries = collect_playlist()
     if #entries == 0 then
         show_error("De playlist is leeg.")
@@ -925,33 +1318,61 @@ function M.export_stems()
         return false
     end
 
-    local project, groups = build_arrangement_project(entries, false)
-    if not project or #groups == 0 then
-        show_error("Er is geen media gevonden om te renderen.")
+    -- Stems use the same main-mixer routing as the now-correct REAPER export.
+    local project, groups, main_group =
+        build_arrangement_project(entries, true)
+
+    if not project or not main_group then
+        show_error("De hoofd-mixer kon niet voor stems worden opgebouwd.")
         return false
     end
 
-    local ok, err = render_groups_to_stems(project, groups)
+    local main_source_project = get_project(1)
+    local buses = collect_main_stem_buses(
+        main_group,
+        main_source_project
+    )
+
+    if #buses == 0 then
+        show_error("Er zijn geen hoofdbussen gevonden om te renderen.")
+        return false
+    end
+
+    if not wet then
+        -- Dry = preserve source -> main-bus routing, but remove the global
+        -- master-FX sends/returns and disable all local audio FX. MIDI tracks
+        -- keep only their instrument plug-in so they still generate sound.
+        remove_global_fx_sends(
+            project,
+            main_group,
+            main_source_project
+        )
+        disable_noninstrument_fx(project)
+    end
+
+    local ok, err = render_bus_tracks_to_stems(project, buses, wet)
     if not ok then
         show_error(err)
         return false
     end
 
-    local saved, save_err = save_export_project(project, "stems")
+    local kind = wet and "stems_wet" or "stems_dry"
+    local saved, save_err = save_export_project(project, kind)
     if not saved then
         show_error(save_err)
         return false
     end
+
     return true
 end
 
-function M.run(mode)
+function M.run(mode, stems_wet)
     mode = math.floor(tonumber(mode) or 0)
 
     if mode == 1 then
         return M.export_reaper_project()
     elseif mode == 2 then
-        return M.export_stems()
+        return M.export_stems(stems_wet)
     end
 
     return false
@@ -962,9 +1383,11 @@ end
 -- Dedicated Export edit sub-screen
 -- ------------------------------------------------------------
 local selected_mode = 1
+local stems_wet = true
 
 function M.open()
     selected_mode = 1
+    stems_wet = true
 end
 
 function M.draw(api, C, close_screen)
@@ -996,11 +1419,30 @@ function M.draw(api, C, close_screen)
         end
     })
 
+    -- 83 = Wet/Dry toggle, only visible when Stems (82) is selected.
+    if selected_mode == 2 then
+        api.drawpad(
+            8, 3,
+            stems_wet and C.BLUE or C.ORANGE,
+            api.MODE_HIGHLIGHT,
+            {
+                active_color = C.WHITE,
+                on_press = function()
+                    stems_wet = not stems_wet
+                    api.redraw()
+                end,
+                on_release = function()
+                    return true
+                end
+            }
+        )
+    end
+
     -- 11 confirm
     api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
         active_color = C.WHITE,
         on_press = function()
-            local ok = M.run(selected_mode)
+            local ok = M.run(selected_mode, stems_wet)
             if ok ~= false and close_screen then
                 close_screen()
             end
