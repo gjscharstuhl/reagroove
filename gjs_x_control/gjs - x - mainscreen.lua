@@ -17,6 +17,11 @@ return function(api, navigation)
         api.set_screen0_main_active(true)
     end
 
+    -- Main and Edit both live on core screen 0. Keep a tiny local mode marker
+    -- so deferred Main-sequencer callbacks can tell them apart without any
+    -- core changes.
+    reaper.SetExtState("GJS_X", "Screen0Layout", "main", false)
+
     if api.set_jsfx_loop_overview_active then
         api.set_jsfx_loop_overview_active(true)
     end
@@ -284,7 +289,13 @@ return function(api, navigation)
                 -- Let REAPER process the stop command first, then redraw
                 -- screen 0 so pages 2-4 immediately return to purple.
                 reaper.defer(function()
-                    api.redraw()
+                    -- This callback may run after Main has already been left.
+                    -- Do not let an old Stop release redraw another screen.
+                    if api.get_current_screen
+                    and api.get_current_screen() == 0
+                    and reaper.GetExtState("GJS_X", "Screen0Layout") == "main" then
+                        api.redraw()
+                    end
                 end)
 
                 return true
@@ -559,15 +570,31 @@ return function(api, navigation)
     local last_signature = nil
     local last_check = 0
 
+    local function main_display_is_allowed()
+        if api.get_current_screen
+        and api.get_current_screen() ~= 0 then
+            return false
+        end
+
+        return reaper.GetExtState("GJS_X", "Screen0Layout") == "main"
+    end
+
     local function refresh_main_display()
+        -- This function is also called through reaper.defer(). A callback that
+        -- was queued while Main was visible may run after a screen/layout
+        -- change, so guard the actual JSFX write itself.
+        if not main_display_is_allowed() then
+            sequencer.disable_display(2)
+            return
+        end
+
         sequencer.update_main_display()
     end
 
     local function keep_main_display_synced()
         if generation ~= main_display_generation then return end
 
-        if api.get_current_screen
-        and api.get_current_screen() ~= 0 then
+        if not main_display_is_allowed() then
             sequencer.disable_display(2)
             return
         end

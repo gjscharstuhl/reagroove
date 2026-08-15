@@ -446,7 +446,11 @@ local function update_transport_leds(api)
         return
     end
 
-    if api.get_current_screen() ~= 0 then
+    -- Main and Edit share core screen 0. Only Main owns the transport LEDs.
+    -- A deferred/continuous Transport.update() must therefore also verify the
+    -- active screen-0 layout, otherwise pad 41/42 can leak into Edit/pattern.
+    if api.get_current_screen() ~= 0
+    or reaper.GetExtState("GJS_X", "Screen0Layout") ~= "main" then
         state.last_play_led_color = nil
         state.last_record_led_color = nil
         return

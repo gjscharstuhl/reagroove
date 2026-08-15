@@ -828,6 +828,11 @@ return function(api, navigation)
         api.set_screen0_main_active(false)
     end
 
+    -- Main and Edit share core screen 0. Mark Edit explicitly so a deferred
+    -- Main-sequencer repaint queued just before this screen opened cannot leak
+    -- into the Edit/pattern layouts.
+    reaper.SetExtState("GJS_X", "Screen0Layout", "edit", false)
+
     if api.set_jsfx_loop_overview_active then
         api.set_jsfx_loop_overview_active(false)
     end

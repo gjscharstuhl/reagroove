@@ -584,6 +584,16 @@ local function restore_preview_snapshot(session)
     restore_all_items(session.project, session.project_items)
     restore_regions(session.main_project, session.main_regions)
     reaper.PreventUIRefresh(-1)
+
+    -- Cancel/preview restore must also restore the time selection to the
+    -- original region. During preview the resize path can leave the time
+    -- selection on the temporary preview length even after the marker itself
+    -- has been restored. Reselect only after the complete snapshot restore so
+    -- resize.select_region reads the original region boundaries.
+    if resize and resize.select_region then
+        resize.select_region(session.track_number, session.region_number)
+    end
+
     reaper.UpdateArrange()
     return true
 end
