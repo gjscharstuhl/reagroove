@@ -3,8 +3,8 @@
 -- Track-scoped reusable patterns in ~/jams/patterns.
 --
 -- Filename:
---   <edit-track><slot-2-digits>.wav / .mid
---   e.g. track 2, slot 01 => 201.wav / 201.mid
+--   <edit-track><slot-2-digits>[optional description].wav / .mid
+--   e.g. track 2, slot 01 => 201.wav / 201.mid / 201_MyLoop.wav
 --
 -- Save:
 --   - only the first record-armed track inside the selected Edit project
@@ -426,9 +426,47 @@ end
 
 local function find_pattern_file(track_number, slot)
     if not PATTERN_DIR then return nil end
+
+    -- Keep the original exact filenames as first choice so existing saves keep
+    -- behaving exactly as before.
     local wav_path, mid_path = slot_paths(track_number, slot)
     if file_exists(mid_path) then return mid_path, true end
     if file_exists(wav_path) then return wav_path, false end
+
+    -- Imported files may append a descriptive name after the three slot digits,
+    -- for example 201_MyImportedDrumLoop.wav.  Only the first three digits
+    -- identify track + slot; the remainder is ignored by the controller.
+    local prefix = pattern_stem(track_number, slot)
+    local index = 0
+    local matches = {}
+    while true do
+        local name = reaper.EnumerateFiles(PATTERN_DIR, index)
+        if not name then break end
+        local lower = name:lower()
+        local stem_prefix = name:sub(1, #prefix)
+        local next_char = name:sub(#prefix + 1, #prefix + 1)
+        local is_supported = lower:match("%.wav$") or lower:match("%.mid$")
+        -- Require either the extension immediately after the digits or a
+        -- separator before the description. This prevents e.g. slot 01 from
+        -- accidentally matching a hypothetical 2010_... filename.
+        local valid_suffix = next_char == "." or next_char == "_" or next_char == "-" or next_char == " "
+        if stem_prefix == prefix and valid_suffix and is_supported then
+            matches[#matches + 1] = name
+        end
+        index = index + 1
+    end
+
+    table.sort(matches, function(a, b) return a:lower() < b:lower() end)
+    for _, name in ipairs(matches) do
+        if name:lower():match("%.mid$") then
+            return PATTERN_DIR .. "/" .. name, true
+        end
+    end
+    for _, name in ipairs(matches) do
+        if name:lower():match("%.wav$") then
+            return PATTERN_DIR .. "/" .. name, false
+        end
+    end
     return nil
 end
 
