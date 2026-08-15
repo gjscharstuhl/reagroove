@@ -1,0 +1,879 @@
+desc:ReaGroove SFZ Player v0.43
+author:ReaGroove
+tags:instrument sampler sfz reagroove
+options:maxmem=64000000
+in_pin:none
+out_pin:Left
+out_pin:Right
+
+slider1:0<0,1,1{A,B}>Reload trigger
+slider2:64<1,128,1>Polyphony
+slider3:0<-24,12,0.1>Gain (dB)
+slider4:350<1,5000,1>Fallback release (ms)
+slider5:0<0,1,1{Gate,One-shot}>Note-off mode
+
+@init
+
+ext_noinit = 1;
+
+MAX_REGIONS = 1024;
+REG_STRIDE = 20;
+
+R_VALID      = 0;
+R_START      = 1;   // absolute memory start for ordinary sample
+R_FRAMES     = 2;
+R_CHANS      = 3;
+R_SR         = 4;
+R_LOKEY      = 5;
+R_HIKEY      = 6;
+R_ROOT       = 7;
+R_LOVEL      = 8;
+R_HIVEL      = 9;
+R_RELEASE    = 10;
+R_TRIGGER    = 11;
+R_VOLUME     = 12;
+R_TUNE       = 13;  // cents
+R_OFFSET     = 14;  // frame offset in source sample
+R_END        = 15;  // frame end in source sample
+R_LOOP_START = 16;
+R_LOOP_END   = 17;
+R_LOOP_MODE  = 18;  // 0=no loop, 1=loop_continuous
+R_SHARED     = 19;  // use global shared sample pool
+
+REG_BASE = 0;
+
+MAX_VOICES = 128;
+VOICE_STRIDE = 14;
+VOICE_BASE = MAX_REGIONS * REG_STRIDE + 64;
+
+V_ACTIVE  = 0;
+V_NOTE    = 1;
+V_POS     = 2;      // absolute source frame position
+V_STEP    = 3;
+V_GAIN    = 4;
+V_ENV     = 5;
+V_RELSTEP = 6;
+V_AGE     = 7;
+V_REGION  = 8;
+V_PENDING = 9;
+
+SAMPLE_BASE = VOICE_BASE + MAX_VOICES * VOICE_STRIDE + 1024;
+MEM_LIMIT = 63900000;
+
+region_count = 0;
+sample_mem_top = SAMPLE_BASE;
+age_counter = 0;
+sustain = 0;
+loaded_ok = 0;
+load_errors = 0;
+last_reload = -1;
+
+shared_loaded = 0;
+shared_start = 0;
+shared_frames = 0;
+shared_channels = 0;
+shared_sr = srate;
+
+#sfz_path = "";
+#sfz_dir = "";
+#default_path = "";
+#global_sample_name = "";
+#status = "Choose an SFZ with the ReaGroove browser script.";
+#first_error_path = "";
+
+function raddr(r) ( REG_BASE + r * REG_STRIDE; );
+function vaddr(v) ( VOICE_BASE + v * VOICE_STRIDE; );
+
+function trim_eol(s)
+local(n,c)
+(
+  n = strlen(s);
+  while(
+    n > 0 ? (
+      c = str_getchar(s,n-1);
+      (c == 10 || c == 13) ? (
+        str_setchar(s,n-1,0);
+        n -= 1;
+        1;
+      ) : 0;
+    ) : 0;
+  );
+);
+
+function normalize_path(s)
+local(i,n,c)
+(
+  n = strlen(s);
+  i = 0;
+  loop(n,
+    c = str_getchar(s,i);
+    c == 92 ? str_setchar(s,i,47);
+    i += 1;
+  );
+);
+
+function dirname_from_path(src,dst)
+local(i,c,n,done)
+(
+  strcpy(dst,"");
+  n = strlen(src);
+  i = n - 1;
+  done = 0;
+  while(i >= 0 && !done ? (
+    c = str_getchar(src,i);
+    (c == 47 || c == 92) ? (
+      strcpy_substr(dst,src,0,i+1);
+      done = 1;
+    );
+    i -= 1;
+    !done;
+  ) : 0);
+);
+
+function parent_from_dir(src,dst)
+local(n,c)
+(
+  strcpy(#parent_tmp,src);
+  n = strlen(#parent_tmp);
+
+  // Remove trailing slash first, otherwise dirname() would return same dir.
+  n > 0 ? (
+    c = str_getchar(#parent_tmp,n-1);
+    (c == 47 || c == 92) ? str_setchar(#parent_tmp,n-1,0);
+  );
+
+  dirname_from_path(#parent_tmp,dst);
+);
+
+function stop_all()
+local(v,a)
+(
+  v = 0;
+  loop(MAX_VOICES,
+    a = vaddr(v);
+    a[V_ACTIVE] = 0;
+    v += 1;
+  );
+);
+
+function reset_global_defaults()
+(
+  g_lokey = 0;
+  g_hikey = 127;
+  g_root = 60;
+  g_lovel = 0;
+  g_hivel = 127;
+  g_release = slider4 * 0.001;
+  g_trigger = 0;
+  g_volume = 0;
+  g_tune = 0;
+  g_offset = 0;
+  g_end = -1;
+  g_loop_start = -1;
+  g_loop_end = -1;
+  g_loop_mode = 0;
+  g_shared = 0;
+);
+
+function reset_master_from_global()
+(
+  m_lokey = g_lokey;
+  m_hikey = g_hikey;
+  m_root = g_root;
+  m_lovel = g_lovel;
+  m_hivel = g_hivel;
+  m_release = g_release;
+  m_trigger = g_trigger;
+  m_volume = g_volume;
+  m_tune = g_tune;
+  m_offset = g_offset;
+  m_end = g_end;
+  m_loop_start = g_loop_start;
+  m_loop_end = g_loop_end;
+  m_loop_mode = g_loop_mode;
+  m_shared = g_shared;
+);
+
+function reset_group_from_master()
+(
+  grp_lokey = m_lokey;
+  grp_hikey = m_hikey;
+  grp_root = m_root;
+  grp_lovel = m_lovel;
+  grp_hivel = m_hivel;
+  grp_release = m_release;
+  grp_trigger = m_trigger;
+  grp_volume = m_volume;
+  grp_tune = m_tune;
+  grp_offset = m_offset;
+  grp_end = m_end;
+  grp_loop_start = m_loop_start;
+  grp_loop_end = m_loop_end;
+  grp_loop_mode = m_loop_mode;
+  grp_shared = m_shared;
+);
+
+function init_region_from_group(r)
+local(a)
+(
+  a = raddr(r);
+  a[R_VALID] = 0;
+  a[R_START] = 0;
+  a[R_FRAMES] = 0;
+  a[R_CHANS] = 0;
+  a[R_SR] = srate;
+  a[R_LOKEY] = grp_lokey;
+  a[R_HIKEY] = grp_hikey;
+  a[R_ROOT] = grp_root;
+  a[R_LOVEL] = grp_lovel;
+  a[R_HIVEL] = grp_hivel;
+  a[R_RELEASE] = grp_release;
+  a[R_TRIGGER] = grp_trigger;
+  a[R_VOLUME] = grp_volume;
+  a[R_TUNE] = grp_tune;
+  a[R_OFFSET] = grp_offset;
+  a[R_END] = grp_end;
+  a[R_LOOP_START] = grp_loop_start;
+  a[R_LOOP_END] = grp_loop_end;
+  a[R_LOOP_MODE] = grp_loop_mode;
+  a[R_SHARED] = grp_shared;
+);
+
+function load_shared_sample()
+local(h,nch,rsr,avail,readcount,ph)
+(
+  shared_loaded = 0;
+  strcpy(#shared_path,"");
+
+  // Browser v3 resolves this in Lua and writes an absolute path.
+  ph = file_open("ReaGroove/current_shared_sample.txt");
+  ph >= 0 ? (
+    file_string(ph,#shared_path);
+    file_close(ph);
+    trim_eol(#shared_path);
+    normalize_path(#shared_path);
+  );
+
+  strlen(#shared_path) > 0 ? (
+    h = file_open(#shared_path);
+
+    h >= 0 ? (
+      nch = 0;
+      rsr = srate;
+      file_riff(h,nch,rsr);
+
+      (nch == 1 || nch == 2) ? (
+        avail = file_avail(h);
+
+        (avail > 0 && sample_mem_top + avail < MEM_LIMIT) ? (
+          readcount = file_mem(h,sample_mem_top,avail);
+
+          readcount > 0 ? (
+            shared_start = sample_mem_top;
+            shared_channels = nch;
+            shared_frames = floor(readcount / nch);
+            shared_sr = rsr;
+            shared_loaded = 1;
+            sample_mem_top += readcount + 4;
+          ) : (
+            load_errors += 1;
+            strlen(#first_error_path) == 0 ? strcpy(#first_error_path,#shared_path);
+          );
+        ) : (
+          load_errors += 1;
+          strlen(#first_error_path) == 0 ? strcpy(#first_error_path,#shared_path);
+        );
+      ) : (
+        load_errors += 1;
+        strlen(#first_error_path) == 0 ? strcpy(#first_error_path,#shared_path);
+      );
+
+      file_close(h);
+    ) : (
+      load_errors += 1;
+      strlen(#first_error_path) == 0 ? strcpy(#first_error_path,#shared_path);
+    );
+  ) : (
+    load_errors += 1;
+    strcpy(#first_error_path,"(browser v3 did not provide shared sample path)");
+  );
+);
+
+function load_current_region_sample(r)
+local(a,h,nch,rsr,avail,readcount)
+(
+  a = raddr(r);
+
+  a[R_TRIGGER] > 0.5 ? (
+    0;
+  ) :
+  a[R_SHARED] > 0.5 ? (
+    shared_loaded ? (
+      a[R_START] = shared_start;
+      a[R_FRAMES] = shared_frames;
+      a[R_CHANS] = shared_channels;
+      a[R_SR] = shared_sr;
+      a[R_VALID] = 1;
+
+      a[R_END] < 0 ? a[R_END] = shared_frames - 1;
+      a[R_END] >= shared_frames ? a[R_END] = shared_frames - 1;
+    );
+  ) : (
+    normalize_path(#sample_name);
+
+    sprintf(#full_sample_path,"%s%s%s",#sfz_dir,#default_path,#sample_name);
+    normalize_path(#full_sample_path);
+
+    h = file_open(#full_sample_path);
+
+    h >= 0 ? (
+      nch = 0;
+      rsr = srate;
+      file_riff(h,nch,rsr);
+
+      (nch == 1 || nch == 2) ? (
+        avail = file_avail(h);
+
+        (avail > 0 && sample_mem_top + avail < MEM_LIMIT) ? (
+          readcount = file_mem(h,sample_mem_top,avail);
+
+          readcount > 0 ? (
+            a[R_START] = sample_mem_top;
+            a[R_CHANS] = nch;
+            a[R_FRAMES] = floor(readcount / nch);
+            a[R_SR] = rsr;
+            a[R_VALID] = 1;
+            a[R_END] < 0 ? a[R_END] = a[R_FRAMES] - 1;
+            sample_mem_top += readcount + 4;
+          ) : load_errors += 1;
+        ) : load_errors += 1;
+      ) : load_errors += 1;
+
+      file_close(h);
+    ) : (
+      load_errors += 1;
+      strlen(#first_error_path) == 0 ? strcpy(#first_error_path,#full_sample_path);
+    );
+  );
+);
+
+function apply_ops_global(line)
+local(tmp,keyv)
+(
+  (matchi("* key=%d*",line,keyv) || matchi("key=%d*",line,keyv)) ? (
+    g_lokey = keyv; g_hikey = keyv; g_root = keyv;
+  );
+  (matchi("* lokey=%d*",line,tmp) || matchi("lokey=%d*",line,tmp)) ? g_lokey = tmp;
+  (matchi("* hikey=%d*",line,tmp) || matchi("hikey=%d*",line,tmp)) ? g_hikey = tmp;
+  (matchi("* pitch_keycenter=%d*",line,tmp) || matchi("pitch_keycenter=%d*",line,tmp)) ? g_root = tmp;
+  (matchi("* lovel=%d*",line,tmp) || matchi("lovel=%d*",line,tmp)) ? g_lovel = tmp;
+  (matchi("* hivel=%d*",line,tmp) || matchi("hivel=%d*",line,tmp)) ? g_hivel = tmp;
+  (matchi("* ampeg_release=%f*",line,tmp) || matchi("ampeg_release=%f*",line,tmp)) ? g_release = tmp;
+  (matchi("* volume=%f*",line,tmp) || matchi("volume=%f*",line,tmp)) ? g_volume = tmp;
+  (matchi("* tune=%f*",line,tmp) || matchi("tune=%f*",line,tmp)) ? g_tune = tmp;
+  (matchi("* offset=%d*",line,tmp) || matchi("offset=%d*",line,tmp)) ? g_offset = tmp;
+  (matchi("* end=%d*",line,tmp) || matchi("end=%d*",line,tmp)) ? g_end = tmp;
+  (matchi("* loop_start=%d*",line,tmp) || matchi("loop_start=%d*",line,tmp)) ? g_loop_start = tmp;
+  (matchi("* loop_end=%d*",line,tmp) || matchi("loop_end=%d*",line,tmp)) ? g_loop_end = tmp;
+  (matchi("* loop_mode=loop_continuous*",line) || matchi("loop_mode=loop_continuous*",line)) ? g_loop_mode = 1;
+  (matchi("* trigger=release*",line) || matchi("trigger=release*",line)) ? g_trigger = 1;
+  (matchi("* trigger=attack*",line) || matchi("trigger=attack*",line)) ? g_trigger = 0;
+);
+
+function apply_ops_master(line)
+local(tmp,keyv)
+(
+  (matchi("* key=%d*",line,keyv) || matchi("key=%d*",line,keyv)) ? (
+    m_lokey = keyv; m_hikey = keyv; m_root = keyv;
+  );
+  (matchi("* lokey=%d*",line,tmp) || matchi("lokey=%d*",line,tmp)) ? m_lokey = tmp;
+  (matchi("* hikey=%d*",line,tmp) || matchi("hikey=%d*",line,tmp)) ? m_hikey = tmp;
+  (matchi("* pitch_keycenter=%d*",line,tmp) || matchi("pitch_keycenter=%d*",line,tmp)) ? m_root = tmp;
+  (matchi("* lovel=%d*",line,tmp) || matchi("lovel=%d*",line,tmp)) ? m_lovel = tmp;
+  (matchi("* hivel=%d*",line,tmp) || matchi("hivel=%d*",line,tmp)) ? m_hivel = tmp;
+  (matchi("* ampeg_release=%f*",line,tmp) || matchi("ampeg_release=%f*",line,tmp)) ? m_release = tmp;
+  (matchi("* volume=%f*",line,tmp) || matchi("volume=%f*",line,tmp)) ? m_volume = tmp;
+  (matchi("* tune=%f*",line,tmp) || matchi("tune=%f*",line,tmp)) ? m_tune = tmp;
+  (matchi("* offset=%d*",line,tmp) || matchi("offset=%d*",line,tmp)) ? m_offset = tmp;
+  (matchi("* end=%d*",line,tmp) || matchi("end=%d*",line,tmp)) ? m_end = tmp;
+  (matchi("* loop_start=%d*",line,tmp) || matchi("loop_start=%d*",line,tmp)) ? m_loop_start = tmp;
+  (matchi("* loop_end=%d*",line,tmp) || matchi("loop_end=%d*",line,tmp)) ? m_loop_end = tmp;
+  (matchi("* loop_mode=loop_continuous*",line) || matchi("loop_mode=loop_continuous*",line)) ? m_loop_mode = 1;
+);
+
+function apply_ops_group(line)
+local(tmp,keyv)
+(
+  (matchi("* key=%d*",line,keyv) || matchi("key=%d*",line,keyv)) ? (
+    grp_lokey = keyv; grp_hikey = keyv; grp_root = keyv;
+  );
+  (matchi("* lokey=%d*",line,tmp) || matchi("lokey=%d*",line,tmp)) ? grp_lokey = tmp;
+  (matchi("* hikey=%d*",line,tmp) || matchi("hikey=%d*",line,tmp)) ? grp_hikey = tmp;
+  (matchi("* pitch_keycenter=%d*",line,tmp) || matchi("pitch_keycenter=%d*",line,tmp)) ? grp_root = tmp;
+  (matchi("* lovel=%d*",line,tmp) || matchi("lovel=%d*",line,tmp)) ? grp_lovel = tmp;
+  (matchi("* hivel=%d*",line,tmp) || matchi("hivel=%d*",line,tmp)) ? grp_hivel = tmp;
+  (matchi("* ampeg_release=%f*",line,tmp) || matchi("ampeg_release=%f*",line,tmp)) ? grp_release = tmp;
+  (matchi("* volume=%f*",line,tmp) || matchi("volume=%f*",line,tmp)) ? grp_volume = tmp;
+  (matchi("* tune=%f*",line,tmp) || matchi("tune=%f*",line,tmp)) ? grp_tune = tmp;
+  (matchi("* offset=%d*",line,tmp) || matchi("offset=%d*",line,tmp)) ? grp_offset = tmp;
+  (matchi("* end=%d*",line,tmp) || matchi("end=%d*",line,tmp)) ? grp_end = tmp;
+  (matchi("* loop_start=%d*",line,tmp) || matchi("loop_start=%d*",line,tmp)) ? grp_loop_start = tmp;
+  (matchi("* loop_end=%d*",line,tmp) || matchi("loop_end=%d*",line,tmp)) ? grp_loop_end = tmp;
+  (matchi("* loop_mode=loop_continuous*",line) || matchi("loop_mode=loop_continuous*",line)) ? grp_loop_mode = 1;
+  (matchi("* trigger=release*",line) || matchi("trigger=release*",line)) ? grp_trigger = 1;
+  (matchi("* trigger=attack*",line) || matchi("trigger=attack*",line)) ? grp_trigger = 0;
+);
+
+function apply_ops_region(r,line)
+local(a,tmp,keyv)
+(
+  a = raddr(r);
+  (matchi("* key=%d*",line,keyv) || matchi("key=%d*",line,keyv)) ? (
+    a[R_LOKEY] = keyv; a[R_HIKEY] = keyv; a[R_ROOT] = keyv;
+  );
+  (matchi("* lokey=%d*",line,tmp) || matchi("lokey=%d*",line,tmp)) ? a[R_LOKEY] = tmp;
+  (matchi("* hikey=%d*",line,tmp) || matchi("hikey=%d*",line,tmp)) ? a[R_HIKEY] = tmp;
+  (matchi("* pitch_keycenter=%d*",line,tmp) || matchi("pitch_keycenter=%d*",line,tmp)) ? a[R_ROOT] = tmp;
+  (matchi("* lovel=%d*",line,tmp) || matchi("lovel=%d*",line,tmp)) ? a[R_LOVEL] = tmp;
+  (matchi("* hivel=%d*",line,tmp) || matchi("hivel=%d*",line,tmp)) ? a[R_HIVEL] = tmp;
+  (matchi("* ampeg_release=%f*",line,tmp) || matchi("ampeg_release=%f*",line,tmp)) ? a[R_RELEASE] = tmp;
+  (matchi("* volume=%f*",line,tmp) || matchi("volume=%f*",line,tmp)) ? a[R_VOLUME] = tmp;
+  (matchi("* tune=%f*",line,tmp) || matchi("tune=%f*",line,tmp)) ? a[R_TUNE] = tmp;
+  (matchi("* offset=%d*",line,tmp) || matchi("offset=%d*",line,tmp)) ? a[R_OFFSET] = tmp;
+  (matchi("* end=%d*",line,tmp) || matchi("end=%d*",line,tmp)) ? a[R_END] = tmp;
+  (matchi("* loop_start=%d*",line,tmp) || matchi("loop_start=%d*",line,tmp)) ? a[R_LOOP_START] = tmp;
+  (matchi("* loop_end=%d*",line,tmp) || matchi("loop_end=%d*",line,tmp)) ? a[R_LOOP_END] = tmp;
+  (matchi("* loop_mode=loop_continuous*",line) || matchi("loop_mode=loop_continuous*",line)) ? a[R_LOOP_MODE] = 1;
+  (matchi("* trigger=release*",line) || matchi("trigger=release*",line)) ? a[R_TRIGGER] = 1;
+);
+
+function load_sfz()
+local(h,cur,scope)
+(
+  stop_all();
+  region_count = 0;
+  sample_mem_top = SAMPLE_BASE;
+  load_errors = 0;
+  loaded_ok = 0;
+  shared_loaded = 0;
+  strcpy(#first_error_path,"");
+  strcpy(#default_path,"");
+  strcpy(#global_sample_name,"");
+
+  reset_global_defaults();
+  reset_master_from_global();
+  reset_group_from_master();
+
+  cur = -1;
+  scope = 0; // 0 none, 1 control, 2 global, 3 master, 4 group, 5 region
+
+  h = file_open("ReaGroove/current_sfz.txt");
+  h >= 0 ? (
+    file_string(h,#sfz_path);
+    file_close(h);
+    trim_eol(#sfz_path);
+    normalize_path(#sfz_path);
+
+    strlen(#sfz_path) > 0 ? (
+      dirname_from_path(#sfz_path,#sfz_dir);
+      normalize_path(#sfz_dir);
+
+      h = file_open(#sfz_path);
+      h >= 0 ? (
+        while(file_avail(h) > 0 && region_count < MAX_REGIONS ? (
+          file_string(h,#line);
+          trim_eol(#line);
+
+          matchi("//*",#line) ? 1 : (
+            matchi("*<control>*",#line) ? (scope=1; cur=-1;);
+            matchi("*<global>*",#line) ? (
+              scope=2; cur=-1;
+              reset_global_defaults();
+              reset_master_from_global();
+              reset_group_from_master();
+            );
+            matchi("*<master>*",#line) ? (
+              scope=3; cur=-1;
+              reset_master_from_global();
+              reset_group_from_master();
+            );
+            matchi("*<group>*",#line) ? (
+              scope=4; cur=-1;
+              reset_group_from_master();
+            );
+            matchi("*<region>*",#line) ? (
+              scope=5;
+              cur=region_count;
+              region_count += 1;
+              init_region_from_group(cur);
+            );
+
+            scope == 1 ? (
+              (matchi("* default_path=%s*",#line,#tmpstr) ||
+               matchi("default_path=%s*",#line,#tmpstr)) ? (
+                strcpy(#default_path,#tmpstr);
+                normalize_path(#default_path);
+              );
+            );
+
+            scope == 2 ? (
+              apply_ops_global(#line);
+
+              (matchi("* sample=%s*",#line,#tmpstr) ||
+               matchi("sample=%s*",#line,#tmpstr)) ? (
+                strcpy(#global_sample_name,#tmpstr);
+                normalize_path(#global_sample_name);
+                g_shared = 1;
+                m_shared = 1;
+                grp_shared = 1;
+                load_shared_sample();
+              );
+            );
+
+            scope == 3 ? apply_ops_master(#line);
+            scope == 4 ? apply_ops_group(#line);
+
+            scope == 5 && cur >= 0 ? (
+              apply_ops_region(cur,#line);
+
+              (matchi("* sample=%s*",#line,#sample_name) ||
+               matchi("sample=%s*",#line,#sample_name)) ? (
+                load_current_region_sample(cur);
+              );
+            );
+          );
+
+          1;
+        ) : 0);
+
+        file_close(h);
+
+        // Regions inheriting the global shared sample do not contain
+        // their own sample= opcode, so finalize them here.
+        rr = 0;
+        playable_regions = 0;
+        loop(region_count,
+          aa = raddr(rr);
+
+          aa[R_TRIGGER] < 0.5 && aa[R_VALID] < 0.5 && aa[R_SHARED] > 0.5 && shared_loaded ? (
+            aa[R_START] = shared_start;
+            aa[R_FRAMES] = shared_frames;
+            aa[R_CHANS] = shared_channels;
+            aa[R_SR] = shared_sr;
+            aa[R_END] < 0 ? aa[R_END] = shared_frames - 1;
+            aa[R_END] >= shared_frames ? aa[R_END] = shared_frames - 1;
+            aa[R_VALID] = 1;
+          );
+
+          aa[R_VALID] > 0.5 && aa[R_TRIGGER] < 0.5 ? playable_regions += 1;
+          rr += 1;
+        );
+
+        loaded_ok = playable_regions > 0;
+
+        loaded_ok ? (
+          sprintf(#status,
+            "Loaded %d playable / %d regions; errors: %d; shared pool: %d frames",
+            playable_regions,region_count,load_errors,shared_frames);
+        ) : (
+          sprintf(#status,
+            "No playable regions. Regions: %d; errors: %d",
+            region_count,load_errors);
+        );
+      ) : #status = "Could not open selected SFZ.";
+    ) : #status = "No SFZ selected.";
+  ) : #status = "Run the ReaGroove SFZ browser first.";
+);
+
+function alloc_voice()
+local(v,a,limit,found,best,bestage)
+(
+  limit = min(MAX_VOICES,max(1,floor(slider2)));
+  found = -1;
+  v = 0;
+
+  loop(limit,
+    a = vaddr(v);
+    (a[V_ACTIVE] < 0.5 && found < 0) ? found = v;
+    v += 1;
+  );
+
+  found < 0 ? (
+    best = 0;
+    bestage = 1000000000;
+    v = 0;
+    loop(limit,
+      a = vaddr(v);
+      a[V_AGE] < bestage ? (
+        bestage = a[V_AGE];
+        best = v;
+      );
+      v += 1;
+    );
+    found = best;
+  );
+
+  found;
+);
+
+function find_region(note,vel)
+local(r,a,best,bestscore,score,keyspan,velspan)
+(
+  best = -1;
+  bestscore = 1000000000;
+  r = 0;
+
+  loop(region_count,
+    a = raddr(r);
+
+    a[R_VALID] > 0.5 &&
+    a[R_TRIGGER] < 0.5 &&
+    note >= a[R_LOKEY] && note <= a[R_HIKEY] &&
+    vel >= a[R_LOVEL] && vel <= a[R_HIVEL] ? (
+      keyspan = a[R_HIKEY] - a[R_LOKEY];
+      velspan = a[R_HIVEL] - a[R_LOVEL];
+      score = velspan*1000 + keyspan;
+
+      score < bestscore ? (
+        bestscore = score;
+        best = r;
+      );
+    );
+
+    r += 1;
+  );
+
+  best;
+);
+
+function start_note(note,vel)
+local(r,v,a,ra,region_gain,pitch_cents)
+(
+  r = find_region(note,vel);
+
+  r >= 0 ? (
+    v = alloc_voice();
+    a = vaddr(v);
+    ra = raddr(r);
+    age_counter += 1;
+
+    region_gain = 10 ^ (ra[R_VOLUME]/20);
+    pitch_cents = (note - ra[R_ROOT])*100 + ra[R_TUNE];
+
+    a[V_ACTIVE] = 1;
+    a[V_NOTE] = note;
+    a[V_POS] = ra[R_OFFSET];
+    a[V_STEP] = (2 ^ (pitch_cents/1200)) * (ra[R_SR]/srate);
+    a[V_GAIN] = (vel/127) * (10 ^ (slider3/20)) * region_gain;
+    a[V_ENV] = 1;
+    a[V_RELSTEP] = 0;
+    a[V_AGE] = age_counter;
+    a[V_REGION] = r;
+    a[V_PENDING] = 0;
+  );
+);
+
+function release_voice(a)
+local(ra,secs)
+(
+  ra = raddr(a[V_REGION]);
+  secs = ra[R_RELEASE];
+  secs <= 0 ? secs = slider4*0.001;
+  a[V_RELSTEP] = 1/max(1,secs*srate);
+  a[V_PENDING] = 0;
+);
+
+function note_off(note)
+local(v,a,limit)
+(
+  slider5 < 0.5 ? (
+    limit = min(MAX_VOICES,max(1,floor(slider2)));
+    v = 0;
+
+    loop(limit,
+      a = vaddr(v);
+      a[V_ACTIVE] > 0.5 && a[V_NOTE] == note ? (
+        sustain ? a[V_PENDING] = 1 : release_voice(a);
+      );
+      v += 1;
+    );
+  );
+);
+
+function sustain_off()
+local(v,a,limit)
+(
+  limit = min(MAX_VOICES,max(1,floor(slider2)));
+  v = 0;
+
+  loop(limit,
+    a = vaddr(v);
+    a[V_ACTIVE] > 0.5 && a[V_PENDING] > 0.5 ? release_voice(a);
+    v += 1;
+  );
+);
+
+load_sfz();
+last_reload = slider1;
+
+@slider
+slider1 != last_reload ? (
+  last_reload = slider1;
+  load_sfz();
+);
+
+@block
+while(midirecv(offset,msg1,msg23) ? (
+  status = msg1 & $xF0;
+  note = msg23 & $x7F;
+  vel = (msg23/256) & $x7F;
+
+  status == $x90 && vel > 0 ? (
+    start_note(note,vel);
+  ) :
+  (status == $x80 || (status == $x90 && vel == 0)) ? (
+    note_off(note);
+  ) :
+  status == $xB0 ? (
+    cc = note;
+    ccval = vel;
+
+    cc == 64 ? (
+      was_sustain = sustain;
+      sustain = ccval >= 64;
+      was_sustain && !sustain ? sustain_off();
+    );
+  );
+
+  midisend(offset,msg1,msg23);
+  1;
+) : 0);
+
+@sample
+spl0 = 0;
+spl1 = 0;
+
+v = 0;
+limit = min(MAX_VOICES,max(1,floor(slider2)));
+
+loop(limit,
+  va = vaddr(v);
+
+  va[V_ACTIVE] > 0.5 ? (
+    ra = raddr(va[V_REGION]);
+
+    pos = va[V_POS];
+    idx = floor(pos);
+    frac = pos - idx;
+
+    // Continuous loop: when read head reaches loop_end,
+    // wrap while preserving fractional overshoot.
+    ra[R_LOOP_MODE] > 0.5 &&
+    ra[R_LOOP_START] >= 0 &&
+    ra[R_LOOP_END] > ra[R_LOOP_START] &&
+    pos >= ra[R_LOOP_END] ? (
+      pos = ra[R_LOOP_START] + (pos - ra[R_LOOP_END]);
+      va[V_POS] = pos;
+      idx = floor(pos);
+      frac = pos - idx;
+    );
+
+    idx + 1 <= ra[R_END] && idx + 1 < ra[R_FRAMES] ? (
+      base = ra[R_START];
+
+      ra[R_CHANS] == 1 ? (
+        s0 = base[idx];
+        s1 = base[idx+1];
+        smpL = s0 + (s1-s0)*frac;
+        smpR = smpL;
+      ) : (
+        p0 = base + idx*2;
+        p1 = p0 + 2;
+
+        l0 = p0[0];
+        r0 = p0[1];
+        l1 = p1[0];
+        r1 = p1[1];
+
+        smpL = l0 + (l1-l0)*frac;
+        smpR = r0 + (r1-r0)*frac;
+      );
+
+      env = va[V_ENV];
+
+      va[V_RELSTEP] > 0 ? (
+        env = max(0,env-va[V_RELSTEP]);
+        va[V_ENV] = env;
+        env <= 0 ? va[V_ACTIVE] = 0;
+      );
+
+      g = va[V_GAIN]*env;
+      spl0 += smpL*g;
+      spl1 += smpR*g;
+
+      va[V_POS] = pos + va[V_STEP];
+    ) : (
+      va[V_ACTIVE] = 0;
+    );
+  );
+
+  v += 1;
+);
+
+@gfx 960 300
+gfx_clear = 0x202020;
+
+gfx_setfont(1,"Arial",20);
+gfx_set(1,1,1,1);
+gfx_x = 18;
+gfx_y = 15;
+gfx_drawstr("ReaGroove SFZ Player v0.43");
+
+gfx_setfont(1,"Arial",14);
+gfx_x = 18;
+gfx_y = 52;
+loaded_ok ? gfx_set(0.65,1,0.65,1) : gfx_set(1,0.55,0.55,1);
+gfx_drawstr(#status);
+
+gfx_set(0.82,0.82,0.82,1);
+gfx_x = 18;
+gfx_y = 82;
+gfx_drawstr("SFZ: ");
+gfx_drawstr(#sfz_path);
+
+gfx_x = 18;
+gfx_y = 108;
+gfx_drawstr("Default path: ");
+gfx_drawstr(#default_path);
+
+gfx_x = 18;
+gfx_y = 132;
+gfx_drawstr("Shared sample: ");
+gfx_drawstr(#global_sample_name);
+
+gfx_x = 18;
+gfx_y = 156;
+gfx_drawstr("Resolved shared path: ");
+gfx_drawstr(#shared_path);
+
+load_errors > 0 && strlen(#first_error_path) > 0 ? (
+  gfx_set(1,0.6,0.45,1);
+  gfx_x = 18;
+  gfx_y = 182;
+  gfx_drawstr("First failed sample: ");
+  gfx_drawstr(#first_error_path);
+);
+
+gfx_set(0.82,0.82,0.82,1);
+gfx_x = 18;
+gfx_y = 214;
+gfx_drawstr("v0.43: Lua-resolved absolute shared path + shared pool, master/group inheritance, offset/end,");
+
+gfx_x = 18;
+gfx_y = 260;
+gfx_drawstr("loop_start/loop_end, loop_continuous and tune. Release regions still skipped.");
+
+gfx_x = 18;
+gfx_y = 260;
+gfx_drawstr("Browser script v2 remains compatible.");
+
