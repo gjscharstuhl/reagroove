@@ -573,20 +573,10 @@ local function send_pad_rgb(
         return true
     end
 
-    if not Bridge then
-        reaper.ShowConsoleMsg(
-            "RGB mislukt: SysEx bridge niet geladen.\n"
-        )
-        return false
-    end
-
-    return Bridge.set_pad_rgb_at(
-        row,
-        col,
-        red,
-        green,
-        blue
-    )
+    -- Performance owns screen 7 and does not use Lua pad drawing.
+    -- Every other matrix screen has already returned through its central
+    -- renderer path above.
+    return true
 end
 
 -- Deprecated compatibility name. It now performs RGB output only.
@@ -959,11 +949,6 @@ local function render_fader(group)
 
     if LP.current_screen == 2 or LP.current_screen == 3 then
         publish_jsfx_control(LP.current_screen, fader_col)
-    elseif Bridge and Bridge.set_fader_rgb then
-        Bridge.set_fader_rgb(
-            fader_col,
-            colors
-        )
     end
 end
 
@@ -1087,11 +1072,6 @@ local function render_horizontal_fader(group)
             LP.current_screen,
             LP.framebuffer
         )
-    elseif Bridge and Bridge.set_row_rgb then
-        Bridge.set_row_rgb(
-            fader_row,
-            colors
-        )
     end
 end
 
@@ -1153,23 +1133,6 @@ local function render_horizontal_value_fader(group)
             LP.current_screen,
             LP.framebuffer
         )
-    elseif Bridge then
-        reaper.gmem_attach(GMEM_NAME)
-        reaper.gmem_write(10, 8)
-
-        for col = 1, 8 do
-            local color = colors[col] or { 0, 0, 0 }
-            local base = 11 + ((col - 1) * 4)
-
-            reaper.gmem_write(base + 0, fader_row * 10 + col)
-            reaper.gmem_write(base + 1, color[1] or 0)
-            reaper.gmem_write(base + 2, color[2] or 0)
-            reaper.gmem_write(base + 3, color[3] or 0)
-        end
-
-        Bridge.sequence = (Bridge.sequence or 0) + 1
-        reaper.gmem_write(1, 4)
-        reaper.gmem_write(0, Bridge.sequence)
     end
 end
 
@@ -1935,47 +1898,24 @@ local function draw_current_screen()
 
         LP.building_matrix = false
 
-        if Bridge and Bridge.set_matrix_rgb then
-            local screen6_state = LP.current_screen == 6 and get_screen_state(6) or nil
-            local screen6_midi_edit = screen6_state
-                and screen6_state.sequencer_layout == "midi_edit"
-
-            if LP.current_screen == 7 then
-                -- Performance remains on its existing renderer.
-                LP.matrix_screen_active = true
-            elseif LP.current_screen == 2
-                or LP.current_screen == 3 then
-                publish_jsfx_controls(LP.current_screen)
-                LP.matrix_screen_active = true
-            elseif LP.current_screen == 0
-                or LP.current_screen == 1
-                or LP.current_screen == 4
-                or LP.current_screen == 5
-                or LP.current_screen == 6 then
-                publish_static_jsfx_matrix(
-                    LP.current_screen,
-                    LP.framebuffer
-                )
-                LP.matrix_screen_active = true
-            else
-                Bridge.set_matrix_rgb(LP.framebuffer)
-                LP.matrix_screen_active = true
-            end
+        if LP.current_screen == 7 then
+            -- Performance remains on its existing renderer.
+            LP.matrix_screen_active = true
+        elseif LP.current_screen == 2
+            or LP.current_screen == 3 then
+            publish_jsfx_controls(LP.current_screen)
+            LP.matrix_screen_active = true
         else
-            reaper.ShowConsoleMsg(
-                "Matrix tekenen mislukt: Bridge.set_matrix_rgb ontbreekt.\n"
+            -- Screens 0,1,4,5,6 use the shared static renderer.
+            publish_static_jsfx_matrix(
+                LP.current_screen,
+                LP.framebuffer
             )
+            LP.matrix_screen_active = true
         end
     else
         -- Clear any persistent RGB matrix before returning to legacy screens.
-        if LP.matrix_screen_active
-           and Bridge
-           and Bridge.set_matrix_rgb then
-
-            Bridge.set_matrix_rgb(new_black_matrix())
-            LP.matrix_screen_active = false
-        end
-
+        LP.matrix_screen_active = false
         clearscreen()
 
         if draw_screen then
