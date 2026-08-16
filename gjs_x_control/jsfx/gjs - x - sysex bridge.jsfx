@@ -3,19 +3,12 @@ options:gmem=GJS_X_BRIDGE
 import gjs_x_renderer.jsfx-inc
 
 // ============================================================
-// gmem-indeling
+// Bridge responsibilities
 //
-// gmem[0] = sequence
-// gmem[1] = command
-// gmem[2] = laatst bevestigde sequence
-//
-// Command 3:
-// gmem[3] = LED-index / MIDI-noot
-// gmem[4] = rood   0-127
-// gmem[5] = groen  0-127
-// gmem[6] = blauw  0-127
+// gmem[0..2]  = small acknowledged command channel
+//               (currently Programmer Mode only)
+// Remaining gmem ranges are renderer state/event buffers.
 // ============================================================
-
 
 @init
 
@@ -64,7 +57,6 @@ last_seq_render_version = -1;
 
 MAINBAR_RENDER_VERSION_SLOT = 3350;
 MAINBAR_RENDER_ENABLED_SLOT = 3351;
-MAINBAR_RENDER_COUNT_SLOT = 3352;
 MAINBAR_RENDER_RGB_BASE = 3353;
 last_mainbar_render_version = -1;
 
@@ -79,16 +71,6 @@ last_static_render_version = -1;
 SIDEBAR_STATE_VERSION_SLOT = 3700;
 SIDEBAR_STATE_BASE = 3710;
 last_sidebar_state_version = -1;
-
-function perf_clamp(v) ( max(0,min(127,floor(v))); );
-
-function perf_write_rgb(buffer,target,led,r,g,b) (
-    buffer[target]=$x03;
-    buffer[target+1]=perf_clamp(led);
-    buffer[target+2]=perf_clamp(r);
-    buffer[target+3]=perf_clamp(g);
-    buffer[target+4]=perf_clamp(b);
-);
 
 function perf_drum_rgb(note,component) local(row,col,r,g,b) (
     row=floor(note/10); col=note%10; r=0; g=0; b=0;

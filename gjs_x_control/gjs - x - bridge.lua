@@ -12,16 +12,6 @@ Bridge.in_flight = nil
 Bridge.running = false
 Bridge.pump_scheduled = false
 
-local function clamp(value, minimum, maximum)
-    value = math.floor(tonumber(value) or 0)
-
-    if value < minimum then return minimum end
-    if value > maximum then return maximum end
-
-    return value
-end
-
-
 local function write_packet(packet)
     reaper.gmem_write(1, packet.command)
     reaper.gmem_write(0, packet.sequence)
@@ -98,10 +88,6 @@ end
 
 function Bridge.programmer_mode()
     return enqueue({ command = COMMAND_PROGRAMMER_MODE })
-end
-
-function Bridge.last_acknowledged_sequence()
-    return math.floor(reaper.gmem_read(2) or -1)
 end
 
 return Bridge

@@ -46,7 +46,6 @@ seq_render_version = floor(gmem[SEQ_RENDER_VERSION_SLOT]);
 
 MAINBAR_RENDER_VERSION_SLOT = 3350;
 MAINBAR_RENDER_ENABLED_SLOT = 3351;
-MAINBAR_RENDER_COUNT_SLOT = 3352;
 MAINBAR_RENDER_RGB_BASE = 3353;
 mainbar_render_version = floor(gmem[MAINBAR_RENDER_VERSION_SLOT]);
 
@@ -228,7 +227,6 @@ local(i,count,red,green,blue,active_bar,target) (
         i += 1;
     );
 
-    gmem[MAINBAR_RENDER_COUNT_SLOT] = count;
     gmem[MAINBAR_RENDER_ENABLED_SLOT] = count > 0 ? 1 : 0;
 
     mainbar_render_version += 1;
