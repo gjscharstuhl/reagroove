@@ -75,6 +75,11 @@ STATIC_RENDER_VERSION_SLOT = 3501;
 STATIC_RENDER_RGB_BASE = 3502;
 last_static_render_version = -1;
 
+// Sidebar/navigation CC LED state buffer.
+SIDEBAR_STATE_VERSION_SLOT = 3700;
+SIDEBAR_STATE_BASE = 3710;
+last_sidebar_state_version = -1;
+
 function perf_clamp(v) ( max(0,min(127,floor(v))); );
 
 function perf_write_rgb(buffer,target,led,r,g,b) (
@@ -343,6 +348,31 @@ sequence != last_sequence ? (
 );
 
 // Screen 2/3 mixer framebuffer. This bridge is the only hardware writer.
+sidebar_state_version=floor(gmem[SIDEBAR_STATE_VERSION_SLOT]);
+sidebar_state_version!=last_sidebar_state_version ? (
+    // Right sidebar screen buttons: 89,79,69,59,49,39,29,19
+    sidebar_i=0;
+    loop(8,
+        sidebar_cc=89-(sidebar_i*10);
+        sidebar_value=floor(gmem[SIDEBAR_STATE_BASE+sidebar_cc]);
+        sidebar_value=max(0,min(127,sidebar_value));
+        midisend(0,$xB0,sidebar_cc | (sidebar_value*256));
+        sidebar_i+=1;
+    );
+
+    // Top navigation buttons: 91..94. Always send zero too, so an old
+    // navigation LED cannot remain lit after the state changes.
+    sidebar_cc=91;
+    loop(4,
+        sidebar_value=floor(gmem[SIDEBAR_STATE_BASE+sidebar_cc]);
+        sidebar_value=max(0,min(127,sidebar_value));
+        midisend(0,$xB0,sidebar_cc | (sidebar_value*256));
+        sidebar_cc+=1;
+    );
+
+    last_sidebar_state_version=sidebar_state_version;
+);
+
 static_render_version=floor(gmem[STATIC_RENDER_VERSION_SLOT]);
 static_render_version!=last_static_render_version ? (
     static_render_screen=floor(gmem[STATIC_RENDER_SCREEN_SLOT]);

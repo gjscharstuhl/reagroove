@@ -584,8 +584,31 @@ local function send_pad_color(row, col, color)
     return send_pad_rgb(row, col, color)
 end
 
+-- Sidebar/navigation LED state buffer.
+-- 3700 = generation
+-- 3710..3837 = current value for MIDI CC 0..127
+local SIDEBAR_STATE_VERSION_SLOT = 3700
+local SIDEBAR_STATE_BASE = 3710
+local sidebar_state_version = 0
+
 local function send_cc_color(cc, color)
-    reaper.StuffMIDIMessage(LP.output_mode, 0xB0, cc, color)
+    cc = math.max(0, math.min(127, math.floor(tonumber(cc) or 0)))
+    color = math.max(0, math.min(127, math.floor(tonumber(color) or 0)))
+
+    reaper.gmem_attach(GMEM_NAME)
+    reaper.gmem_write(SIDEBAR_STATE_BASE + cc, color)
+
+    sidebar_state_version =
+        math.floor(
+            tonumber(
+                reaper.gmem_read(SIDEBAR_STATE_VERSION_SLOT)
+            ) or 0
+        ) + 1
+
+    reaper.gmem_write(
+        SIDEBAR_STATE_VERSION_SLOT,
+        sidebar_state_version
+    )
 end
 
 local function auto_program_mode()
