@@ -1,5 +1,6 @@
 desc:GJS - X - SysEx Bridge
 options:gmem=GJS_X_BRIDGE
+import "gjs - x - renderer.jsfx-inc"
 
 // ============================================================
 // gmem-indeling
@@ -40,6 +41,12 @@ last_perf_layout = -1;
 last_perf_octave = 999;
 last_perf_redraw = -1;
 last_perf_feedback_seq = -1;
+
+// Screen 2/3 shared framebuffer renderer.
+MIX_RENDER_SCREEN_SLOT = 3200;
+MIX_RENDER_VERSION_SLOT = 3201;
+MIX_RENDER_RGB_BASE = 3202;
+last_mix_render_version = -1;
 
 function perf_clamp(v) ( max(0,min(127,floor(v))); );
 
@@ -122,6 +129,27 @@ function perf_draw_layout(layout) local(i,row,col,n,target,r,g,b,len) (
     );
     len=8+64*5;buf_pm[len-1]=$xF7;buf_pd[len-1]=$xF7;
     midisend_buf(0,buf_pm,len);midisend_buf(0,buf_pd,len);
+);
+
+
+function mix_draw_frame() local(i,row,col,source,r,g,b) (
+    renderer_clear();
+
+    i = 0;
+    loop(64,
+        row = floor(i / 8) + 1;
+        col = (i % 8) + 1;
+        source = MIX_RENDER_RGB_BASE + i * 3;
+
+        r = gmem[source + 0];
+        g = gmem[source + 1];
+        b = gmem[source + 2];
+
+        renderer_pad(row, col, r, g, b);
+        i += 1;
+    );
+
+    renderer_flush();
 );
 
 @block
@@ -436,6 +464,16 @@ sequence != last_sequence ? (
         gmem[2] = sequence;
     );
 
+);
+
+// Screen 2/3 mixer framebuffer. This bridge is the only hardware writer.
+mix_render_screen=floor(gmem[MIX_RENDER_SCREEN_SLOT]);
+mix_render_version=floor(gmem[MIX_RENDER_VERSION_SLOT]);
+
+(mix_render_screen==2 || mix_render_screen==3) &&
+mix_render_version!=last_mix_render_version ? (
+    mix_draw_frame();
+    last_mix_render_version=mix_render_version;
 );
 
 // Screen-7 layout and feedback are sent by this JSFX because this bridge is

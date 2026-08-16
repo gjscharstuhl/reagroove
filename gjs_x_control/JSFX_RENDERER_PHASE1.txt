@@ -1,0 +1,11 @@
+ReaGroove JSFX renderer phase 1
+
+- Screen 2/3 framebuffer is still composed by Lua.
+- Hardware drawing is owned by gjs - x - sysex bridge.jsfx.
+- Shared drawing primitives live in gjs - x - renderer.jsfx-inc.
+- renderer_flush() is the only screen-2/3 matrix SysEx writer.
+
+Next step:
+Move screen 2/3 from RGB framebuffer publishing to semantic state
+(fader values, balance values, page, active track) and let the JSFX
+compose the screen itself.

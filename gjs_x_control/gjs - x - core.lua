@@ -7,6 +7,12 @@ local scene_api = include("gjs - scene_api.lua")
 local GMEM_NAME = "GJS_X_BRIDGE"
 local PERFORMANCE_MODE_SLOT = 100
 
+-- Screen 2/3 shared JSFX framebuffer.
+local JSFX_RENDER_SCREEN_SLOT = 3200
+local JSFX_RENDER_VERSION_SLOT = 3201
+local JSFX_RENDER_RGB_BASE = 3202
+local jsfx_render_version = 0
+
 local PERFORMANCE_SCREENS = {
     [7] = true
 }
@@ -19,6 +25,7 @@ local Transport = _G.GJS_X_TRANSPORT
 local Pattern = _G.GJS_X_PATTERN
 local ExternalController = include("gjs - x - external_controller.lua")
 local API = {}
+local publish_jsfx_matrix
 local DEVICE_NAME = "X"
 
 ------------------------------------------------------------
@@ -904,7 +911,14 @@ local function render_fader(group)
         return
     end
 
-    if Bridge and Bridge.set_fader_rgb then
+    if LP.current_screen == 2 or LP.current_screen == 3 then
+        if LP.framebuffer then
+            for row = 1, 8 do
+                LP.framebuffer[row][fader_col] = colors[row]
+            end
+        end
+        publish_jsfx_matrix(LP.current_screen, LP.framebuffer)
+    elseif Bridge and Bridge.set_fader_rgb then
         Bridge.set_fader_rgb(
             fader_col,
             colors
@@ -1013,7 +1027,14 @@ local function render_horizontal_fader(group)
         return
     end
 
-    if Bridge and Bridge.set_row_rgb then
+    if LP.current_screen == 2 or LP.current_screen == 3 then
+        if LP.framebuffer then
+            for col = 1, 8 do
+                LP.framebuffer[fader_row][col] = colors[col]
+            end
+        end
+        publish_jsfx_matrix(LP.current_screen, LP.framebuffer)
+    elseif Bridge and Bridge.set_row_rgb then
         Bridge.set_row_rgb(
             fader_row,
             colors
@@ -1678,6 +1699,36 @@ local function draw_sidebar()
     end
 end
 
+publish_jsfx_matrix = function(screen, framebuffer)
+    if screen ~= 2 and screen ~= 3 then return end
+
+    reaper.gmem_attach(GMEM_NAME)
+    reaper.gmem_write(JSFX_RENDER_SCREEN_SLOT, screen)
+
+    local offset = JSFX_RENDER_RGB_BASE
+    for row = 1, 8 do
+        for col = 1, 8 do
+            local rgb = framebuffer
+                and framebuffer[row]
+                and framebuffer[row][col]
+                or COLOR.OFF
+
+            reaper.gmem_write(offset + 0, rgb[1] or 0)
+            reaper.gmem_write(offset + 1, rgb[2] or 0)
+            reaper.gmem_write(offset + 2, rgb[3] or 0)
+            offset = offset + 3
+        end
+    end
+
+    jsfx_render_version = jsfx_render_version + 1
+    reaper.gmem_write(JSFX_RENDER_VERSION_SLOT, jsfx_render_version)
+end
+
+local function disable_jsfx_matrix_renderer()
+    reaper.gmem_attach(GMEM_NAME)
+    reaper.gmem_write(JSFX_RENDER_SCREEN_SLOT, 0)
+end
+
 local function draw_current_screen()
     LP.loop_overview_signature = nil
     LP.navigation_up = nil
@@ -1719,6 +1770,15 @@ local function draw_current_screen()
 
             if LP.current_screen == 7 then
                 -- Screen 7 is fully rendered by the Performance JSFX.
+                LP.matrix_screen_active = true
+            elseif LP.current_screen == 2
+                or LP.current_screen == 3 then
+                -- Lua builds state/handlers, but the bridge JSFX is the sole
+                -- hardware writer for mixer screens.
+                publish_jsfx_matrix(
+                    LP.current_screen,
+                    LP.framebuffer
+                )
                 LP.matrix_screen_active = true
             elseif LP.current_screen == 6
             and not screen6_midi_edit
@@ -1806,6 +1866,11 @@ local function select_screen(screen)
     end
 
     local previous_screen = LP.current_screen
+
+    if (previous_screen == 2 or previous_screen == 3)
+       and screen ~= 2 and screen ~= 3 then
+        disable_jsfx_matrix_renderer()
+    end
 
     -- Screen 6 owns a continuously running JSFX display overlay.  Always
     -- disable it before leaving screen 6; otherwise it can race the
@@ -2030,6 +2095,7 @@ local function cleanup()
     pcall(function()
         reaper.gmem_attach(GMEM_NAME)
         reaper.gmem_write(PERFORMANCE_MODE_SLOT, 0)
+        reaper.gmem_write(JSFX_RENDER_SCREEN_SLOT, 0)
     end)
 
     if Bridge and type(Bridge.shutdown) == "function" then
