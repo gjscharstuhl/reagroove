@@ -7,10 +7,17 @@ local scene_api = include("gjs - scene_api.lua")
 local GMEM_NAME = "GJS_X_BRIDGE"
 local PERFORMANCE_MODE_SLOT = 100
 
--- Screen 2/3 shared JSFX framebuffer.
+-- Screen 2/3 semantic JSFX renderer state.
+-- 3200 = active renderer screen (0, 2 or 3)
+-- 3201 = state generation
+-- 3202.. = 8 controls x 6 values:
+--   value1, value2, centered, red, green, blue
+-- Screen 2: value1=row, value2=step
+-- Screen 3: value1=position, value2=step, centered=0/1
 local JSFX_RENDER_SCREEN_SLOT = 3200
 local JSFX_RENDER_VERSION_SLOT = 3201
-local JSFX_RENDER_RGB_BASE = 3202
+local JSFX_RENDER_CONTROL_BASE = 3202
+local JSFX_RENDER_CONTROL_STRIDE = 6
 local jsfx_render_version = 0
 
 local PERFORMANCE_SCREENS = {
@@ -25,6 +32,7 @@ local Transport = _G.GJS_X_TRANSPORT
 local Pattern = _G.GJS_X_PATTERN
 local ExternalController = include("gjs - x - external_controller.lua")
 local API = {}
+local publish_jsfx_controls
 local publish_jsfx_matrix
 local DEVICE_NAME = "X"
 
@@ -912,12 +920,7 @@ local function render_fader(group)
     end
 
     if LP.current_screen == 2 or LP.current_screen == 3 then
-        if LP.framebuffer then
-            for row = 1, 8 do
-                LP.framebuffer[row][fader_col] = colors[row]
-            end
-        end
-        publish_jsfx_matrix(LP.current_screen, LP.framebuffer)
+        publish_jsfx_controls(LP.current_screen)
     elseif Bridge and Bridge.set_fader_rgb then
         Bridge.set_fader_rgb(
             fader_col,
@@ -1028,12 +1031,7 @@ local function render_horizontal_fader(group)
     end
 
     if LP.current_screen == 2 or LP.current_screen == 3 then
-        if LP.framebuffer then
-            for col = 1, 8 do
-                LP.framebuffer[fader_row][col] = colors[col]
-            end
-        end
-        publish_jsfx_matrix(LP.current_screen, LP.framebuffer)
+        publish_jsfx_controls(LP.current_screen)
     elseif Bridge and Bridge.set_row_rgb then
         Bridge.set_row_rgb(
             fader_row,
@@ -1699,25 +1697,64 @@ local function draw_sidebar()
     end
 end
 
-publish_jsfx_matrix = function(screen, framebuffer)
+local function find_fader_pad_for_column(col)
+    for _, pad in pairs(LP.pads) do
+        if pad.mode == MODE_FADER and pad.col == col then
+            return pad
+        end
+    end
+    return nil
+end
+
+local function find_balance_pad_for_index(index)
+    local wanted_row = 9 - index
+    for _, pad in pairs(LP.pads) do
+        if pad.mode == MODE_BALANCE and pad.row == wanted_row then
+            return pad
+        end
+    end
+    return nil
+end
+
+publish_jsfx_controls = function(screen)
     if screen ~= 2 and screen ~= 3 then return end
 
     reaper.gmem_attach(GMEM_NAME)
     reaper.gmem_write(JSFX_RENDER_SCREEN_SLOT, screen)
 
-    local offset = JSFX_RENDER_RGB_BASE
-    for row = 1, 8 do
-        for col = 1, 8 do
-            local rgb = framebuffer
-                and framebuffer[row]
-                and framebuffer[row][col]
-                or COLOR.OFF
+    for index = 1, 8 do
+        local base =
+            JSFX_RENDER_CONTROL_BASE
+            + (index - 1) * JSFX_RENDER_CONTROL_STRIDE
 
-            reaper.gmem_write(offset + 0, rgb[1] or 0)
-            reaper.gmem_write(offset + 1, rgb[2] or 0)
-            reaper.gmem_write(offset + 2, rgb[3] or 0)
-            offset = offset + 3
+        local value1, value2, centered = 0, 0, 0
+        local rgb = COLOR.OFF
+
+        if screen == 2 then
+            local pad = find_fader_pad_for_column(index)
+            if pad and pad.fader_group then
+                local fader = get_fader_state(pad.fader_group)
+                value1 = fader.row or 1
+                value2 = fader.step or 1
+                rgb = pad.rgb or COLOR.OFF
+            end
+        else
+            local pad = find_balance_pad_for_index(index)
+            if pad and pad.balance_group then
+                local balance = get_balance_state(pad.balance_group)
+                value1 = balance.position or 4
+                value2 = balance.step or 4
+                centered = balance.centered and 1 or 0
+                rgb = pad.rgb or COLOR.OFF
+            end
         end
+
+        reaper.gmem_write(base + 0, value1)
+        reaper.gmem_write(base + 1, value2)
+        reaper.gmem_write(base + 2, centered)
+        reaper.gmem_write(base + 3, rgb[1] or 0)
+        reaper.gmem_write(base + 4, rgb[2] or 0)
+        reaper.gmem_write(base + 5, rgb[3] or 0)
     end
 
     jsfx_render_version = jsfx_render_version + 1
@@ -1775,10 +1812,7 @@ local function draw_current_screen()
                 or LP.current_screen == 3 then
                 -- Lua builds state/handlers, but the bridge JSFX is the sole
                 -- hardware writer for mixer screens.
-                publish_jsfx_matrix(
-                    LP.current_screen,
-                    LP.framebuffer
-                )
+                publish_jsfx_controls(LP.current_screen)
                 LP.matrix_screen_active = true
             elseif LP.current_screen == 6
             and not screen6_midi_edit

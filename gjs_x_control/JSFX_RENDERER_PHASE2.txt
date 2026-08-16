@@ -1,0 +1,15 @@
+ReaGroove JSFX renderer Phase 2
+
+Screen 2 and 3 no longer publish a 64-pad RGB framebuffer.
+
+Lua publishes only 8 semantic control states:
+- Screen 2: fader row + fine step + RGB
+- Screen 3: balance position + fine step + centered + RGB
+
+gjs_x_renderer.jsfx-inc composes the actual 8x8 display using:
+- renderer_vertical_fader_state()
+- renderer_balance_state()
+- renderer_flush()
+
+Lua still owns REAPER mixer/FX logic and Launchpad input handlers.
+The SysEx bridge remains the only hardware LED writer for screens 2/3.
