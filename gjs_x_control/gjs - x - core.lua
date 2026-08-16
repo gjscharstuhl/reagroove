@@ -1547,31 +1547,23 @@ local function paint_loop_overview(length, current_bar)
 end
 
 local function send_loop_pad_updates(indices, length, current_bar)
-    if not Bridge or not LP.framebuffer or #indices == 0 then
+    if not LP.framebuffer or #indices == 0 then
         return false
     end
 
-    -- Command 4 accepts an arbitrary list of RGB pads in one SysEx packet.
-    -- Using a single bridge command prevents command overwrites and avoids
-    -- resending the complete 8x8 matrix for every moving bar cursor.
-    reaper.gmem_write(10, #indices)
-
-    for item_index, index in ipairs(indices) do
+    for _, index in ipairs(indices) do
         local row, col = loop_pad_position(index)
-        local color = copy_rgb(loop_display_color(index, length, current_bar))
-        local base = 11 + ((item_index - 1) * 4)
+        local color = copy_rgb(
+            loop_display_color(index, length, current_bar)
+        )
 
         LP.framebuffer[row][col] = color
-
-        reaper.gmem_write(base + 0, row * 10 + col)
-        reaper.gmem_write(base + 1, color[1])
-        reaper.gmem_write(base + 2, color[2])
-        reaper.gmem_write(base + 3, color[3])
     end
 
-    Bridge.sequence = (Bridge.sequence or 0) + 1
-    reaper.gmem_write(1, 4)
-    reaper.gmem_write(0, Bridge.sequence)
+    publish_static_jsfx_matrix(
+        LP.current_screen,
+        LP.framebuffer
+    )
     return true
 end
 
@@ -1699,9 +1691,10 @@ local function update_loop_overview()
         -- van de zestien overview-pads.
         paint_loop_overview(length, current_bar)
 
-        if Bridge.set_matrix_rgb then
-            Bridge.set_matrix_rgb(LP.framebuffer)
-        end
+        publish_static_jsfx_matrix(
+            LP.current_screen,
+            LP.framebuffer
+        )
     else
         -- Tijdens normaal afspelen veranderen alleen de oude en
         -- nieuwe cursorpositie.
