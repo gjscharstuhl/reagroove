@@ -32,6 +32,15 @@ local JSFX_RENDER_EVENT_DATA_BASE = 3253
 local jsfx_render_version = 0
 local jsfx_render_event_sequence = 0
 
+-- Static Lua screens -> central JSFX renderer.
+local STATIC_RENDER_SCREEN_SLOT = 3500
+local STATIC_RENDER_VERSION_SLOT = 3501
+local STATIC_RENDER_RGB_BASE = 3502
+local static_render_version = 0
+
+-- Global screen gate used by the bridge to reject stale renderer events.
+local CURRENT_SCREEN_SLOT = 3499
+
 local PERFORMANCE_SCREENS = {
     [7] = true
 }
@@ -46,6 +55,7 @@ local ExternalController = include("gjs - x - external_controller.lua")
 local API = {}
 local publish_jsfx_controls
 local publish_jsfx_control
+local publish_static_jsfx_matrix
 local publish_jsfx_matrix
 local DEVICE_NAME = "X"
 
@@ -1817,6 +1827,40 @@ local function disable_jsfx_matrix_renderer()
     reaper.gmem_write(JSFX_RENDER_SCREEN_SLOT, 0)
 end
 
+publish_static_jsfx_matrix = function(screen, framebuffer)
+    if screen ~= 0
+       and screen ~= 1
+       and screen ~= 4
+       and screen ~= 5
+       and screen ~= 6 then
+        return
+    end
+
+    reaper.gmem_attach(GMEM_NAME)
+    reaper.gmem_write(STATIC_RENDER_SCREEN_SLOT, screen)
+
+    local offset = STATIC_RENDER_RGB_BASE
+    for row = 1, 8 do
+        for col = 1, 8 do
+            local rgb = framebuffer
+                and framebuffer[row]
+                and framebuffer[row][col]
+                or COLOR.OFF
+
+            reaper.gmem_write(offset + 0, rgb[1] or 0)
+            reaper.gmem_write(offset + 1, rgb[2] or 0)
+            reaper.gmem_write(offset + 2, rgb[3] or 0)
+            offset = offset + 3
+        end
+    end
+
+    static_render_version = static_render_version + 1
+    reaper.gmem_write(
+        STATIC_RENDER_VERSION_SLOT,
+        static_render_version
+    )
+end
+
 local function draw_current_screen()
     LP.loop_overview_signature = nil
     LP.navigation_up = nil
@@ -1857,22 +1901,23 @@ local function draw_current_screen()
                 and screen6_state.sequencer_layout == "midi_edit"
 
             if LP.current_screen == 7 then
-                -- Screen 7 is fully rendered by the Performance JSFX.
+                -- Performance remains on its existing renderer.
                 LP.matrix_screen_active = true
             elseif LP.current_screen == 2
                 or LP.current_screen == 3 then
-                -- Lua builds state/handlers, but the bridge JSFX is the sole
-                -- hardware writer for mixer screens.
                 publish_jsfx_controls(LP.current_screen)
                 LP.matrix_screen_active = true
-            elseif LP.current_screen == 6
-            and not screen6_midi_edit
-            and Bridge.set_matrix_rows_rgb then
-                -- Drum/piano reserve rows 7/8 for the sequencer display JSFX.
-                Bridge.set_matrix_rows_rgb(LP.framebuffer, 1, 6)
+            elseif LP.current_screen == 0
+                or LP.current_screen == 1
+                or LP.current_screen == 4
+                or LP.current_screen == 5
+                or LP.current_screen == 6 then
+                publish_static_jsfx_matrix(
+                    LP.current_screen,
+                    LP.framebuffer
+                )
                 LP.matrix_screen_active = true
             else
-                -- MIDI edit and normal matrix screens own all eight rows.
                 Bridge.set_matrix_rgb(LP.framebuffer)
                 LP.matrix_screen_active = true
             end
@@ -1925,6 +1970,10 @@ end
 
 local function update_performance_mode()
     reaper.gmem_attach(GMEM_NAME)
+
+    -- Publish the current screen before any renderer can react to the
+    -- transition. The bridge uses this as a hard gate against stale events.
+    reaper.gmem_write(CURRENT_SCREEN_SLOT, LP.current_screen)
 
     local enabled =
         PERFORMANCE_SCREENS[LP.current_screen] == true
@@ -2181,6 +2230,7 @@ local function cleanup()
         reaper.gmem_attach(GMEM_NAME)
         reaper.gmem_write(PERFORMANCE_MODE_SLOT, 0)
         reaper.gmem_write(JSFX_RENDER_SCREEN_SLOT, 0)
+        reaper.gmem_write(STATIC_RENDER_SCREEN_SLOT, -1)
     end)
 
     if Bridge and type(Bridge.shutdown) == "function" then
@@ -2263,6 +2313,8 @@ local function start(screens)
 
     LP.screens = screens
     LP.current_screen = 0
+    reaper.gmem_attach(GMEM_NAME)
+    reaper.gmem_write(CURRENT_SCREEN_SLOT, LP.current_screen)
     set_page(tonumber(reaper.GetExtState("GJS_X", "Page")) or 1)
 
     local attempts = 0

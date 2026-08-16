@@ -68,6 +68,13 @@ MAINBAR_RENDER_COUNT_SLOT = 3352;
 MAINBAR_RENDER_RGB_BASE = 3353;
 last_mainbar_render_version = -1;
 
+// Static Lua screens.
+CURRENT_SCREEN_SLOT = 3499;
+STATIC_RENDER_SCREEN_SLOT = 3500;
+STATIC_RENDER_VERSION_SLOT = 3501;
+STATIC_RENDER_RGB_BASE = 3502;
+last_static_render_version = -1;
+
 function perf_clamp(v) ( max(0,min(127,floor(v))); );
 
 function perf_write_rgb(buffer,target,led,r,g,b) (
@@ -257,6 +264,28 @@ function mainbar_draw_rows() local(i,row,col,source,r,g,b) (
     );
 
     renderer_flush_rows(7,8);
+);
+
+
+
+function static_draw_frame(screen) local(i,row,col,source,r,g,b) (
+    renderer_clear();
+
+    i = 0;
+    loop(64,
+        row = floor(i / 8) + 1;
+        col = (i % 8) + 1;
+        source = STATIC_RENDER_RGB_BASE + i * 3;
+
+        r = gmem[source + 0];
+        g = gmem[source + 1];
+        b = gmem[source + 2];
+
+        renderer_pad(row,col,r,g,b);
+        i += 1;
+    );
+
+    screen == 6 ? renderer_flush_rows(1,6) : renderer_flush();
 );
 
 
@@ -575,11 +604,30 @@ sequence != last_sequence ? (
 );
 
 // Screen 2/3 mixer framebuffer. This bridge is the only hardware writer.
+static_render_version=floor(gmem[STATIC_RENDER_VERSION_SLOT]);
+static_render_version!=last_static_render_version ? (
+    static_render_screen=floor(gmem[STATIC_RENDER_SCREEN_SLOT]);
+
+    (
+        static_render_screen==0 ||
+        static_render_screen==1 ||
+        static_render_screen==4 ||
+        static_render_screen==5 ||
+        static_render_screen==6
+    ) ? (
+        static_draw_frame(static_render_screen);
+    );
+
+    last_static_render_version=static_render_version;
+);
+
 mainbar_render_version=floor(gmem[MAINBAR_RENDER_VERSION_SLOT]);
 mainbar_render_version!=last_mainbar_render_version ? (
     mainbar_render_enabled=floor(gmem[MAINBAR_RENDER_ENABLED_SLOT]);
 
-    mainbar_render_enabled==1 ? (
+    current_screen=floor(gmem[CURRENT_SCREEN_SLOT]);
+
+    mainbar_render_enabled==1 && current_screen==0 ? (
         mainbar_draw_rows();
     );
 
@@ -590,7 +638,9 @@ seq_render_version=floor(gmem[SEQ_RENDER_VERSION_SLOT]);
 seq_render_version!=last_seq_render_version ? (
     seq_render_enabled=floor(gmem[SEQ_RENDER_ENABLED_SLOT]);
 
-    seq_render_enabled==1 ? (
+    current_screen=floor(gmem[CURRENT_SCREEN_SLOT]);
+
+    seq_render_enabled==1 && current_screen==6 ? (
         seq_draw_rows();
     );
 
