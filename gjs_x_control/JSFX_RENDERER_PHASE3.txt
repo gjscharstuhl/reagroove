@@ -1,0 +1,9 @@
+ReaGroove JSFX renderer Phase 3
+
+Incremental mixer feedback:
+- Full screen/page redraw: Lua publishes all 8 semantic controls.
+- Fader move: Lua publishes only that single fader state.
+- Balance move: Lua publishes only that single balance state.
+- SysEx bridge updates the existing JSFX framebuffer control and flushes once.
+
+This removes the repeated 8-control republish on every live controller move.

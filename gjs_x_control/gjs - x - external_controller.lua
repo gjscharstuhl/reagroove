@@ -13,6 +13,15 @@ local EVENT_SEQ_SLOT = 1900
 local EVENT_CONTROL_SLOT = 1901
 local EVENT_VALUE_SLOT = 1902
 
+-- Shared screen 2/3 renderer feedback bus.
+local RENDER_SCREEN_SLOT = 3200
+local RENDER_CONTROL_BASE = 3202
+local RENDER_CONTROL_STRIDE = 6
+local RENDER_EVENT_SEQ_SLOT = 3250
+local RENDER_EVENT_SCREEN_SLOT = 3251
+local RENDER_EVENT_INDEX_SLOT = 3252
+local RENDER_EVENT_DATA_BASE = 3253
+
 local fx_mapping = include("gjs - x - fx_mapping.lua")
 local fx_engine = include("gjs - x - fx_engine.lua")
 
@@ -374,6 +383,85 @@ local function apply_balance(index, value, page)
     end
 end
 
+local function publish_renderer_feedback(control, value)
+    reaper.gmem_attach(GMEM_NAME)
+
+    local render_screen =
+        math.floor(tonumber(reaper.gmem_read(RENDER_SCREEN_SLOT)) or 0)
+
+    local index
+    local value1, value2, centered
+
+    if control >= 1 and control <= 8 and render_screen == 2 then
+        index = control
+
+        local position = math.floor(
+            (clamp(value, 0, 127) / 127) * 31 + 0.5
+        )
+        value1 = math.floor(position / 4) + 1
+        value2 = (position % 4) + 1
+        centered = 0
+
+    elseif control >= 9 and control <= 16 and render_screen == 3 then
+        index = control - 8
+
+        local normalized = clamp(value, 0, 127) / 127
+        local balance_index = math.floor(normalized * 18 + 0.5)
+
+        if balance_index == 0 then
+            value1, value2, centered = 1, 4, 0
+        elseif balance_index <= 4 then
+            value1, value2, centered =
+                2, 5 - balance_index, 0
+        elseif balance_index <= 8 then
+            value1, value2, centered =
+                3, 9 - balance_index, 0
+        elseif balance_index == 9 then
+            value1, value2, centered = 4, 4, 1
+        elseif balance_index <= 13 then
+            value1, value2, centered =
+                6, balance_index - 9, 0
+        elseif balance_index <= 17 then
+            value1, value2, centered =
+                7, balance_index - 13, 0
+        else
+            value1, value2, centered = 8, 4, 0
+        end
+    else
+        return
+    end
+
+    -- Reuse the colour already published by the full semantic screen state.
+    local source_base =
+        RENDER_CONTROL_BASE
+        + (index - 1) * RENDER_CONTROL_STRIDE
+
+    reaper.gmem_write(RENDER_EVENT_SCREEN_SLOT, render_screen)
+    reaper.gmem_write(RENDER_EVENT_INDEX_SLOT, index)
+    reaper.gmem_write(RENDER_EVENT_DATA_BASE + 0, value1)
+    reaper.gmem_write(RENDER_EVENT_DATA_BASE + 1, value2)
+    reaper.gmem_write(RENDER_EVENT_DATA_BASE + 2, centered)
+    reaper.gmem_write(
+        RENDER_EVENT_DATA_BASE + 3,
+        reaper.gmem_read(source_base + 3)
+    )
+    reaper.gmem_write(
+        RENDER_EVENT_DATA_BASE + 4,
+        reaper.gmem_read(source_base + 4)
+    )
+    reaper.gmem_write(
+        RENDER_EVENT_DATA_BASE + 5,
+        reaper.gmem_read(source_base + 5)
+    )
+
+    local sequence =
+        math.floor(
+            tonumber(reaper.gmem_read(RENDER_EVENT_SEQ_SLOT)) or 0
+        ) + 1
+
+    reaper.gmem_write(RENDER_EVENT_SEQ_SLOT, sequence)
+end
+
 function M.update()
     reaper.gmem_attach(GMEM_NAME)
 
@@ -408,12 +496,14 @@ function M.update()
         local target = get_fader_target_cc(control, page)
         if soft_takeover(control, value, target) then
             apply_fader(control, value, page)
+            publish_renderer_feedback(control, value)
         end
     else
         local index = control - 8
         local target = get_balance_target_cc(index, page)
         if soft_takeover(control, value, target) then
             apply_balance(index, value, page)
+            publish_renderer_feedback(control, value)
         end
     end
 
