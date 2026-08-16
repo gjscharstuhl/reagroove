@@ -558,6 +558,21 @@ local function send_pad_rgb(
         }
     end
 
+    local static_screen =
+        LP.current_screen == 0
+        or LP.current_screen == 1
+        or LP.current_screen == 4
+        or LP.current_screen == 5
+        or LP.current_screen == 6
+
+    if static_screen and publish_static_jsfx_matrix then
+        publish_static_jsfx_matrix(
+            LP.current_screen,
+            LP.framebuffer
+        )
+        return true
+    end
+
     if not Bridge then
         reaper.ShowConsoleMsg(
             "RGB mislukt: SysEx bridge niet geladen.\n"
@@ -1056,6 +1071,22 @@ local function render_horizontal_fader(group)
     if LP.current_screen == 2 or LP.current_screen == 3 then
         local control_index = 9 - fader_row
         publish_jsfx_control(LP.current_screen, control_index)
+    elseif LP.current_screen == 0
+        or LP.current_screen == 1
+        or LP.current_screen == 4
+        or LP.current_screen == 5
+        or LP.current_screen == 6 then
+
+        if LP.framebuffer then
+            for col = 1, 8 do
+                LP.framebuffer[fader_row][col] = colors[col]
+            end
+        end
+
+        publish_static_jsfx_matrix(
+            LP.current_screen,
+            LP.framebuffer
+        )
     elseif Bridge and Bridge.set_row_rgb then
         Bridge.set_row_rgb(
             fader_row,
@@ -1104,10 +1135,25 @@ local function render_horizontal_value_fader(group)
         return
     end
 
-    if Bridge then
-        -- Velocity-fader feedback must follow rapid pad presses immediately.
-        -- Write the complete row directly as one command, like the fast
-        -- sequencer/playhead updates, instead of waiting in the bridge queue.
+    local static_screen =
+        LP.current_screen == 0
+        or LP.current_screen == 1
+        or LP.current_screen == 4
+        or LP.current_screen == 5
+        or LP.current_screen == 6
+
+    if static_screen then
+        if LP.framebuffer then
+            for col = 1, 8 do
+                LP.framebuffer[fader_row][col] = colors[col]
+            end
+        end
+
+        publish_static_jsfx_matrix(
+            LP.current_screen,
+            LP.framebuffer
+        )
+    elseif Bridge then
         reaper.gmem_attach(GMEM_NAME)
         reaper.gmem_write(10, 8)
 
@@ -1622,9 +1668,10 @@ local function update_loop_overview()
 
         LP.loop_overview_visible = should_show
 
-        if Bridge.set_matrix_rgb then
-            Bridge.set_matrix_rgb(LP.framebuffer)
-        end
+        publish_static_jsfx_matrix(
+            LP.current_screen,
+            LP.framebuffer
+        )
 
         return
     end
