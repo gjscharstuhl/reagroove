@@ -1,0 +1,294 @@
+desc:ReaGroove External Controller MIDI Learn
+options:gmem=GJS_X_BRIDGE
+options:gfx_hz=30
+
+// Hidden persistent mappings.
+// Encoded as channel * 128 + CC, or -1 for unassigned.
+slider1:-1<-1,2047,1>-Fader 1 mapping
+slider2:-1<-1,2047,1>-Fader 2 mapping
+slider3:-1<-1,2047,1>-Fader 3 mapping
+slider4:-1<-1,2047,1>-Fader 4 mapping
+slider5:-1<-1,2047,1>-Fader 5 mapping
+slider6:-1<-1,2047,1>-Fader 6 mapping
+slider7:-1<-1,2047,1>-Fader 7 mapping
+slider8:-1<-1,2047,1>-Fader 8 mapping
+slider9:-1<-1,2047,1>-Balance 1 mapping
+slider10:-1<-1,2047,1>-Balance 2 mapping
+slider11:-1<-1,2047,1>-Balance 3 mapping
+slider12:-1<-1,2047,1>-Balance 4 mapping
+slider13:-1<-1,2047,1>-Balance 5 mapping
+slider14:-1<-1,2047,1>-Balance 6 mapping
+slider15:-1<-1,2047,1>-Balance 7 mapping
+slider16:-1<-1,2047,1>-Balance 8 mapping
+slider17:0<0,1000000,1>-Mapping State Revision
+
+@init
+EVENT_SEQ_SLOT = 1900;
+EVENT_CONTROL_SLOT = 1901;
+EVENT_VALUE_SLOT = 1902;
+PAGE_SLOT = 1903;
+ACTIVE_TRACK_SLOT = 1904;
+
+event_seq = floor(gmem[EVENT_SEQ_SLOT]);
+learn_target = -1;
+last_mouse_cap = 0;
+hover_target = -1;
+
+map0=slider1;   map1=slider2;   map2=slider3;   map3=slider4;
+map4=slider5;   map5=slider6;   map6=slider7;   map7=slider8;
+map8=slider9;   map9=slider10;  map10=slider11; map11=slider12;
+map12=slider13; map13=slider14; map14=slider15; map15=slider16;
+
+slider_show(slider1,0); slider_show(slider2,0);
+slider_show(slider3,0); slider_show(slider4,0);
+slider_show(slider5,0); slider_show(slider6,0);
+slider_show(slider7,0); slider_show(slider8,0);
+slider_show(slider9,0); slider_show(slider10,0);
+slider_show(slider11,0); slider_show(slider12,0);
+slider_show(slider13,0); slider_show(slider14,0);
+slider_show(slider15,0); slider_show(slider16,0);
+slider_show(slider17,0);
+
+function set_map(index, encoded) (
+  index==0 ? map0=encoded :
+  index==1 ? map1=encoded :
+  index==2 ? map2=encoded :
+  index==3 ? map3=encoded :
+  index==4 ? map4=encoded :
+  index==5 ? map5=encoded :
+  index==6 ? map6=encoded :
+  index==7 ? map7=encoded :
+  index==8 ? map8=encoded :
+  index==9 ? map9=encoded :
+  index==10 ? map10=encoded :
+  index==11 ? map11=encoded :
+  index==12 ? map12=encoded :
+  index==13 ? map13=encoded :
+  index==14 ? map14=encoded :
+  index==15 ? map15=encoded;
+);
+
+function get_map(index) local(v) (
+  v = index==0 ? map0 :
+      index==1 ? map1 :
+      index==2 ? map2 :
+      index==3 ? map3 :
+      index==4 ? map4 :
+      index==5 ? map5 :
+      index==6 ? map6 :
+      index==7 ? map7 :
+      index==8 ? map8 :
+      index==9 ? map9 :
+      index==10 ? map10 :
+      index==11 ? map11 :
+      index==12 ? map12 :
+      index==13 ? map13 :
+      index==14 ? map14 :
+      index==15 ? map15 : -1;
+  v;
+);
+
+function save_maps() (
+  slider1=map0; slider2=map1; slider3=map2; slider4=map3;
+  slider5=map4; slider6=map5; slider7=map6; slider8=map7;
+  slider9=map8; slider10=map9; slider11=map10; slider12=map11;
+  slider13=map12; slider14=map13; slider15=map14; slider16=map15;
+
+  slider17 += 1;
+  slider17 > 1000000 ? slider17 = 0;
+
+  sliderchange(slider1); sliderchange(slider2);
+  sliderchange(slider3); sliderchange(slider4);
+  sliderchange(slider5); sliderchange(slider6);
+  sliderchange(slider7); sliderchange(slider8);
+  sliderchange(slider9); sliderchange(slider10);
+  sliderchange(slider11); sliderchange(slider12);
+  sliderchange(slider13); sliderchange(slider14);
+  sliderchange(slider15); sliderchange(slider16);
+  sliderchange(slider17);
+);
+
+function point_in_rect(px,py,x,y,w,h) (
+  px>=x && px<x+w && py>=y && py<y+h;
+);
+
+function draw_button_bg(x,y,w,h,active,hover) (
+  active ? gfx_set(0.95,0.55,0.10,1) :
+  hover  ? gfx_set(0.32,0.46,0.66,1) :
+           gfx_set(0.25,0.38,0.58,1);
+  gfx_rect(x,y,w,h);
+);
+
+function draw_clear_button(x,y,w,h,hover) (
+  hover ? gfx_set(0.62,0.25,0.25,1) : gfx_set(0.48,0.20,0.20,1);
+  gfx_rect(x,y,w,h);
+  gfx_set(1,1,1,1);
+  gfx_x=x+8;
+  gfx_y=y+4;
+  gfx_drawstr("Clear");
+);
+
+@slider
+map0=slider1;   map1=slider2;   map2=slider3;   map3=slider4;
+map4=slider5;   map5=slider6;   map6=slider7;   map7=slider8;
+map8=slider9;   map9=slider10;  map10=slider11; map11=slider12;
+map12=slider13; map13=slider14; map14=slider15; map15=slider16;
+
+@block
+while (
+  midirecv(offset,msg1,msg23) ?
+  (
+    status = msg1 & $xF0;
+    chan = msg1 & $x0F;
+    data1 = msg23 & $xFF;
+    data2 = (msg23 / 256) | 0;
+
+    status == $xB0 ? (
+      encoded = chan*128 + data1;
+
+      learn_target >= 0 ? (
+        set_map(learn_target,encoded);
+        save_maps();
+        learn_target=-1;
+      );
+
+      control=0;
+      i=0;
+      loop(16,
+        control==0 && get_map(i)==encoded ? control=i+1;
+        i+=1;
+      );
+
+      control>0 ? (
+        event_seq+=1;
+        gmem[EVENT_CONTROL_SLOT]=control;
+        gmem[EVENT_VALUE_SLOT]=data2;
+        gmem[EVENT_SEQ_SLOT]=event_seq;
+      );
+    );
+
+    // Keep normal keyboard/controller MIDI flow intact.
+    midisend(offset,msg1,msg23);
+    1;
+  )
+);
+
+@gfx 900 520
+gfx_setfont(1,"Arial",16,'b');
+gfx_set(0.10,0.10,0.12,1);
+gfx_rect(0,0,gfx_w,gfx_h);
+
+gfx_set(1,1,1,1);
+gfx_x=16; gfx_y=12;
+gfx_drawstr("ReaGroove External Controller");
+
+page=floor(gmem[PAGE_SLOT]);
+active_track=floor(gmem[ACTIVE_TRACK_SLOT]);
+
+gfx_setfont(2,"Arial",12);
+gfx_set(0.72,0.72,0.76,1);
+gfx_x=16; gfx_y=38;
+#status="";
+sprintf(#status,"PAGE %d   Active Track %d",page,active_track);
+gfx_drawstr(#status);
+
+learn_target>=0 ? (
+  gfx_set(0.95,0.65,0.15,1);
+  gfx_x=610; gfx_y=38;
+  #learnmsg="";
+  learn_target<8 ?
+    sprintf(#learnmsg,"Learning Fader %d - move a MIDI control",learn_target+1) :
+    sprintf(#learnmsg,"Learning Balance %d - move a MIDI control",learn_target-7);
+  gfx_drawstr(#learnmsg);
+);
+
+LEFT_X=16;
+RIGHT_X=458;
+COL_W=426;
+ROW_H=48;
+TOP_Y=78;
+LABEL_W=78;
+MAP_X=LEFT_X+80;
+LEARN_X=LEFT_X+244;
+CLEAR_X=LEFT_X+332;
+BTN_W=78;
+BTN_H=28;
+
+gfx_setfont(3,"Arial",13,'b');
+gfx_set(0.9,0.9,0.93,1);
+gfx_x=LEFT_X; gfx_y=58; gfx_drawstr("FADERS 1-8");
+gfx_x=RIGHT_X; gfx_y=58; gfx_drawstr("BALANCE 1-8");
+
+mouse_down=mouse_cap&1;
+new_click=mouse_down && !(last_mouse_cap&1);
+
+i=0;
+loop(16,
+  col=i<8 ? 0 : 1;
+  row=i%8;
+  x=col==0 ? LEFT_X : RIGHT_X;
+  y=TOP_Y + row*ROW_H;
+
+  (row%2)==0 ? gfx_set(0.15,0.15,0.18,1) : gfx_set(0.12,0.12,0.15,1);
+  gfx_rect(x,y,COL_W,ROW_H-4);
+
+  gfx_setfont(2,"Arial",12);
+  gfx_set(0.92,0.92,0.94,1);
+  gfx_x=x+10; gfx_y=y+14;
+  #name="";
+  i<8 ? sprintf(#name,"Fader %d",i+1) : sprintf(#name,"Balance %d",i-7);
+  gfx_drawstr(#name);
+
+  encoded=get_map(i);
+  gfx_set(0.70,0.70,0.75,1);
+  gfx_x=x+95; gfx_y=y+14;
+  #mapping="";
+  encoded>=0 ? (
+    map_chan=floor(encoded/128);
+    map_cc=encoded%128;
+    sprintf(#mapping,"Ch %d   CC %d",map_chan+1,map_cc);
+  ) : (
+    strcpy(#mapping,"Not assigned");
+  );
+  gfx_drawstr(#mapping);
+
+  learn_x=x+244;
+  clear_x=x+332;
+
+  learn_hover=point_in_rect(mouse_x,mouse_y,learn_x,y+7,BTN_W,BTN_H);
+  clear_hover=point_in_rect(mouse_x,mouse_y,clear_x,y+7,BTN_W,BTN_H);
+
+  draw_button_bg(
+    learn_x,y+7,BTN_W,BTN_H,
+    learn_target==i,
+    learn_hover
+  );
+  gfx_set(1,1,1,1);
+  gfx_x=learn_x+8;
+  gfx_y=y+11;
+  learn_target==i ? gfx_drawstr("Move CC...") : gfx_drawstr("Learn");
+
+  draw_clear_button(clear_x,y+7,BTN_W,BTN_H,clear_hover);
+
+  new_click && learn_hover ? (
+    learn_target=i;
+  );
+
+  new_click && clear_hover ? (
+    set_map(i,-1);
+    learn_target==i ? learn_target=-1;
+    save_maps();
+  );
+
+  i+=1;
+);
+
+gfx_setfont(2,"Arial",11);
+gfx_set(0.55,0.55,0.60,1);
+gfx_x=16; gfx_y=474;
+gfx_drawstr("Learn: click Learn, then move the desired fader/knob. Mappings are saved with the FX instance.");
+
+gfx_x=16; gfx_y=494;
+gfx_drawstr("Controls follow ReaGroove PAGE automatically. Page 3 uses the current fx_mapping.ini F1-F8 / B1-B8 mappings.");
+
+last_mouse_cap=mouse_cap;

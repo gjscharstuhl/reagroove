@@ -17,6 +17,7 @@ local PERFORMANCE_SCREENS = {
 local Bridge = _G.GJS_X_BRIDGE
 local Transport = _G.GJS_X_TRANSPORT
 local Pattern = _G.GJS_X_PATTERN
+local ExternalController = include("gjs - x - external_controller.lua")
 local API = {}
 local DEVICE_NAME = "X"
 
@@ -2062,6 +2063,10 @@ local function mainloop()
     end
 
     process_midi_input()
+
+    if ExternalController and ExternalController.update then
+        ExternalController.update()
+    end
 
     local play_state =
         reaper.GetPlayState()
