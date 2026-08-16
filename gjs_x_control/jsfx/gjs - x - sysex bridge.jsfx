@@ -1,6 +1,6 @@
 desc:GJS - X - SysEx Bridge
 options:gmem=GJS_X_BRIDGE
-import "gjs - x - renderer.jsfx-inc"
+import gjs_x_renderer.jsfx-inc
 
 // ============================================================
 // gmem-indeling
@@ -42,11 +42,25 @@ last_perf_octave = 999;
 last_perf_redraw = -1;
 last_perf_feedback_seq = -1;
 
-// Screen 2/3 shared framebuffer renderer.
+// Screen 2/3 semantic control renderer.
 MIX_RENDER_SCREEN_SLOT = 3200;
 MIX_RENDER_VERSION_SLOT = 3201;
-MIX_RENDER_RGB_BASE = 3202;
+MIX_RENDER_CONTROL_BASE = 3202;
+MIX_RENDER_CONTROL_STRIDE = 6;
+
+MIX_RENDER_EVENT_SEQ_SLOT = 3250;
+MIX_RENDER_EVENT_SCREEN_SLOT = 3251;
+MIX_RENDER_EVENT_INDEX_SLOT = 3252;
+MIX_RENDER_EVENT_DATA_BASE = 3253;
+
 last_mix_render_version = -1;
+last_mix_render_event_seq = -1;
+
+// Screen 6 sequencer rows 7/8.
+SEQ_RENDER_VERSION_SLOT = 3300;
+SEQ_RENDER_ENABLED_SLOT = 3301;
+SEQ_RENDER_RGB_BASE = 3302;
+last_seq_render_version = -1;
 
 function perf_clamp(v) ( max(0,min(127,floor(v))); );
 
@@ -132,25 +146,88 @@ function perf_draw_layout(layout) local(i,row,col,n,target,r,g,b,len) (
 );
 
 
-function mix_draw_frame() local(i,row,col,source,r,g,b) (
+function mix_draw_controls(screen)
+local(i,base,v1,v2,centered,r,g,b,row) (
     renderer_clear();
 
     i = 0;
-    loop(64,
-        row = floor(i / 8) + 1;
-        col = (i % 8) + 1;
-        source = MIX_RENDER_RGB_BASE + i * 3;
+    loop(8,
+        base = MIX_RENDER_CONTROL_BASE + i * MIX_RENDER_CONTROL_STRIDE;
+        v1 = floor(gmem[base + 0]);
+        v2 = floor(gmem[base + 1]);
+        centered = floor(gmem[base + 2]);
+        r = gmem[base + 3];
+        g = gmem[base + 4];
+        b = gmem[base + 5];
 
-        r = gmem[source + 0];
-        g = gmem[source + 1];
-        b = gmem[source + 2];
+        screen == 2 ? (
+            renderer_vertical_fader_state(
+                i + 1,
+                v1,
+                v2,
+                r,g,b
+            );
+        ) : screen == 3 ? (
+            row = 8 - i;
+            renderer_balance_state(
+                row,
+                v1,
+                v2,
+                centered,
+                r,g,b
+            );
+        );
 
-        renderer_pad(row, col, r, g, b);
         i += 1;
     );
 
     renderer_flush();
 );
+
+function mix_draw_one_control(screen,index)
+local(v1,v2,centered,r,g,b,row) (
+    v1 = floor(gmem[MIX_RENDER_EVENT_DATA_BASE + 0]);
+    v2 = floor(gmem[MIX_RENDER_EVENT_DATA_BASE + 1]);
+    centered = floor(gmem[MIX_RENDER_EVENT_DATA_BASE + 2]);
+    r = gmem[MIX_RENDER_EVENT_DATA_BASE + 3];
+    g = gmem[MIX_RENDER_EVENT_DATA_BASE + 4];
+    b = gmem[MIX_RENDER_EVENT_DATA_BASE + 5];
+
+    screen == 2 ? (
+        renderer_vertical_fader_state(index,v1,v2,r,g,b);
+    ) : screen == 3 ? (
+        row = 9 - index;
+        renderer_balance_state(row,v1,v2,centered,r,g,b);
+    );
+
+    renderer_flush();
+);
+
+
+
+function seq_draw_rows() local(i,row,col,source,r,g,b) (
+    i = 0;
+    loop(16,
+        i < 8 ? (
+            row = 8;
+            col = i + 1;
+        ) : (
+            row = 7;
+            col = i - 7;
+        );
+
+        source = SEQ_RENDER_RGB_BASE + i * 3;
+        r = gmem[source + 0];
+        g = gmem[source + 1];
+        b = gmem[source + 2];
+
+        renderer_pad(row,col,r,g,b);
+        i += 1;
+    );
+
+    renderer_flush_rows(7,8);
+);
+
 
 @block
 
@@ -467,12 +544,39 @@ sequence != last_sequence ? (
 );
 
 // Screen 2/3 mixer framebuffer. This bridge is the only hardware writer.
+seq_render_version=floor(gmem[SEQ_RENDER_VERSION_SLOT]);
+seq_render_version!=last_seq_render_version ? (
+    seq_render_enabled=floor(gmem[SEQ_RENDER_ENABLED_SLOT]);
+
+    seq_render_enabled==1 ? (
+        seq_draw_rows();
+    );
+
+    last_seq_render_version=seq_render_version;
+);
+
+mix_render_event_seq=floor(gmem[MIX_RENDER_EVENT_SEQ_SLOT]);
+mix_render_event_seq!=last_mix_render_event_seq ? (
+    mix_render_event_screen=floor(gmem[MIX_RENDER_EVENT_SCREEN_SLOT]);
+    mix_render_event_index=floor(gmem[MIX_RENDER_EVENT_INDEX_SLOT]);
+
+    (mix_render_event_screen==2 || mix_render_event_screen==3) &&
+    mix_render_event_index>=1 && mix_render_event_index<=8 ? (
+        mix_draw_one_control(
+            mix_render_event_screen,
+            mix_render_event_index
+        );
+    );
+
+    last_mix_render_event_seq=mix_render_event_seq;
+);
+
 mix_render_screen=floor(gmem[MIX_RENDER_SCREEN_SLOT]);
 mix_render_version=floor(gmem[MIX_RENDER_VERSION_SLOT]);
 
 (mix_render_screen==2 || mix_render_screen==3) &&
 mix_render_version!=last_mix_render_version ? (
-    mix_draw_frame();
+    mix_draw_controls(mix_render_screen);
     last_mix_render_version=mix_render_version;
 );
 

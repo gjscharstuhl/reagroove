@@ -1,0 +1,307 @@
+// ============================================================
+// gjs - x - renderer.jsfx-inc
+// Shared Launchpad 8x8 RGB renderer primitives.
+// All drawing goes into a local framebuffer first.
+// renderer_flush() is the only function that emits SysEx.
+// ============================================================
+
+@init
+RENDER_FB_BASE = 3600;
+RENDER_BUF_MIDI = 4000;
+RENDER_BUF_DAW  = 4400;
+
+function renderer_clamp(v) (
+    max(0, min(127, floor(v)));
+);
+
+function renderer_index(row, col) (
+    ((row - 1) * 8 + (col - 1)) * 3;
+);
+
+function renderer_clear() local(i) (
+    i = 0;
+    loop(64 * 3,
+        RENDER_FB_BASE[i] = 0;
+        i += 1;
+    );
+);
+
+function renderer_pad(row, col, r, g, b) local(idx) (
+    row >= 1 && row <= 8 && col >= 1 && col <= 8 ? (
+        idx = renderer_index(row, col);
+        RENDER_FB_BASE[idx + 0] = renderer_clamp(r);
+        RENDER_FB_BASE[idx + 1] = renderer_clamp(g);
+        RENDER_FB_BASE[idx + 2] = renderer_clamp(b);
+    );
+);
+
+function renderer_fill_row(row, r, g, b) local(col) (
+    col = 1;
+    loop(8,
+        renderer_pad(row, col, r, g, b);
+        col += 1;
+    );
+);
+
+function renderer_fill_col(col, r, g, b) local(row) (
+    row = 1;
+    loop(8,
+        renderer_pad(row, col, r, g, b);
+        row += 1;
+    );
+);
+
+function renderer_block(row1, col1, row2, col2, r, g, b) local(row,col) (
+    row = row1;
+    loop(max(0, row2 - row1 + 1),
+        col = col1;
+        loop(max(0, col2 - col1 + 1),
+            renderer_pad(row, col, r, g, b);
+            col += 1;
+        );
+        row += 1;
+    );
+);
+
+// Position: 0..31, matching the existing Lua 8 rows x 4 brightness steps.
+function renderer_vertical_fader(col, position, r, g, b) local(row,step,i,level,br) (
+    position = max(0, min(31, floor(position)));
+    row = 1;
+    loop(8,
+        i = (row - 1) * 4;
+        level = position - i;
+
+        level < 0 ? br = 0 :
+        level >= 3 ? br = 1 :
+        level == 0 ? br = 0.28 :
+        level == 1 ? br = 0.48 :
+        level == 2 ? br = 0.72 :
+                     br = 1;
+
+        renderer_pad(
+            row, col,
+            r * br,
+            g * br,
+            b * br
+        );
+        row += 1;
+    );
+);
+
+// Balance value: 0..127. Centre is ~64.
+// Draw from centre outward, similar to current screen 3.
+function renderer_balance(row, value, r, g, b) local(col,center,target,dir,startc,endc,i,br) (
+    value = max(0, min(127, floor(value)));
+    center = 63.5;
+    target = 1 + floor((value / 127) * 7 + 0.5);
+
+    // Base row off.
+    col = 1;
+    loop(8,
+        renderer_pad(row, col, 0, 0, 0);
+        col += 1;
+    );
+
+    value >= 60 && value <= 67 ? (
+        renderer_pad(row, 4, r, g, b);
+        renderer_pad(row, 5, r, g, b);
+    ) : value < 64 ? (
+        col = target;
+        loop(max(0, 5 - target),
+            br = 1;
+            renderer_pad(row, col, r * br, g * br, b * br);
+            col += 1;
+        );
+    ) : (
+        col = 5;
+        loop(max(0, target - 4),
+            br = 1;
+            renderer_pad(row, col, r * br, g * br, b * br);
+            col += 1;
+        );
+    );
+);
+
+
+// Exact equivalent of the existing Lua vertical fader state:
+// rows below the selected row are full, selected row uses one of 4 brightness
+// steps, rows above it are off.
+function renderer_vertical_fader_state(col, selected_row, step, r, g, b)
+local(row,br) (
+    selected_row = max(1, min(8, floor(selected_row)));
+    step = max(1, min(4, floor(step)));
+
+    row = 1;
+    loop(8,
+        row < selected_row ? br = 1 :
+        row == selected_row ? (
+            step == 1 ? br = 0.25 :
+            step == 2 ? br = 0.50 :
+            step == 3 ? br = 0.75 :
+                        br = 1;
+        ) : br = 0;
+
+        renderer_pad(row, col, r * br, g * br, b * br);
+        row += 1;
+    );
+);
+
+// Exact equivalent of the existing Lua screen-3 balance drawing.
+function renderer_balance_state(row, position, step, centered, r, g, b)
+local(col,br) (
+    position = max(1, min(8, floor(position)));
+    step = max(1, min(4, floor(step)));
+
+    col = 1;
+    loop(8,
+        renderer_pad(row, col, 0, 0, 0);
+        col += 1;
+    );
+
+    centered >= 0.5 ? (
+        renderer_pad(row, 4, r, g, b);
+        renderer_pad(row, 5, r, g, b);
+    ) : position <= 4 ? (
+        col = position;
+        loop(5 - position,
+            renderer_pad(row, col, r, g, b);
+            col += 1;
+        );
+
+        position > 1 ? (
+            step == 1 ? br = 0.25 :
+            step == 2 ? br = 0.50 :
+            step == 3 ? br = 0.75 :
+                        br = 1;
+            renderer_pad(row, position, r * br, g * br, b * br);
+        );
+    ) : (
+        col = 5;
+        loop(position - 4,
+            renderer_pad(row, col, r, g, b);
+            col += 1;
+        );
+
+        position < 8 ? (
+            step == 1 ? br = 0.25 :
+            step == 2 ? br = 0.50 :
+            step == 3 ? br = 0.75 :
+                        br = 1;
+            renderer_pad(row, position, r * br, g * br, b * br);
+        );
+    );
+);
+
+
+function renderer_flush_rows(row_first,row_last)
+local(i,row,col,n,target,idx,r,g,b,len,count) (
+    row_first = max(1,min(8,floor(row_first)));
+    row_last = max(row_first,min(8,floor(row_last)));
+
+    RENDER_BUF_MIDI[0] = $xF0;
+    RENDER_BUF_MIDI[1] = $x00;
+    RENDER_BUF_MIDI[2] = $x20;
+    RENDER_BUF_MIDI[3] = $x29;
+    RENDER_BUF_MIDI[4] = $x02;
+    RENDER_BUF_MIDI[5] = $x0D;
+    RENDER_BUF_MIDI[6] = $x03;
+
+    RENDER_BUF_DAW[0] = $xF0;
+    RENDER_BUF_DAW[1] = $x00;
+    RENDER_BUF_DAW[2] = $x20;
+    RENDER_BUF_DAW[3] = $x29;
+    RENDER_BUF_DAW[4] = $x02;
+    RENDER_BUF_DAW[5] = $x0C;
+    RENDER_BUF_DAW[6] = $x03;
+
+    count = 0;
+    row = row_first;
+    loop(row_last - row_first + 1,
+        col = 1;
+        loop(8,
+            i = (row - 1) * 8 + (col - 1);
+            n = row * 10 + col;
+            target = 7 + count * 5;
+            idx = i * 3;
+
+            r = renderer_clamp(RENDER_FB_BASE[idx + 0]);
+            g = renderer_clamp(RENDER_FB_BASE[idx + 1]);
+            b = renderer_clamp(RENDER_FB_BASE[idx + 2]);
+
+            RENDER_BUF_MIDI[target + 0] = $x03;
+            RENDER_BUF_MIDI[target + 1] = n;
+            RENDER_BUF_MIDI[target + 2] = r;
+            RENDER_BUF_MIDI[target + 3] = g;
+            RENDER_BUF_MIDI[target + 4] = b;
+
+            RENDER_BUF_DAW[target + 0] = $x03;
+            RENDER_BUF_DAW[target + 1] = n;
+            RENDER_BUF_DAW[target + 2] = r;
+            RENDER_BUF_DAW[target + 3] = g;
+            RENDER_BUF_DAW[target + 4] = b;
+
+            count += 1;
+            col += 1;
+        );
+        row += 1;
+    );
+
+    len = 8 + count * 5;
+    RENDER_BUF_MIDI[len - 1] = $xF7;
+    RENDER_BUF_DAW[len - 1] = $xF7;
+
+    midisend_buf(0, RENDER_BUF_MIDI, len);
+    midisend_buf(0, RENDER_BUF_DAW, len);
+);
+
+function renderer_flush() local(i,row,col,n,target,idx,r,g,b,len) (
+    RENDER_BUF_MIDI[0] = $xF0;
+    RENDER_BUF_MIDI[1] = $x00;
+    RENDER_BUF_MIDI[2] = $x20;
+    RENDER_BUF_MIDI[3] = $x29;
+    RENDER_BUF_MIDI[4] = $x02;
+    RENDER_BUF_MIDI[5] = $x0D;
+    RENDER_BUF_MIDI[6] = $x03;
+
+    RENDER_BUF_DAW[0] = $xF0;
+    RENDER_BUF_DAW[1] = $x00;
+    RENDER_BUF_DAW[2] = $x20;
+    RENDER_BUF_DAW[3] = $x29;
+    RENDER_BUF_DAW[4] = $x02;
+    RENDER_BUF_DAW[5] = $x0C;
+    RENDER_BUF_DAW[6] = $x03;
+
+    i = 0;
+    loop(64,
+        row = floor(i / 8) + 1;
+        col = (i % 8) + 1;
+        n = row * 10 + col;
+        target = 7 + i * 5;
+        idx = i * 3;
+
+        r = renderer_clamp(RENDER_FB_BASE[idx + 0]);
+        g = renderer_clamp(RENDER_FB_BASE[idx + 1]);
+        b = renderer_clamp(RENDER_FB_BASE[idx + 2]);
+
+        RENDER_BUF_MIDI[target + 0] = $x03;
+        RENDER_BUF_MIDI[target + 1] = n;
+        RENDER_BUF_MIDI[target + 2] = r;
+        RENDER_BUF_MIDI[target + 3] = g;
+        RENDER_BUF_MIDI[target + 4] = b;
+
+        RENDER_BUF_DAW[target + 0] = $x03;
+        RENDER_BUF_DAW[target + 1] = n;
+        RENDER_BUF_DAW[target + 2] = r;
+        RENDER_BUF_DAW[target + 3] = g;
+        RENDER_BUF_DAW[target + 4] = b;
+
+        i += 1;
+    );
+
+    len = 8 + 64 * 5;
+    RENDER_BUF_MIDI[len - 1] = $xF7;
+    RENDER_BUF_DAW[len - 1] = $xF7;
+
+    midisend_buf(0, RENDER_BUF_MIDI, len);
+    midisend_buf(0, RENDER_BUF_DAW, len);
+);
