@@ -1804,14 +1804,25 @@ local function select_screen(screen)
         return
     end
 
-    LP.current_screen = screen
+    local previous_screen = LP.current_screen
 
+    -- Screen 6 owns a continuously running JSFX display overlay.  Always
+    -- disable it before leaving screen 6; otherwise it can race the
+    -- Performance renderer when switching directly 6 -> 7.
+    if previous_screen == 6 and screen ~= 6 then
+        reaper.gmem_attach(GMEM_NAME)
+        reaper.gmem_write(300, 0)
+        reaper.gmem_write(
+            305,
+            (reaper.gmem_read(305) or 0) + 1
+        )
+    end
+
+    LP.current_screen = screen
     update_performance_mode()
 
-    -- Screen 6 has a JSFX-driven sequencer overlay on rows 7/8.  Disable
-    -- that overlay first and give the JSFX one defer cycle to observe the
-    -- change before sending the full 8x8 matrix.  Otherwise the two SysEx
-    -- writers can overlap and the Launchpad can briefly become all-white.
+    -- Entering screen 6: stop any previous display writer first and let the
+    -- sequencer screen establish its own overlay on the next defer cycle.
     if screen == 6 then
         reaper.gmem_attach(GMEM_NAME)
         reaper.gmem_write(300, 0)
@@ -1820,10 +1831,26 @@ local function select_screen(screen)
                 draw_current_screen()
             end
         end)
+
+    elseif screen == 7 and previous_screen == 6 then
+        -- Direct Sequence -> Performance needs one clean cycle after disabling
+        -- the sequencer display.  Then force the Performance JSFX to repaint.
+        reaper.defer(function()
+            if LP.current_screen == 7 then
+                draw_current_screen()
+                reaper.gmem_attach(GMEM_NAME)
+                reaper.gmem_write(
+                    1202,
+                    (reaper.gmem_read(1202) or 0) + 1
+                )
+            end
+        end)
+
     else
         draw_current_screen()
     end
 end
+
 ------------------------------------------------------------
 -- MIDI input processing
 ------------------------------------------------------------
