@@ -1,0 +1,268 @@
+desc:gjs: Launchpad Performance
+
+options:gmem=GJS_X_BRIDGE
+
+// One Input-FX for GJS-X performance tracks.
+// - Gates raw Launchpad notes outside screen 7.
+// - Drum performance: passes Launchpad channel-10 notes unchanged.
+// - Piano performance: maps four stacked one-octave keyboards to MIDI notes.
+// - Draws screen-7 drum/piano layouts and red press feedback.
+// - Provides screen-6 piano audition from gmem slots 1100/1120.
+
+
+slider1:12<0,15,1{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>Performance MIDI channel
+
+slider9:9<0,15,1{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>Sequencer MIDI channel
+
+@init
+PERFORMANCE_SCREEN_SLOT = 100;
+LAYOUT_SLOT = 1200;       // 0 off, 1 drums, 2 piano
+OCTAVE_SLOT = 1201;       // global octave shift, default 0 => pad 11 = C3
+REDRAW_SLOT = 1202;
+FEEDBACK_SEQ_SLOT = 1203;
+FEEDBACK_NOTE_SLOT = 1204;
+FEEDBACK_STATE_SLOT = 1205;
+AUDITION_ENABLE_SLOT = 1100;
+AUDITION_NOTES_BASE = 1120;
+SEQUENCER_CHANNEL_SLOT = 1090;
+SCREEN6_ACTIVE_SLOT = 1091;
+
+last_layout = -1;
+last_octave = 999;
+last_redraw = -1;
+last_performance_screen = -1;
+
+// EEL2 indexed variables are RAM pointers, not independent arrays.
+// Keep these state tables in separate memory ranges.
+last_velocity = 0;
+active_pitch = 256;
+pitch_refs = 512;
+
+i = 0;
+loop(128,
+    last_velocity[i] = 0;
+    active_pitch[i] = -1;
+    pitch_refs[i] = 0;
+    i += 1;
+);
+
+buf_midi = 768;
+buf_daw = 1280;
+transpose_semi = 0;
+last_voice_offset = -999999;
+last_voice_status = -1;
+last_voice_msg23 = -1;
+
+function clamp127(v) ( max(0,min(127,floor(v))); );
+
+function write_rgb_spec(buffer, target, led, r, g, b) (
+    buffer[target] = $x03;
+    buffer[target+1] = clamp127(led);
+    buffer[target+2] = clamp127(r);
+    buffer[target+3] = clamp127(g);
+    buffer[target+4] = clamp127(b);
+);
+
+function drum_rgb(note, component) local(row,col,r,g,b) (
+    row = floor(note/10); col = note%10;
+    r=0; g=0; b=0;
+    (row==7 && (col==4 || col==5)) || (row==6 && (col==4 || col==5)) ? (r=127; b=80;);
+    row==5 ? (
+        col==2 || col==7 ? (r=127;g=127;b=127;);
+        col==3 || col==6 ? (r=127;g=110;);
+        col==4 ? (r=127;b=80;);
+        col==5 ? (r=60;b=127;);
+    );
+    row==4 ? (
+        col==2 || col==7 ? g=127;
+        col==3 || col==6 ? b=127;
+        col==4 || col==5 ? (g=70;b=127;);
+    );
+    row==3 ? (
+        col==2 || col==7 ? (r=127;g=40;);
+        col==4 || col==5 ? (r=127;g=110;);
+    );
+    row==2 ? (
+        col==2 || col==7 ? (r=75;g=25;b=127;);
+        col==4 || col==5 ? (r=127;g=40;);
+    );
+    row==1 && (col==4 || col==5) ? r=55; // darker red base for drum red pads
+    component==1?r:component==2?g:b;
+);
+
+function piano_key(note) local(row,col,pair,semi,valid) (
+    row=floor(note/10); col=note%10;
+    pair=floor((row-1)/2); // rows 1/2 = octave 0 ... rows 7/8 = octave 3
+    semi=-1; valid=0;
+    row%2==1 ? (
+        col==1?semi=0:col==2?semi=2:col==3?semi=4:col==4?semi=5:col==5?semi=7:col==6?semi=9:col==7?semi=11:col==8?semi=12;
+        valid=1;
+    ) : (
+        col==2?semi=1:col==3?semi=3:col==5?semi=6:col==6?semi=8:col==7?semi=10;
+        semi>=0 ? valid=1;
+    );
+    valid ? pair*12+semi : -1;
+);
+
+
+function release_pitch(p, offs) (
+    p>=0 ? (
+        pitch_refs[p] = max(0,pitch_refs[p]-1);
+        pitch_refs[p] == 0 ? (midisend(offs,$x80|outch,p););
+    );
+);
+
+function press_pitch(p, v, offs) (
+    p>=0 ? (
+        pitch_refs[p] == 0 ? (midisend(offs,$x90|outch,p|(v<<8)););
+        pitch_refs[p] += 1;
+    );
+);
+
+function flush_piano_notes() local(j) (
+    j=0;
+    loop(128,
+        pitch_refs[j] > 0 ? midisend(0,$x80|outch,j);
+        pitch_refs[j]=0;
+        active_pitch[j]=-1;
+        j+=1;
+    );
+);
+
+function feedback_pad(note,state) (
+    gmem[FEEDBACK_NOTE_SLOT]=note;
+    gmem[FEEDBACK_STATE_SLOT]=state;
+    gmem[FEEDBACK_SEQ_SLOT]=gmem[FEEDBACK_SEQ_SLOT]+1;
+);
+
+@block
+performance_midi_chan = max(0,min(15,floor(slider1)));
+sequencer_midi_chan = max(0,min(15,floor(slider9)));
+gmem[SEQUENCER_CHANNEL_SLOT] = sequencer_midi_chan;
+screen6_active = floor(gmem[SCREEN6_ACTIVE_SLOT]) == 1;
+audition_enabled = floor(gmem[AUDITION_ENABLE_SLOT]) == 1;
+performance_screen = floor(gmem[PERFORMANCE_SCREEN_SLOT]) == 1;
+layout = performance_screen ? floor(gmem[LAYOUT_SLOT]) : 0;
+octave_shift = max(-3,min(4,floor(gmem[OCTAVE_SLOT])));
+redraw_version=floor(gmem[REDRAW_SLOT]);
+outch=max(0,min(15,floor(slider1)));
+
+// Any transition away from the current piano performance context must release
+// notes that were generated from Launchpad pads. A physical note-off may arrive
+// after screen/layout changed and would otherwise be gated.
+(last_performance_screen==1 && (!performance_screen || (last_layout==2 && layout!=2))) ? flush_piano_notes();
+
+(layout!=last_layout || octave_shift!=last_octave || redraw_version!=last_redraw || performance_screen!=last_performance_screen) ? (
+    last_layout=layout;last_octave=octave_shift;last_redraw=redraw_version;
+    last_performance_screen=performance_screen;
+);
+
+while(midirecv(offset,msg1,msg23)) (
+    status=msg1&$xF0; channel=msg1&$x0F; note=msg23&$xFF; vel=(msg23>>8)&$xFF;
+    is_voice=status>=$x80 && status<=$xE0;
+    is_dup_voice=performance_screen && is_voice &&
+                 offset==last_voice_offset && status==last_voice_status && msg23==last_voice_msg23;
+    performance_screen && is_voice ? (
+        last_voice_offset=offset;
+        last_voice_status=status;
+        last_voice_msg23=msg23;
+    );
+    is_note=status==$x90 || status==$x80;
+    is_on=status==$x90 && vel>0;
+    is_off=status==$x80 || (status==$x90 && vel==0);
+    slider4=msg1; slider5=note; slider6=vel;
+    is_on ? slider2 += 1;
+    is_off ? slider3 += 1;
+    lp_row=floor(note/10); lp_col=note%10;
+    launchpad_note=is_note && lp_row>=1 && lp_row<=8 && lp_col>=1 && lp_col<=8;
+    handled=0;
+
+    launchpad_note && !is_dup_voice ? (
+        !performance_screen ? (
+            // Screen 6 drum mode uses the raw pad note, but on the independent
+            // sequencer channel. Piano mode uses the gmem audition generator below.
+            screen6_active && !audition_enabled ? midisend(offset,status|sequencer_midi_chan,msg23);
+            handled=1;
+        ) : layout==1 ? (
+            // Drum mode: keep the original pad note/velocity but force it onto
+            // the same user-selected MIDI output channel as piano performance.
+            is_on ? feedback_pad(note,1) : is_off ? feedback_pad(note,0);
+            midisend(offset,status|outch,msg23); handled=1;
+        ) : layout==2 ? (
+            // Semitone transpose buttons: 41 = -1, 48 = +1.
+            note==41 || note==48 ? (
+                is_on ? (
+                    transpose_semi += note==41 ? -1 : 1;
+                    transpose_semi=max(-24,min(24,transpose_semi));
+                    feedback_pad(note,1);
+                ) : is_off ? feedback_pad(note,0);
+                handled=1;
+            ) :
+            // Octave buttons live in unused corners of first black-key row.
+            note==21 || note==28 ? (
+                is_on ? (
+                    octave_shift += note==21 ? -1 : 1;
+                    octave_shift=max(-3,min(4,octave_shift));
+                    gmem[OCTAVE_SLOT]=octave_shift;
+                    gmem[REDRAW_SLOT]=gmem[REDRAW_SLOT]+1;
+                    feedback_pad(note,1);
+                ) : is_off ? feedback_pad(note,0);
+                handled=1;
+            ) : (
+                sem=piano_key(note);
+                sem>=0 ? (
+                    is_on ? (
+                        // Retriggering the same physical pad must first close its
+                        // previous mapped note, otherwise a lost/duplicate note-on
+                        // can leave a hanging voice.
+                        old_pitch=active_pitch[note];
+                        old_pitch>=0 ? release_pitch(old_pitch,offset);
+                        pitch=max(0,min(127,48 + octave_shift*12 + transpose_semi + sem)); // pad 11 = C3 at transpose 0
+                        active_pitch[note]=pitch;
+                        press_pitch(pitch,vel,offset);
+                        feedback_pad(note,1);
+                    ) : is_off ? (
+                        pitch=active_pitch[note];
+                        pitch>=0 ? release_pitch(pitch,offset);
+                        active_pitch[note]=-1;
+                        feedback_pad(note,0);
+                    );
+                    handled=1;
+                ) : handled=1;
+            );
+        );
+    );
+
+    // Performance owns the entire MIDI channel:
+    // - mapped notes are emitted above;
+    // - every other channel-voice event is rewritten to outch;
+    // - duplicate copies that differ only by source channel are suppressed.
+    !handled ? (
+        performance_screen ? (
+            is_voice ? (
+                !is_note && !is_dup_voice ? midisend(offset,status|outch,msg23);
+            ) : midisend(offset,msg1,msg23);
+        ) : (
+            screen6_active && is_voice && !is_note
+                ? midisend(offset,status|sequencer_midi_chan,msg23)
+                : midisend(offset,msg1,msg23);
+        );
+    );
+);
+
+// Screen-6 piano audition. This is independent of screen-7 performance mode.
+// Audition belongs exclusively to screen 6. On entry to Performance force it
+// off immediately; the last_velocity loop below then sends note-offs for every
+// audition note that was still active, preventing stale gmem notes from sounding.
+enabled=!performance_screen && floor(gmem[AUDITION_ENABLE_SLOT])==1;
+i=0;
+loop(128,
+    wanted=enabled?floor(gmem[AUDITION_NOTES_BASE+i]):0;
+    wanted=max(0,min(127,wanted));prev=last_velocity[i];
+    wanted!=prev ? (
+        prev>0 ? midisend(0,$x80|sequencer_midi_chan,i);
+        wanted>0 ? midisend(0,$x90|sequencer_midi_chan,i|(wanted<<8));
+        last_velocity[i]=wanted;
+    );
+    i+=1;
+);
