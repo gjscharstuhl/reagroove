@@ -128,13 +128,14 @@ function perf_piano_key(note) local(row,col,pair,semi,valid) (
     valid ? pair*12+semi : -1;
 );
 
-function perf_send_one(led,r,g,b) local(len) (
-    buf_perf_midi=1400; buf_perf_daw=1440;
-    buf_perf_midi[0]=$xF0;buf_perf_midi[1]=$x00;buf_perf_midi[2]=$x20;buf_perf_midi[3]=$x29;buf_perf_midi[4]=$x02;buf_perf_midi[5]=$x0D;buf_perf_midi[6]=$x03;
-    buf_perf_daw[0]=$xF0;buf_perf_daw[1]=$x00;buf_perf_daw[2]=$x20;buf_perf_daw[3]=$x29;buf_perf_daw[4]=$x02;buf_perf_daw[5]=$x0C;buf_perf_daw[6]=$x03;
-    perf_write_rgb(buf_perf_midi,7,led,r,g,b);perf_write_rgb(buf_perf_daw,7,led,r,g,b);
-    buf_perf_midi[12]=$xF7;buf_perf_daw[12]=$xF7;
-    midisend_buf(0,buf_perf_midi,13);midisend_buf(0,buf_perf_daw,13);
+function perf_send_one(led,r,g,b) local(row,col) (
+    row=floor(led/10);
+    col=led%10;
+
+    row>=1 && row<=8 && col>=1 && col<=8 ? (
+        renderer_pad(row,col,r,g,b);
+        renderer_flush();
+    );
 );
 
 function perf_base_rgb(note,layout,component) local(k,r,g,b) (
@@ -150,17 +151,24 @@ function perf_base_rgb(note,layout,component) local(k,r,g,b) (
     component==1?r:component==2?g:b;
 );
 
-function perf_draw_layout(layout) local(i,row,col,n,target,r,g,b,len) (
-    buf_pm=1600;buf_pd=2000;
-    buf_pm[0]=$xF0;buf_pm[1]=$x00;buf_pm[2]=$x20;buf_pm[3]=$x29;buf_pm[4]=$x02;buf_pm[5]=$x0D;buf_pm[6]=$x03;
-    buf_pd[0]=$xF0;buf_pd[1]=$x00;buf_pd[2]=$x20;buf_pd[3]=$x29;buf_pd[4]=$x02;buf_pd[5]=$x0C;buf_pd[6]=$x03;
-    i=0; loop(64,
-        row=floor(i/8)+1;col=(i%8)+1;n=row*10+col;target=7+i*5;
-        r=perf_base_rgb(n,layout,1);g=perf_base_rgb(n,layout,2);b=perf_base_rgb(n,layout,3);
-        perf_write_rgb(buf_pm,target,n,r,g,b);perf_write_rgb(buf_pd,target,n,r,g,b);i+=1;
+function perf_draw_layout(layout) local(i,row,col,n,r,g,b) (
+    renderer_clear();
+
+    i=0;
+    loop(64,
+        row=floor(i/8)+1;
+        col=(i%8)+1;
+        n=row*10+col;
+
+        r=perf_base_rgb(n,layout,1);
+        g=perf_base_rgb(n,layout,2);
+        b=perf_base_rgb(n,layout,3);
+
+        renderer_pad(row,col,r,g,b);
+        i+=1;
     );
-    len=8+64*5;buf_pm[len-1]=$xF7;buf_pd[len-1]=$xF7;
-    midisend_buf(0,buf_pm,len);midisend_buf(0,buf_pd,len);
+
+    renderer_flush();
 );
 
 
