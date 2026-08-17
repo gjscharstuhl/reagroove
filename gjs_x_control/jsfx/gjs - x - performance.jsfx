@@ -160,11 +160,9 @@ outch=max(0,min(15,floor(slider1)));
 while(midirecv(offset,msg1,msg23)) (
     status=msg1&$xF0; channel=msg1&$x0F; note=msg23&$xFF; vel=(msg23>>8)&$xFF;
     is_voice=status>=$x80 && status<=$xE0;
-    performance_channel=is_voice && channel==performance_midi_chan;
-    sequencer_channel=is_voice && channel==sequencer_midi_chan;
-    is_dup_voice=performance_screen && performance_channel &&
+    is_dup_voice=performance_screen && is_voice &&
                  offset==last_voice_offset && status==last_voice_status && msg23==last_voice_msg23;
-    performance_screen && performance_channel ? (
+    performance_screen && is_voice ? (
         last_voice_offset=offset;
         last_voice_status=status;
         last_voice_msg23=msg23;
@@ -179,11 +177,7 @@ while(midirecv(offset,msg1,msg23)) (
     launchpad_note=is_note && lp_row>=1 && lp_row<=8 && lp_col>=1 && lp_col<=8;
     handled=0;
 
-    target_launchpad_note = launchpad_note && (
-        performance_screen ? performance_channel : sequencer_channel
-    );
-
-    target_launchpad_note && !is_dup_voice ? (
+    launchpad_note && !is_dup_voice ? (
         !performance_screen ? (
             // Screen 6 drum mode uses the raw pad note, but on the independent
             // sequencer channel. Piano mode uses the gmem audition generator below.
@@ -239,29 +233,19 @@ while(midirecv(offset,msg1,msg23)) (
         );
     );
 
-    // Only the dedicated ReaGroove channels are owned by Performance/Sequencer.
-    // Every other MIDI channel passes through completely untouched, allowing a
-    // keyboard or other controller to play the same instrument independently.
+    // Performance owns the entire MIDI channel:
+    // - mapped notes are emitted above;
+    // - every other channel-voice event is rewritten to outch;
+    // - duplicate copies that differ only by source channel are suppressed.
     !handled ? (
         performance_screen ? (
-            performance_channel ? (
+            is_voice ? (
                 !is_note && !is_dup_voice ? midisend(offset,status|outch,msg23);
             ) : midisend(offset,msg1,msg23);
         ) : (
-            // Sequence mode owns MIDI channel voice traffic exclusively.
-            // Only the configured sequencer channel is allowed through;
-            // other MIDI channels are blocked to avoid double-triggering the
-            // instrument from an external keyboard. System/non-channel MIDI
-            // remains untouched.
-            !is_voice ? (
-                midisend(offset,msg1,msg23);
-            ) : sequencer_channel ? (
-                screen6_active ? (
-                    !is_note ? midisend(offset,status|sequencer_midi_chan,msg23);
-                ) : (
-                    !is_note ? midisend(offset,msg1,msg23);
-                );
-            );
+            screen6_active && is_voice && !is_note
+                ? midisend(offset,status|sequencer_midi_chan,msg23)
+                : midisend(offset,msg1,msg23);
         );
     );
 );
@@ -282,4 +266,3 @@ loop(128,
     );
     i+=1;
 );
-

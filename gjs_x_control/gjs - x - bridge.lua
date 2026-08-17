@@ -3,6 +3,10 @@ local Bridge = {}
 local GMEM_NAME = "GJS_X_BRIDGE"
 
 local COMMAND_PROGRAMMER_MODE = 1
+local COMMAND_LIVE_MODE       = 2
+local COMMAND_SET_PAD_RGB     = 3
+local COMMAND_SET_FADER_RGB   = 4
+local COMMAND_SET_MATRIX_RGB  = 5
 
 local RESEND_INTERVAL = 0.25
 
@@ -12,9 +16,58 @@ Bridge.in_flight = nil
 Bridge.running = false
 Bridge.pump_scheduled = false
 
+local function clamp(value, minimum, maximum)
+    value = math.floor(tonumber(value) or 0)
+
+    if value < minimum then return minimum end
+    if value > maximum then return maximum end
+
+    return value
+end
+
+local function copy_entries(entries)
+    local result = {}
+
+    for i, entry in ipairs(entries or {}) do
+        result[i] = {
+            clamp(entry[1], 0, 127),
+            clamp(entry[2], 0, 127),
+            clamp(entry[3], 0, 127),
+            clamp(entry[4], 0, 127)
+        }
+    end
+
+    return result
+end
+
 local function write_packet(packet)
+    if packet.command == COMMAND_SET_PAD_RGB then
+        reaper.gmem_write(3, packet.note)
+        reaper.gmem_write(4, packet.red)
+        reaper.gmem_write(5, packet.green)
+        reaper.gmem_write(6, packet.blue)
+
+    elseif packet.command == COMMAND_SET_FADER_RGB
+        or packet.command == COMMAND_SET_MATRIX_RGB then
+
+        local entries = packet.entries or {}
+        reaper.gmem_write(10, #entries)
+
+        for index, entry in ipairs(entries) do
+            local base = 11 + ((index - 1) * 4)
+
+            reaper.gmem_write(base + 0, entry[1])
+            reaper.gmem_write(base + 1, entry[2])
+            reaper.gmem_write(base + 2, entry[3])
+            reaper.gmem_write(base + 3, entry[4])
+        end
+    end
+
+    -- Commit last. The JSFX sees a new sequence only after the complete
+    -- payload and command have been written.
     reaper.gmem_write(1, packet.command)
     reaper.gmem_write(0, packet.sequence)
+
     packet.sent_at = reaper.time_precise()
 end
 
@@ -57,8 +110,42 @@ local function ensure_pump()
     end
 end
 
+local function same_entry_notes(left, right)
+    local left_entries = left and left.entries or nil
+    local right_entries = right and right.entries or nil
+
+    if type(left_entries) ~= "table"
+    or type(right_entries) ~= "table"
+    or #left_entries ~= #right_entries then
+        return false
+    end
+
+    for index = 1, #left_entries do
+        if left_entries[index][1] ~= right_entries[index][1] then
+            return false
+        end
+    end
+
+    return true
+end
 
 local function enqueue(packet)
+    -- Faderbewegingen can arrive faster than the JSFX acknowledges them.
+    -- Keep only the newest pending update for the same row/column, otherwise
+    -- the LEDs visibly walk through an obsolete queue after the user presses.
+    if packet.command == COMMAND_SET_FADER_RGB then
+        for index = #Bridge.queue, 1, -1 do
+            local queued = Bridge.queue[index]
+
+            if queued.command == COMMAND_SET_FADER_RGB
+            and same_entry_notes(queued, packet) then
+                Bridge.queue[index] = packet
+                ensure_pump()
+                return true
+            end
+        end
+    end
+
     Bridge.queue[#Bridge.queue + 1] = packet
     ensure_pump()
     return true
@@ -88,6 +175,146 @@ end
 
 function Bridge.programmer_mode()
     return enqueue({ command = COMMAND_PROGRAMMER_MODE })
+end
+
+function Bridge.live_mode()
+    return enqueue({ command = COMMAND_LIVE_MODE })
+end
+
+function Bridge.set_pad_rgb(note, red, green, blue)
+    return enqueue({
+        command = COMMAND_SET_PAD_RGB,
+        note = clamp(note, 0, 127),
+        red = clamp(red, 0, 127),
+        green = clamp(green, 0, 127),
+        blue = clamp(blue, 0, 127)
+    })
+end
+
+function Bridge.set_pad_rgb_at(row, col, red, green, blue)
+    row = math.floor(tonumber(row) or 0)
+    col = math.floor(tonumber(col) or 0)
+
+    if row < 1 or row > 8 or col < 1 or col > 8 then
+        return false
+    end
+
+    return Bridge.set_pad_rgb(row * 10 + col, red, green, blue)
+end
+
+function Bridge.set_fader_rgb(col, colors)
+    col = clamp(col, 1, 8)
+
+    if type(colors) ~= "table" or #colors < 8 then
+        return false
+    end
+
+    local entries = {}
+
+    for row = 1, 8 do
+        local color = colors[row] or { 0, 0, 0 }
+        entries[row] = {
+            row * 10 + col,
+            color[1], color[2], color[3]
+        }
+    end
+
+    return enqueue({
+        command = COMMAND_SET_FADER_RGB,
+        entries = copy_entries(entries)
+    })
+end
+
+function Bridge.set_row_rgb(row, colors)
+    row = clamp(row, 1, 8)
+
+    if type(colors) ~= "table" or #colors < 8 then
+        return false
+    end
+
+    local entries = {}
+
+    for col = 1, 8 do
+        local color = colors[col] or { 0, 0, 0 }
+        entries[col] = {
+            row * 10 + col,
+            color[1], color[2], color[3]
+        }
+    end
+
+    return enqueue({
+        command = COMMAND_SET_FADER_RGB,
+        entries = copy_entries(entries)
+    })
+end
+
+function Bridge.set_matrix_rgb(matrix)
+    if type(matrix) ~= "table" then
+        return false
+    end
+
+    local entries = {}
+
+    for row = 1, 8 do
+        local row_colors = matrix[row]
+        if type(row_colors) ~= "table" then row_colors = {} end
+
+        for col = 1, 8 do
+            local color = row_colors[col]
+            if type(color) ~= "table" then color = { 0, 0, 0 } end
+
+            entries[#entries + 1] = {
+                row * 10 + col,
+                color[1], color[2], color[3]
+            }
+        end
+    end
+
+    return enqueue({
+        command = COMMAND_SET_MATRIX_RGB,
+        entries = copy_entries(entries)
+    })
+end
+
+-- Send only a range of matrix rows using the generic RGB-list command.
+-- Screen 6 uses this for rows 1..6 so the sequencer-display JSFX remains
+-- the sole writer of rows 7 and 8. Keeping those writers separate avoids
+-- overlapping full-matrix SysEx packets during scene/layout transitions.
+function Bridge.set_matrix_rows_rgb(matrix, first_row, last_row)
+    if type(matrix) ~= "table" then
+        return false
+    end
+
+    first_row = clamp(first_row, 1, 8)
+    last_row = clamp(last_row, first_row, 8)
+
+    local entries = {}
+
+    for row = first_row, last_row do
+        local row_colors = matrix[row]
+        if type(row_colors) ~= "table" then row_colors = {} end
+
+        for col = 1, 8 do
+            local color = row_colors[col]
+            if type(color) ~= "table" then color = { 0, 0, 0 } end
+
+            entries[#entries + 1] = {
+                row * 10 + col,
+                color[1], color[2], color[3]
+            }
+        end
+    end
+
+    return enqueue({
+        -- This can contain up to 64 RGB entries. Use the matrix command and
+        -- its large JSFX buffers rather than the 8-LED fader command.
+        command = COMMAND_SET_MATRIX_RGB,
+        entries = copy_entries(entries)
+    })
+end
+
+function Bridge.last_acknowledged_sequence()
+    return math.floor(reaper.gmem_read(2) or -1)
 end
 
 return Bridge

@@ -1,14 +1,20 @@
 desc:GJS - X - SysEx Bridge
 options:gmem=GJS_X_BRIDGE
-import gjs_x_renderer.jsfx-inc
 
 // ============================================================
-// Bridge responsibilities
+// gmem-indeling
 //
-// gmem[0..2]  = small acknowledged command channel
-//               (currently Programmer Mode only)
-// Remaining gmem ranges are renderer state/event buffers.
+// gmem[0] = sequence
+// gmem[1] = command
+// gmem[2] = laatst bevestigde sequence
+//
+// Command 3:
+// gmem[3] = LED-index / MIDI-noot
+// gmem[4] = rood   0-127
+// gmem[5] = groen  0-127
+// gmem[6] = blauw  0-127
 // ============================================================
+
 
 @init
 
@@ -35,43 +41,15 @@ last_perf_octave = 999;
 last_perf_redraw = -1;
 last_perf_feedback_seq = -1;
 
-// Screen 2/3 semantic control renderer.
-MIX_RENDER_SCREEN_SLOT = 3200;
-MIX_RENDER_VERSION_SLOT = 3201;
-MIX_RENDER_CONTROL_BASE = 3202;
-MIX_RENDER_CONTROL_STRIDE = 6;
+function perf_clamp(v) ( max(0,min(127,floor(v))); );
 
-MIX_RENDER_EVENT_SEQ_SLOT = 3250;
-MIX_RENDER_EVENT_SCREEN_SLOT = 3251;
-MIX_RENDER_EVENT_INDEX_SLOT = 3252;
-MIX_RENDER_EVENT_DATA_BASE = 3253;
-
-last_mix_render_version = -1;
-last_mix_render_event_seq = -1;
-
-// Screen 6 sequencer rows 7/8.
-SEQ_RENDER_VERSION_SLOT = 3300;
-SEQ_RENDER_ENABLED_SLOT = 3301;
-SEQ_RENDER_RGB_BASE = 3302;
-last_seq_render_version = -1;
-
-MAINBAR_RENDER_VERSION_SLOT = 3350;
-MAINBAR_RENDER_ENABLED_SLOT = 3351;
-MAINBAR_RENDER_RGB_BASE = 3353;
-last_mainbar_render_version = -1;
-
-// Static Lua screens.
-CURRENT_SCREEN_SLOT = 3499;
-STATIC_RENDER_SCREEN_SLOT = 3500;
-STATIC_RENDER_VERSION_SLOT = 3501;
-STATIC_RENDER_RGB_BASE = 3502;
-STATIC_RENDER_SCREEN6_FULL_SLOT = 3694;
-last_static_render_version = -1;
-
-// Sidebar/navigation CC LED state buffer.
-SIDEBAR_STATE_VERSION_SLOT = 3700;
-SIDEBAR_STATE_BASE = 3710;
-last_sidebar_state_version = -1;
+function perf_write_rgb(buffer,target,led,r,g,b) (
+    buffer[target]=$x03;
+    buffer[target+1]=perf_clamp(led);
+    buffer[target+2]=perf_clamp(r);
+    buffer[target+3]=perf_clamp(g);
+    buffer[target+4]=perf_clamp(b);
+);
 
 function perf_drum_rgb(note,component) local(row,col,r,g,b) (
     row=floor(note/10); col=note%10; r=0; g=0; b=0;
@@ -111,22 +89,21 @@ function perf_piano_key(note) local(row,col,pair,semi,valid) (
     valid ? pair*12+semi : -1;
 );
 
-function perf_send_one(led,r,g,b) local(row,col) (
-    row=floor(led/10);
-    col=led%10;
-
-    row>=1 && row<=8 && col>=1 && col<=8 ? (
-        renderer_pad(row,col,r,g,b);
-        renderer_flush();
-    );
+function perf_send_one(led,r,g,b) local(len) (
+    buf_perf_midi=1400; buf_perf_daw=1440;
+    buf_perf_midi[0]=$xF0;buf_perf_midi[1]=$x00;buf_perf_midi[2]=$x20;buf_perf_midi[3]=$x29;buf_perf_midi[4]=$x02;buf_perf_midi[5]=$x0D;buf_perf_midi[6]=$x03;
+    buf_perf_daw[0]=$xF0;buf_perf_daw[1]=$x00;buf_perf_daw[2]=$x20;buf_perf_daw[3]=$x29;buf_perf_daw[4]=$x02;buf_perf_daw[5]=$x0C;buf_perf_daw[6]=$x03;
+    perf_write_rgb(buf_perf_midi,7,led,r,g,b);perf_write_rgb(buf_perf_daw,7,led,r,g,b);
+    buf_perf_midi[12]=$xF7;buf_perf_daw[12]=$xF7;
+    midisend_buf(0,buf_perf_midi,13);midisend_buf(0,buf_perf_daw,13);
 );
 
 function perf_base_rgb(note,layout,component) local(k,r,g,b) (
     r=0;g=0;b=0;
     layout==1 ? (r=perf_drum_rgb(note,1);g=perf_drum_rgb(note,2);b=perf_drum_rgb(note,3);) :
     layout==2 ? (
-        note==41 || note==48 ? (r=100;g=65;b=0;) : (
-            note==21 || note==28 ? (r=0;g=100;b=0;) : (
+        note==41 || note==48 ? (r=127;g=127;b=0;) : ( // transpose = yellow
+            note==21 || note==28 ? (r=0;g=127;b=0;) : ( // octave = green
                 k=perf_piano_key(note); k>=0 ? (b=22;);
             );
         );
@@ -134,159 +111,18 @@ function perf_base_rgb(note,layout,component) local(k,r,g,b) (
     component==1?r:component==2?g:b;
 );
 
-function perf_draw_layout(layout) local(i,row,col,n,r,g,b) (
-    renderer_clear();
-
-    i=0;
-    loop(64,
-        row=floor(i/8)+1;
-        col=(i%8)+1;
-        n=row*10+col;
-
-        r=perf_base_rgb(n,layout,1);
-        g=perf_base_rgb(n,layout,2);
-        b=perf_base_rgb(n,layout,3);
-
-        renderer_pad(row,col,r,g,b);
-        i+=1;
+function perf_draw_layout(layout) local(i,row,col,n,target,r,g,b,len) (
+    buf_pm=1600;buf_pd=2000;
+    buf_pm[0]=$xF0;buf_pm[1]=$x00;buf_pm[2]=$x20;buf_pm[3]=$x29;buf_pm[4]=$x02;buf_pm[5]=$x0D;buf_pm[6]=$x03;
+    buf_pd[0]=$xF0;buf_pd[1]=$x00;buf_pd[2]=$x20;buf_pd[3]=$x29;buf_pd[4]=$x02;buf_pd[5]=$x0C;buf_pd[6]=$x03;
+    i=0; loop(64,
+        row=floor(i/8)+1;col=(i%8)+1;n=row*10+col;target=7+i*5;
+        r=perf_base_rgb(n,layout,1);g=perf_base_rgb(n,layout,2);b=perf_base_rgb(n,layout,3);
+        perf_write_rgb(buf_pm,target,n,r,g,b);perf_write_rgb(buf_pd,target,n,r,g,b);i+=1;
     );
-
-    renderer_flush();
+    len=8+64*5;buf_pm[len-1]=$xF7;buf_pd[len-1]=$xF7;
+    midisend_buf(0,buf_pm,len);midisend_buf(0,buf_pd,len);
 );
-
-
-function mix_draw_controls(screen)
-local(i,base,v1,v2,centered,r,g,b,row) (
-    renderer_clear();
-
-    i = 0;
-    loop(8,
-        base = MIX_RENDER_CONTROL_BASE + i * MIX_RENDER_CONTROL_STRIDE;
-        v1 = floor(gmem[base + 0]);
-        v2 = floor(gmem[base + 1]);
-        centered = floor(gmem[base + 2]);
-        r = gmem[base + 3];
-        g = gmem[base + 4];
-        b = gmem[base + 5];
-
-        screen == 2 ? (
-            renderer_vertical_fader_state(
-                i + 1,
-                v1,
-                v2,
-                r,g,b
-            );
-        ) : screen == 3 ? (
-            row = 8 - i;
-            renderer_balance_state(
-                row,
-                v1,
-                v2,
-                centered,
-                r,g,b
-            );
-        );
-
-        i += 1;
-    );
-
-    renderer_flush();
-);
-
-function mix_draw_one_control(screen,index)
-local(v1,v2,centered,r,g,b,row) (
-    v1 = floor(gmem[MIX_RENDER_EVENT_DATA_BASE + 0]);
-    v2 = floor(gmem[MIX_RENDER_EVENT_DATA_BASE + 1]);
-    centered = floor(gmem[MIX_RENDER_EVENT_DATA_BASE + 2]);
-    r = gmem[MIX_RENDER_EVENT_DATA_BASE + 3];
-    g = gmem[MIX_RENDER_EVENT_DATA_BASE + 4];
-    b = gmem[MIX_RENDER_EVENT_DATA_BASE + 5];
-
-    screen == 2 ? (
-        renderer_vertical_fader_state(index,v1,v2,r,g,b);
-    ) : screen == 3 ? (
-        row = 9 - index;
-        renderer_balance_state(row,v1,v2,centered,r,g,b);
-    );
-
-    renderer_flush();
-);
-
-
-
-function seq_draw_rows() local(i,row,col,source,r,g,b) (
-    i = 0;
-    loop(16,
-        i < 8 ? (
-            row = 8;
-            col = i + 1;
-        ) : (
-            row = 7;
-            col = i - 7;
-        );
-
-        source = SEQ_RENDER_RGB_BASE + i * 3;
-        r = gmem[source + 0];
-        g = gmem[source + 1];
-        b = gmem[source + 2];
-
-        renderer_pad(row,col,r,g,b);
-        i += 1;
-    );
-
-    renderer_flush_rows(7,8);
-);
-
-
-
-function mainbar_draw_rows() local(i,row,col,source,r,g,b) (
-    i = 0;
-    loop(16,
-        i < 8 ? (
-            row = 8;
-            col = i + 1;
-        ) : (
-            row = 7;
-            col = i - 7;
-        );
-
-        source = MAINBAR_RENDER_RGB_BASE + i * 3;
-        r = gmem[source + 0];
-        g = gmem[source + 1];
-        b = gmem[source + 2];
-
-        renderer_pad(row,col,r,g,b);
-        i += 1;
-    );
-
-    renderer_flush_rows(7,8);
-);
-
-
-
-function static_draw_frame(screen) local(i,row,col,source,r,g,b) (
-    renderer_clear();
-
-    i = 0;
-    loop(64,
-        row = floor(i / 8) + 1;
-        col = (i % 8) + 1;
-        source = STATIC_RENDER_RGB_BASE + i * 3;
-
-        r = gmem[source + 0];
-        g = gmem[source + 1];
-        b = gmem[source + 2];
-
-        renderer_pad(row,col,r,g,b);
-        i += 1;
-    );
-
-    screen == 6 ? (
-        screen6_full=floor(gmem[STATIC_RENDER_SCREEN6_FULL_SLOT]);
-        screen6_full==1 ? renderer_flush() : renderer_flush_rows(1,6);
-    ) : renderer_flush();
-);
-
 
 @block
 
@@ -338,101 +174,268 @@ sequence != last_sequence ? (
     );
 
 
-    // Legacy RGB commands 2-5 removed: all matrix output now uses the central renderer.
-);
+    // ========================================================
+    // Command 2: Live Mode
+    // ========================================================
 
-// Screen 2/3 mixer framebuffer. This bridge is the only hardware writer.
-sidebar_state_version=floor(gmem[SIDEBAR_STATE_VERSION_SLOT]);
-sidebar_state_version!=last_sidebar_state_version ? (
-    // Right sidebar screen buttons: 89,79,69,59,49,39,29,19
-    sidebar_i=0;
-    loop(8,
-        sidebar_cc=89-(sidebar_i*10);
-        sidebar_value=floor(gmem[SIDEBAR_STATE_BASE+sidebar_cc]);
-        sidebar_value=max(0,min(127,sidebar_value));
-        midisend(0,$xB0,sidebar_cc | (sidebar_value*256));
-        sidebar_i+=1;
+    command == 2 ? (
+
+        // Normale MIDI-interface:
+        // F0 00 20 29 02 0D 0E 00 F7
+
+        buf_midi[0] = $xF0;
+        buf_midi[1] = $x00;
+        buf_midi[2] = $x20;
+        buf_midi[3] = $x29;
+        buf_midi[4] = $x02;
+        buf_midi[5] = $x0D;
+        buf_midi[6] = $x0E;
+        buf_midi[7] = $x00;
+        buf_midi[8] = $xF7;
+
+        midisend_buf(0, buf_midi, 9);
+
+
+        // DAW-interface:
+        // F0 00 20 29 02 0C 0E 00 F7
+
+        buf_daw[0] = $xF0;
+        buf_daw[1] = $x00;
+        buf_daw[2] = $x20;
+        buf_daw[3] = $x29;
+        buf_daw[4] = $x02;
+        buf_daw[5] = $x0C;
+        buf_daw[6] = $x0E;
+        buf_daw[7] = $x00;
+        buf_daw[8] = $xF7;
+
+        midisend_buf(0, buf_daw, 9);
+
+        gmem[2] = sequence;
     );
 
-    // Top navigation buttons: 91..94. Always send zero too, so an old
-    // navigation LED cannot remain lit after the state changes.
-    sidebar_cc=91;
-    loop(4,
-        sidebar_value=floor(gmem[SIDEBAR_STATE_BASE+sidebar_cc]);
-        sidebar_value=max(0,min(127,sidebar_value));
-        midisend(0,$xB0,sidebar_cc | (sidebar_value*256));
-        sidebar_cc+=1;
+
+    // ========================================================
+    // Command 3: één LED instellen met RGB
+    // ========================================================
+
+    command == 3 ? (
+
+        led_index = floor(gmem[3]);
+        red       = floor(gmem[4]);
+        green     = floor(gmem[5]);
+        blue      = floor(gmem[6]);
+
+        // Veilig begrenzen
+        led_index = max(0, min(127, led_index));
+        red       = max(0, min(127, red));
+        green     = max(0, min(127, green));
+        blue      = max(0, min(127, blue));
+
+
+        // ----------------------------------------------------
+        // Normale MIDI-interface:
+        //
+        // F0 00 20 29 02 0D 03
+        // 03 <led> <r> <g> <b>
+        // F7
+        // ----------------------------------------------------
+
+        buf_midi[0]  = $xF0;
+        buf_midi[1]  = $x00;
+        buf_midi[2]  = $x20;
+        buf_midi[3]  = $x29;
+        buf_midi[4]  = $x02;
+        buf_midi[5]  = $x0D;
+        buf_midi[6]  = $x03;
+
+        // Colourspec
+        buf_midi[7]  = $x03;      // RGB lighting type
+        buf_midi[8]  = led_index;
+        buf_midi[9]  = red;
+        buf_midi[10] = green;
+        buf_midi[11] = blue;
+
+        buf_midi[12] = $xF7;
+
+        midisend_buf(0, buf_midi, 13);
+
+
+        // ----------------------------------------------------
+        // DAW-interface:
+        //
+        // F0 00 20 29 02 0C 03
+        // 03 <led> <r> <g> <b>
+        // F7
+        // ----------------------------------------------------
+
+        buf_daw[0]  = $xF0;
+        buf_daw[1]  = $x00;
+        buf_daw[2]  = $x20;
+        buf_daw[3]  = $x29;
+        buf_daw[4]  = $x02;
+        buf_daw[5]  = $x0C;
+        buf_daw[6]  = $x03;
+
+        // Colourspec
+        buf_daw[7]  = $x03;
+        buf_daw[8]  = led_index;
+        buf_daw[9]  = red;
+        buf_daw[10] = green;
+        buf_daw[11] = blue;
+
+        buf_daw[12] = $xF7;
+
+        midisend_buf(0, buf_daw, 13);
+
+        gmem[2] = sequence;
     );
 
-    last_sidebar_state_version=sidebar_state_version;
-);
+    // ========================================================
+    // Command 4: volledige fader van 8 RGB-leds
+    // ========================================================
 
-static_render_version=floor(gmem[STATIC_RENDER_VERSION_SLOT]);
-static_render_version!=last_static_render_version ? (
-    static_render_screen=floor(gmem[STATIC_RENDER_SCREEN_SLOT]);
+    command == 4 ? (
 
-    (
-        static_render_screen==0 ||
-        static_render_screen==1 ||
-        static_render_screen==4 ||
-        static_render_screen==5 ||
-        static_render_screen==6
-    ) ? (
-        static_draw_frame(static_render_screen);
-    );
+        led_count = floor(gmem[10]);
 
-    last_static_render_version=static_render_version;
-);
+        // Normale MIDI-interface
+        buf_midi[0] = $xF0;
+        buf_midi[1] = $x00;
+        buf_midi[2] = $x20;
+        buf_midi[3] = $x29;
+        buf_midi[4] = $x02;
+        buf_midi[5] = $x0D;
+        buf_midi[6] = $x03;
 
-mainbar_render_version=floor(gmem[MAINBAR_RENDER_VERSION_SLOT]);
-mainbar_render_version!=last_mainbar_render_version ? (
-    mainbar_render_enabled=floor(gmem[MAINBAR_RENDER_ENABLED_SLOT]);
+        // DAW-interface
+        buf_daw[0] = $xF0;
+        buf_daw[1] = $x00;
+        buf_daw[2] = $x20;
+        buf_daw[3] = $x29;
+        buf_daw[4] = $x02;
+        buf_daw[5] = $x0C;
+        buf_daw[6] = $x03;
 
-    current_screen=floor(gmem[CURRENT_SCREEN_SLOT]);
+        i = 0;
 
-    mainbar_render_enabled==1 && current_screen==0 ? (
-        mainbar_draw_rows();
-    );
+        loop(led_count,
+            source = 11 + (i * 4);
+            target = 7 + (i * 5);
 
-    last_mainbar_render_version=mainbar_render_version;
-);
+            led_index = floor(gmem[source + 0]);
+            red       = floor(gmem[source + 1]);
+            green     = floor(gmem[source + 2]);
+            blue      = floor(gmem[source + 3]);
 
-seq_render_version=floor(gmem[SEQ_RENDER_VERSION_SLOT]);
-seq_render_version!=last_seq_render_version ? (
-    seq_render_enabled=floor(gmem[SEQ_RENDER_ENABLED_SLOT]);
+            // Eén RGB colourspec
+            buf_midi[target + 0] = $x03;
+            buf_midi[target + 1] = led_index;
+            buf_midi[target + 2] = red;
+            buf_midi[target + 3] = green;
+            buf_midi[target + 4] = blue;
 
-    current_screen=floor(gmem[CURRENT_SCREEN_SLOT]);
+            buf_daw[target + 0] = $x03;
+            buf_daw[target + 1] = led_index;
+            buf_daw[target + 2] = red;
+            buf_daw[target + 3] = green;
+            buf_daw[target + 4] = blue;
 
-    seq_render_enabled==1 && current_screen==6 ? (
-        seq_draw_rows();
-    );
-
-    last_seq_render_version=seq_render_version;
-);
-
-mix_render_event_seq=floor(gmem[MIX_RENDER_EVENT_SEQ_SLOT]);
-mix_render_event_seq!=last_mix_render_event_seq ? (
-    mix_render_event_screen=floor(gmem[MIX_RENDER_EVENT_SCREEN_SLOT]);
-    mix_render_event_index=floor(gmem[MIX_RENDER_EVENT_INDEX_SLOT]);
-
-    (mix_render_event_screen==2 || mix_render_event_screen==3) &&
-    mix_render_event_index>=1 && mix_render_event_index<=8 ? (
-        mix_draw_one_control(
-            mix_render_event_screen,
-            mix_render_event_index
+            i += 1;
         );
+
+        message_length = 8 + (led_count * 5);
+
+        buf_midi[message_length - 1] = $xF7;
+        buf_daw[message_length - 1]  = $xF7;
+
+        midisend_buf(0, buf_midi, message_length);
+        midisend_buf(0, buf_daw, message_length);
+
+        gmem[2] = sequence;
     );
 
-    last_mix_render_event_seq=mix_render_event_seq;
-);
 
-mix_render_screen=floor(gmem[MIX_RENDER_SCREEN_SLOT]);
-mix_render_version=floor(gmem[MIX_RENDER_VERSION_SLOT]);
 
-(mix_render_screen==2 || mix_render_screen==3) &&
-mix_render_version!=last_mix_render_version ? (
-    mix_draw_controls(mix_render_screen);
-    last_mix_render_version=mix_render_version;
+    // ========================================================
+    // Command 5: volledige 8x8 RGB-matrix (maximaal 64 leds)
+    //
+    // gmem[10] = aantal leds (0-64)
+    // Vanaf gmem[11], per led vier waarden:
+    //   led-index, rood, groen, blauw
+    //
+    // Deze uitbreiding verandert de bestaande commands 1-4 niet.
+    // ========================================================
+
+    command == 5 ? (
+
+        led_count = floor(gmem[10]);
+        led_count = max(0, min(64, led_count));
+
+        // Aparte grote buffers. Een matrixbericht kan 328 bytes zijn.
+        buf_matrix_midi = 256;
+        buf_matrix_daw  = 768;
+
+        // Normale MIDI-interface
+        buf_matrix_midi[0] = $xF0;
+        buf_matrix_midi[1] = $x00;
+        buf_matrix_midi[2] = $x20;
+        buf_matrix_midi[3] = $x29;
+        buf_matrix_midi[4] = $x02;
+        buf_matrix_midi[5] = $x0D;
+        buf_matrix_midi[6] = $x03;
+
+        // DAW-interface
+        buf_matrix_daw[0] = $xF0;
+        buf_matrix_daw[1] = $x00;
+        buf_matrix_daw[2] = $x20;
+        buf_matrix_daw[3] = $x29;
+        buf_matrix_daw[4] = $x02;
+        buf_matrix_daw[5] = $x0C;
+        buf_matrix_daw[6] = $x03;
+
+        i = 0;
+
+        loop(led_count,
+            source = 11 + (i * 4);
+            target = 7 + (i * 5);
+
+            led_index = floor(gmem[source + 0]);
+            red       = floor(gmem[source + 1]);
+            green     = floor(gmem[source + 2]);
+            blue      = floor(gmem[source + 3]);
+
+            led_index = max(0, min(127, led_index));
+            red       = max(0, min(127, red));
+            green     = max(0, min(127, green));
+            blue      = max(0, min(127, blue));
+
+            buf_matrix_midi[target + 0] = $x03;
+            buf_matrix_midi[target + 1] = led_index;
+            buf_matrix_midi[target + 2] = red;
+            buf_matrix_midi[target + 3] = green;
+            buf_matrix_midi[target + 4] = blue;
+
+            buf_matrix_daw[target + 0] = $x03;
+            buf_matrix_daw[target + 1] = led_index;
+            buf_matrix_daw[target + 2] = red;
+            buf_matrix_daw[target + 3] = green;
+            buf_matrix_daw[target + 4] = blue;
+
+            i += 1;
+        );
+
+        message_length = 8 + (led_count * 5);
+
+        buf_matrix_midi[message_length - 1] = $xF7;
+        buf_matrix_daw[message_length - 1]  = $xF7;
+
+        midisend_buf(0, buf_matrix_midi, message_length);
+        midisend_buf(0, buf_matrix_daw, message_length);
+
+        gmem[2] = sequence;
+    );
+
 );
 
 // Screen-7 layout and feedback are sent by this JSFX because this bridge is

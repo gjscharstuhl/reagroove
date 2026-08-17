@@ -7,42 +7,6 @@ local scene_api = include("gjs - scene_api.lua")
 local GMEM_NAME = "GJS_X_BRIDGE"
 local PERFORMANCE_MODE_SLOT = 100
 
--- Screen 2/3 semantic JSFX renderer state.
--- 3200 = active renderer screen (0, 2 or 3)
--- 3201 = state generation
--- 3202.. = 8 controls x 6 values:
---   value1, value2, centered, red, green, blue
--- Screen 2: value1=row, value2=step
--- Screen 3: value1=position, value2=step, centered=0/1
-local JSFX_RENDER_SCREEN_SLOT = 3200
-local JSFX_RENDER_VERSION_SLOT = 3201
-local JSFX_RENDER_CONTROL_BASE = 3202
-local JSFX_RENDER_CONTROL_STRIDE = 6
-
--- Incremental update event:
--- 3250 = event sequence
--- 3251 = screen
--- 3252 = control index 1..8
--- 3253..3258 = value1,value2,centered,r,g,b
-local JSFX_RENDER_EVENT_SEQ_SLOT = 3250
-local JSFX_RENDER_EVENT_SCREEN_SLOT = 3251
-local JSFX_RENDER_EVENT_INDEX_SLOT = 3252
-local JSFX_RENDER_EVENT_DATA_BASE = 3253
-
-local jsfx_render_version = 0
-local jsfx_render_event_sequence = 0
-
--- Static Lua screens -> central JSFX renderer.
-local STATIC_RENDER_SCREEN_SLOT = 3500
-local STATIC_RENDER_VERSION_SLOT = 3501
-local STATIC_RENDER_RGB_BASE = 3502
--- 3694 = screen 6 owns all 8 rows (midi-edit/functions view)
-local STATIC_RENDER_SCREEN6_FULL_SLOT = 3694
-local static_render_version = 0
-
--- Global screen gate used by the bridge to reject stale renderer events.
-local CURRENT_SCREEN_SLOT = 3499
-
 local PERFORMANCE_SCREENS = {
     [7] = true
 }
@@ -53,12 +17,7 @@ local PERFORMANCE_SCREENS = {
 local Bridge = _G.GJS_X_BRIDGE
 local Transport = _G.GJS_X_TRANSPORT
 local Pattern = _G.GJS_X_PATTERN
-local ExternalController = include("gjs - x - external_controller.lua")
 local API = {}
-local publish_jsfx_controls
-local publish_jsfx_control
-local publish_static_jsfx_matrix
-local publish_jsfx_matrix
 local DEVICE_NAME = "X"
 
 ------------------------------------------------------------
@@ -560,25 +519,20 @@ local function send_pad_rgb(
         }
     end
 
-    local static_screen =
-        LP.current_screen == 0
-        or LP.current_screen == 1
-        or LP.current_screen == 4
-        or LP.current_screen == 5
-        or LP.current_screen == 6
-
-    if static_screen and publish_static_jsfx_matrix then
-        publish_static_jsfx_matrix(
-            LP.current_screen,
-            LP.framebuffer
+    if not Bridge then
+        reaper.ShowConsoleMsg(
+            "RGB mislukt: SysEx bridge niet geladen.\n"
         )
-        return true
+        return false
     end
 
-    -- Performance owns screen 7 and does not use Lua pad drawing.
-    -- Every other matrix screen has already returned through its central
-    -- renderer path above.
-    return true
+    return Bridge.set_pad_rgb_at(
+        row,
+        col,
+        red,
+        green,
+        blue
+    )
 end
 
 -- Deprecated compatibility name. It now performs RGB output only.
@@ -586,31 +540,8 @@ local function send_pad_color(row, col, color)
     return send_pad_rgb(row, col, color)
 end
 
--- Sidebar/navigation LED state buffer.
--- 3700 = generation
--- 3710..3837 = current value for MIDI CC 0..127
-local SIDEBAR_STATE_VERSION_SLOT = 3700
-local SIDEBAR_STATE_BASE = 3710
-local sidebar_state_version = 0
-
 local function send_cc_color(cc, color)
-    cc = math.max(0, math.min(127, math.floor(tonumber(cc) or 0)))
-    color = math.max(0, math.min(127, math.floor(tonumber(color) or 0)))
-
-    reaper.gmem_attach(GMEM_NAME)
-    reaper.gmem_write(SIDEBAR_STATE_BASE + cc, color)
-
-    sidebar_state_version =
-        math.floor(
-            tonumber(
-                reaper.gmem_read(SIDEBAR_STATE_VERSION_SLOT)
-            ) or 0
-        ) + 1
-
-    reaper.gmem_write(
-        SIDEBAR_STATE_VERSION_SLOT,
-        sidebar_state_version
-    )
+    reaper.StuffMIDIMessage(LP.output_mode, 0xB0, cc, color)
 end
 
 local function auto_program_mode()
@@ -972,8 +903,11 @@ local function render_fader(group)
         return
     end
 
-    if LP.current_screen == 2 or LP.current_screen == 3 then
-        publish_jsfx_control(LP.current_screen, fader_col)
+    if Bridge and Bridge.set_fader_rgb then
+        Bridge.set_fader_rgb(
+            fader_col,
+            colors
+        )
     end
 end
 
@@ -1078,24 +1012,10 @@ local function render_horizontal_fader(group)
         return
     end
 
-    if LP.current_screen == 2 or LP.current_screen == 3 then
-        local control_index = 9 - fader_row
-        publish_jsfx_control(LP.current_screen, control_index)
-    elseif LP.current_screen == 0
-        or LP.current_screen == 1
-        or LP.current_screen == 4
-        or LP.current_screen == 5
-        or LP.current_screen == 6 then
-
-        if LP.framebuffer then
-            for col = 1, 8 do
-                LP.framebuffer[fader_row][col] = colors[col]
-            end
-        end
-
-        publish_static_jsfx_matrix(
-            LP.current_screen,
-            LP.framebuffer
+    if Bridge and Bridge.set_row_rgb then
+        Bridge.set_row_rgb(
+            fader_row,
+            colors
         )
     end
 end
@@ -1140,24 +1060,26 @@ local function render_horizontal_value_fader(group)
         return
     end
 
-    local static_screen =
-        LP.current_screen == 0
-        or LP.current_screen == 1
-        or LP.current_screen == 4
-        or LP.current_screen == 5
-        or LP.current_screen == 6
+    if Bridge then
+        -- Velocity-fader feedback must follow rapid pad presses immediately.
+        -- Write the complete row directly as one command, like the fast
+        -- sequencer/playhead updates, instead of waiting in the bridge queue.
+        reaper.gmem_attach(GMEM_NAME)
+        reaper.gmem_write(10, 8)
 
-    if static_screen then
-        if LP.framebuffer then
-            for col = 1, 8 do
-                LP.framebuffer[fader_row][col] = colors[col]
-            end
+        for col = 1, 8 do
+            local color = colors[col] or { 0, 0, 0 }
+            local base = 11 + ((col - 1) * 4)
+
+            reaper.gmem_write(base + 0, fader_row * 10 + col)
+            reaper.gmem_write(base + 1, color[1] or 0)
+            reaper.gmem_write(base + 2, color[2] or 0)
+            reaper.gmem_write(base + 3, color[3] or 0)
         end
 
-        publish_static_jsfx_matrix(
-            LP.current_screen,
-            LP.framebuffer
-        )
+        Bridge.sequence = (Bridge.sequence or 0) + 1
+        reaper.gmem_write(1, 4)
+        reaper.gmem_write(0, Bridge.sequence)
     end
 end
 
@@ -1535,23 +1457,31 @@ local function paint_loop_overview(length, current_bar)
 end
 
 local function send_loop_pad_updates(indices, length, current_bar)
-    if not LP.framebuffer or #indices == 0 then
+    if not Bridge or not LP.framebuffer or #indices == 0 then
         return false
     end
 
-    for _, index in ipairs(indices) do
+    -- Command 4 accepts an arbitrary list of RGB pads in one SysEx packet.
+    -- Using a single bridge command prevents command overwrites and avoids
+    -- resending the complete 8x8 matrix for every moving bar cursor.
+    reaper.gmem_write(10, #indices)
+
+    for item_index, index in ipairs(indices) do
         local row, col = loop_pad_position(index)
-        local color = copy_rgb(
-            loop_display_color(index, length, current_bar)
-        )
+        local color = copy_rgb(loop_display_color(index, length, current_bar))
+        local base = 11 + ((item_index - 1) * 4)
 
         LP.framebuffer[row][col] = color
+
+        reaper.gmem_write(base + 0, row * 10 + col)
+        reaper.gmem_write(base + 1, color[1])
+        reaper.gmem_write(base + 2, color[2])
+        reaper.gmem_write(base + 3, color[3])
     end
 
-    publish_static_jsfx_matrix(
-        LP.current_screen,
-        LP.framebuffer
-    )
+    Bridge.sequence = (Bridge.sequence or 0) + 1
+    reaper.gmem_write(1, 4)
+    reaper.gmem_write(0, Bridge.sequence)
     return true
 end
 
@@ -1648,10 +1578,9 @@ local function update_loop_overview()
 
         LP.loop_overview_visible = should_show
 
-        publish_static_jsfx_matrix(
-            LP.current_screen,
-            LP.framebuffer
-        )
+        if Bridge.set_matrix_rgb then
+            Bridge.set_matrix_rgb(LP.framebuffer)
+        end
 
         return
     end
@@ -1679,10 +1608,9 @@ local function update_loop_overview()
         -- van de zestien overview-pads.
         paint_loop_overview(length, current_bar)
 
-        publish_static_jsfx_matrix(
-            LP.current_screen,
-            LP.framebuffer
-        )
+        if Bridge.set_matrix_rgb then
+            Bridge.set_matrix_rgb(LP.framebuffer)
+        end
     else
         -- Tijdens normaal afspelen veranderen alleen de oude en
         -- nieuwe cursorpositie.
@@ -1749,158 +1677,6 @@ local function draw_sidebar()
     end
 end
 
-local function find_fader_pad_for_column(col)
-    for _, pad in pairs(LP.pads) do
-        if pad.mode == MODE_FADER and pad.col == col then
-            return pad
-        end
-    end
-    return nil
-end
-
-local function find_balance_pad_for_index(index)
-    local wanted_row = 9 - index
-    for _, pad in pairs(LP.pads) do
-        if pad.mode == MODE_BALANCE and pad.row == wanted_row then
-            return pad
-        end
-    end
-    return nil
-end
-
-local function get_jsfx_control_state(screen, index)
-    local value1, value2, centered = 0, 0, 0
-    local rgb = COLOR.OFF
-
-    if screen == 2 then
-        local pad = find_fader_pad_for_column(index)
-        if pad and pad.fader_group then
-            local fader = get_fader_state(pad.fader_group)
-            value1 = fader.row or 1
-            value2 = fader.step or 1
-            rgb = pad.rgb or COLOR.OFF
-        end
-    elseif screen == 3 then
-        local pad = find_balance_pad_for_index(index)
-        if pad and pad.balance_group then
-            local balance = get_balance_state(pad.balance_group)
-            value1 = balance.position or 4
-            value2 = balance.step or 4
-            centered = balance.centered and 1 or 0
-            rgb = pad.rgb or COLOR.OFF
-        end
-    end
-
-    return value1, value2, centered, rgb
-end
-
-publish_jsfx_control = function(screen, index)
-    if screen ~= 2 and screen ~= 3 then return end
-    if index < 1 or index > 8 then return end
-
-    local value1, value2, centered, rgb =
-        get_jsfx_control_state(screen, index)
-
-    reaper.gmem_attach(GMEM_NAME)
-    reaper.gmem_write(JSFX_RENDER_EVENT_SCREEN_SLOT, screen)
-    reaper.gmem_write(JSFX_RENDER_EVENT_INDEX_SLOT, index)
-    reaper.gmem_write(JSFX_RENDER_EVENT_DATA_BASE + 0, value1)
-    reaper.gmem_write(JSFX_RENDER_EVENT_DATA_BASE + 1, value2)
-    reaper.gmem_write(JSFX_RENDER_EVENT_DATA_BASE + 2, centered)
-    reaper.gmem_write(JSFX_RENDER_EVENT_DATA_BASE + 3, rgb[1] or 0)
-    reaper.gmem_write(JSFX_RENDER_EVENT_DATA_BASE + 4, rgb[2] or 0)
-    reaper.gmem_write(JSFX_RENDER_EVENT_DATA_BASE + 5, rgb[3] or 0)
-
-    jsfx_render_event_sequence =
-        math.floor(
-            tonumber(
-                reaper.gmem_read(JSFX_RENDER_EVENT_SEQ_SLOT)
-            ) or 0
-        ) + 1
-
-    reaper.gmem_write(
-        JSFX_RENDER_EVENT_SEQ_SLOT,
-        jsfx_render_event_sequence
-    )
-end
-
-publish_jsfx_controls = function(screen)
-    if screen ~= 2 and screen ~= 3 then return end
-
-    reaper.gmem_attach(GMEM_NAME)
-    reaper.gmem_write(JSFX_RENDER_SCREEN_SLOT, screen)
-
-    for index = 1, 8 do
-        local base =
-            JSFX_RENDER_CONTROL_BASE
-            + (index - 1) * JSFX_RENDER_CONTROL_STRIDE
-
-        local value1, value2, centered, rgb =
-            get_jsfx_control_state(screen, index)
-
-        reaper.gmem_write(base + 0, value1)
-        reaper.gmem_write(base + 1, value2)
-        reaper.gmem_write(base + 2, centered)
-        reaper.gmem_write(base + 3, rgb[1] or 0)
-        reaper.gmem_write(base + 4, rgb[2] or 0)
-        reaper.gmem_write(base + 5, rgb[3] or 0)
-    end
-
-    jsfx_render_version = jsfx_render_version + 1
-    reaper.gmem_write(JSFX_RENDER_VERSION_SLOT, jsfx_render_version)
-end
-
-local function disable_jsfx_matrix_renderer()
-    reaper.gmem_attach(GMEM_NAME)
-    reaper.gmem_write(JSFX_RENDER_SCREEN_SLOT, 0)
-end
-
-publish_static_jsfx_matrix = function(screen, framebuffer)
-    if screen ~= 0
-       and screen ~= 1
-       and screen ~= 4
-       and screen ~= 5
-       and screen ~= 6 then
-        return
-    end
-
-    reaper.gmem_attach(GMEM_NAME)
-    reaper.gmem_write(STATIC_RENDER_SCREEN_SLOT, screen)
-
-    if screen == 6 then
-        local screen6_state = get_screen_state(6)
-        local owns_all_rows = screen6_state
-            and screen6_state.sequencer_layout == "midi_edit"
-        reaper.gmem_write(
-            STATIC_RENDER_SCREEN6_FULL_SLOT,
-            owns_all_rows and 1 or 0
-        )
-    else
-        reaper.gmem_write(STATIC_RENDER_SCREEN6_FULL_SLOT, 0)
-    end
-
-    local offset = STATIC_RENDER_RGB_BASE
-    for row = 1, 8 do
-        for col = 1, 8 do
-            local rgb = framebuffer
-                and framebuffer[row]
-                and framebuffer[row][col]
-                or COLOR.OFF
-
-            reaper.gmem_write(offset + 0, rgb[1] or 0)
-            reaper.gmem_write(offset + 1, rgb[2] or 0)
-            reaper.gmem_write(offset + 2, rgb[3] or 0)
-            offset = offset + 3
-        end
-    end
-
-    static_render_version = static_render_version + 1
-    reaper.gmem_write(
-        STATIC_RENDER_VERSION_SLOT,
-        static_render_version
-    )
-end
-
 local function draw_current_screen()
     LP.loop_overview_signature = nil
     LP.navigation_up = nil
@@ -1935,24 +1711,40 @@ local function draw_current_screen()
 
         LP.building_matrix = false
 
-        if LP.current_screen == 7 then
-            -- Performance remains on its existing renderer.
-            LP.matrix_screen_active = true
-        elseif LP.current_screen == 2
-            or LP.current_screen == 3 then
-            publish_jsfx_controls(LP.current_screen)
-            LP.matrix_screen_active = true
+        if Bridge and Bridge.set_matrix_rgb then
+            local screen6_state = LP.current_screen == 6 and get_screen_state(6) or nil
+            local screen6_midi_edit = screen6_state
+                and screen6_state.sequencer_layout == "midi_edit"
+
+            if LP.current_screen == 7 then
+                -- Screen 7 is fully rendered by the Performance JSFX.
+                LP.matrix_screen_active = true
+            elseif LP.current_screen == 6
+            and not screen6_midi_edit
+            and Bridge.set_matrix_rows_rgb then
+                -- Drum/piano reserve rows 7/8 for the sequencer display JSFX.
+                Bridge.set_matrix_rows_rgb(LP.framebuffer, 1, 6)
+                LP.matrix_screen_active = true
+            else
+                -- MIDI edit and normal matrix screens own all eight rows.
+                Bridge.set_matrix_rgb(LP.framebuffer)
+                LP.matrix_screen_active = true
+            end
         else
-            -- Screens 0,1,4,5,6 use the shared static renderer.
-            publish_static_jsfx_matrix(
-                LP.current_screen,
-                LP.framebuffer
+            reaper.ShowConsoleMsg(
+                "Matrix tekenen mislukt: Bridge.set_matrix_rgb ontbreekt.\n"
             )
-            LP.matrix_screen_active = true
         end
     else
         -- Clear any persistent RGB matrix before returning to legacy screens.
-        LP.matrix_screen_active = false
+        if LP.matrix_screen_active
+           and Bridge
+           and Bridge.set_matrix_rgb then
+
+            Bridge.set_matrix_rgb(new_black_matrix())
+            LP.matrix_screen_active = false
+        end
+
         clearscreen()
 
         if draw_screen then
@@ -1988,10 +1780,6 @@ end
 local function update_performance_mode()
     reaper.gmem_attach(GMEM_NAME)
 
-    -- Publish the current screen before any renderer can react to the
-    -- transition. The bridge uses this as a hard gate against stale events.
-    reaper.gmem_write(CURRENT_SCREEN_SLOT, LP.current_screen)
-
     local enabled =
         PERFORMANCE_SCREENS[LP.current_screen] == true
 
@@ -2016,30 +1804,14 @@ local function select_screen(screen)
         return
     end
 
-    local previous_screen = LP.current_screen
-
-    if (previous_screen == 2 or previous_screen == 3)
-       and screen ~= 2 and screen ~= 3 then
-        disable_jsfx_matrix_renderer()
-    end
-
-    -- Screen 6 owns a continuously running JSFX display overlay.  Always
-    -- disable it before leaving screen 6; otherwise it can race the
-    -- Performance renderer when switching directly 6 -> 7.
-    if previous_screen == 6 and screen ~= 6 then
-        reaper.gmem_attach(GMEM_NAME)
-        reaper.gmem_write(300, 0)
-        reaper.gmem_write(
-            305,
-            (reaper.gmem_read(305) or 0) + 1
-        )
-    end
-
     LP.current_screen = screen
+
     update_performance_mode()
 
-    -- Entering screen 6: stop any previous display writer first and let the
-    -- sequencer screen establish its own overlay on the next defer cycle.
+    -- Screen 6 has a JSFX-driven sequencer overlay on rows 7/8.  Disable
+    -- that overlay first and give the JSFX one defer cycle to observe the
+    -- change before sending the full 8x8 matrix.  Otherwise the two SysEx
+    -- writers can overlap and the Launchpad can briefly become all-white.
     if screen == 6 then
         reaper.gmem_attach(GMEM_NAME)
         reaper.gmem_write(300, 0)
@@ -2048,26 +1820,10 @@ local function select_screen(screen)
                 draw_current_screen()
             end
         end)
-
-    elseif screen == 7 and previous_screen == 6 then
-        -- Direct Sequence -> Performance needs one clean cycle after disabling
-        -- the sequencer display.  Then force the Performance JSFX to repaint.
-        reaper.defer(function()
-            if LP.current_screen == 7 then
-                draw_current_screen()
-                reaper.gmem_attach(GMEM_NAME)
-                reaper.gmem_write(
-                    1202,
-                    (reaper.gmem_read(1202) or 0) + 1
-                )
-            end
-        end)
-
     else
         draw_current_screen()
     end
 end
-
 ------------------------------------------------------------
 -- MIDI input processing
 ------------------------------------------------------------
@@ -2246,8 +2002,6 @@ local function cleanup()
     pcall(function()
         reaper.gmem_attach(GMEM_NAME)
         reaper.gmem_write(PERFORMANCE_MODE_SLOT, 0)
-        reaper.gmem_write(JSFX_RENDER_SCREEN_SLOT, 0)
-        reaper.gmem_write(STATIC_RENDER_SCREEN_SLOT, -1)
     end)
 
     if Bridge and type(Bridge.shutdown) == "function" then
@@ -2281,10 +2035,6 @@ local function mainloop()
     end
 
     process_midi_input()
-
-    if ExternalController and ExternalController.update then
-        ExternalController.update()
-    end
 
     local play_state =
         reaper.GetPlayState()
@@ -2330,8 +2080,6 @@ local function start(screens)
 
     LP.screens = screens
     LP.current_screen = 0
-    reaper.gmem_attach(GMEM_NAME)
-    reaper.gmem_write(CURRENT_SCREEN_SLOT, LP.current_screen)
     set_page(tonumber(reaper.GetExtState("GJS_X", "Page")) or 1)
 
     local attempts = 0
