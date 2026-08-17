@@ -4,59 +4,144 @@ options:gmem=GJS_X_BRIDGE
 // ============================================================
 // Audio-rate clock source for one ReaGroove subproject.
 //
-// Put one instance in every subproject and set slider 1 to the
-// corresponding GJS_X ActiveTrack number (1..8).
+// Main architecture:
+// - Lua writes static context only when track/region changes.
+// - Only the ACTIVE subproject clock calculates realtime position.
+// - No Lua polling and no per-block boundary loops.
 //
-// Shared input from Lua/display bridge:
+// Shared display state:
 //   gmem[300] = display mode (0 off, 1 screen 6, 2 mainscreen)
-//   gmem[302] = active region start in this subproject's QN map
-//   gmem[303] = active region length in bars
+//   gmem[302] = Screen 6 region start QN
+//   gmem[303] = Screen 6 region bars
 //   gmem[332] = active subproject number (1..8)
 //
-// Per-project clock output, four slots each:
-//   base = 340 + ((project_number - 1) * 4)
-//   base + 0 = heartbeat counter
-//   base + 1 = transport active (0/1)
-//   base + 2 = current bar in region (1-based, 0 when stopped)
-//   base + 3 = current sixteenth in bar (1-based, 0 when stopped)
+// Main per-project config, stride 4 from gmem[600]:
+//   +0 config version
+//   +1 region start QN
+//   +2 region end QN
+//   +3 region bar count
+//
+// Per-project clock output, stride 5 from gmem[340]:
+//   +0 heartbeat
+//   +1 transport active
+//   +2 current bar
+//   +3 current sixteenth
+//   +4 processed config version
 // ============================================================
 
 slider1:1<1,8,1>ReaGroove subproject number
 
 @init
 clock_root = 340;
+clock_stride = 5;
+config_root = 600;
+config_stride = 4;
 heartbeat = 0;
+
+// REAPER can expose a shorter repeating local transport phase for a
+// subproject than the visible ReaGroove region. Keep an audio-rate,
+// monotonically unwrapped beat position so a 4-bar internal wrap can
+// still drive an 8/12/16-bar visible pattern correctly.
+last_raw_beat = 0;
+unwrapped_offset = 0;
+clock_was_playing = 0;
+continuous_beat = 0;
 
 @block
 
 project_number = max(1, min(8, floor(slider1)));
 active_project = floor(gmem[332]);
 display_mode = floor(gmem[300]);
-region_start_qn = gmem[302];
-region_bars = max(0, floor(gmem[303]));
+my_base = clock_root + ((project_number - 1) * clock_stride);
+transport_active = ((play_state & 1) == 1) || ((play_state & 4) == 4);
 
-my_base = clock_root + ((project_number - 1) * 4);
+// Track every subproject clock continuously. This is only a few scalar
+// operations per audio block and means switching tracks never has to
+// reconstruct phase in Lua.
+transport_active ? (
+    expected_qn = max(0, samplesblock / max(1, srate) * tempo / 60);
+
+    !clock_was_playing ? (
+        unwrapped_offset = 0;
+        last_raw_beat = beat_position;
+        continuous_beat = beat_position;
+    ) : (
+        raw_delta = beat_position - last_raw_beat;
+
+        // A real transport loop/wrap is a backwards discontinuity much
+        // larger than one audio block. Continue the phase across it.
+        raw_delta < -max(0.25, expected_qn * 8) ? (
+            unwrapped_offset += (last_raw_beat + expected_qn) - beat_position;
+        );
+
+        continuous_beat = beat_position + unwrapped_offset;
+        last_raw_beat = beat_position;
+    );
+) : (
+    unwrapped_offset = 0;
+    last_raw_beat = beat_position;
+    continuous_beat = beat_position;
+);
+
+clock_was_playing = transport_active;
 
 active_project == project_number && display_mode > 0 ? (
-    transport_active = ((play_state & 1) == 1) || ((play_state & 4) == 4);
     current_bar = 0;
     current_step = 0;
+    processed_version = 0;
 
-    transport_active && region_bars > 0 ? (
-        measure_qn = max(0.000001, ts_num * 4 / ts_denom);
-        relative_qn = beat_position - region_start_qn;
+    display_mode == 2 ? (
+        config_base = config_root + ((project_number - 1) * config_stride);
+        config_version = floor(gmem[config_base + 0]);
+        region_start_qn = gmem[config_base + 1];
+        region_end_qn = gmem[config_base + 2];
+        region_bars = max(0, min(16, floor(gmem[config_base + 3])));
 
-        // Tiny negative values can occur exactly on a synchronized loop edge.
-        relative_qn >= -0.000001 ? (
-            relative_qn = max(0, relative_qn);
-            absolute_bar = floor(relative_qn / measure_qn);
-            wrapped_bar = absolute_bar % region_bars;
-            wrapped_bar < 0 ? wrapped_bar += region_bars;
-            current_bar = wrapped_bar + 1;
+        config_version > 0 && region_bars > 0 && region_end_qn > region_start_qn ? (
+            processed_version = config_version;
 
-            within_bar_qn = relative_qn - (absolute_bar * measure_qn);
-            current_step = floor(within_bar_qn / (measure_qn / 16)) + 1;
-            current_step = max(1, min(16, current_step));
+            transport_active ? (
+                relative_qn = continuous_beat - region_start_qn;
+
+                // The counted number of measures is the authority for Main.
+                // Do NOT derive the realtime cycle from region_end-region_start:
+                // that value can reflect a shorter loop/source span than the
+                // visible ReaGroove region (e.g. an 8-bar bass region reporting
+                // a 4-bar source cycle).
+                bar_qn = max(0.000001, ts_num * 4 / ts_denom);
+                cycle_qn = max(0.000001, bar_qn * region_bars);
+
+                wrapped_qn = relative_qn - floor(relative_qn / cycle_qn) * cycle_qn;
+                wrapped_qn < 0 ? wrapped_qn += cycle_qn;
+
+                current_bar = floor(wrapped_qn / bar_qn) + 1;
+                current_bar = max(1, min(region_bars, current_bar));
+
+                within_bar_qn = wrapped_qn - ((current_bar - 1) * bar_qn);
+                current_step = floor(within_bar_qn / (bar_qn / 16)) + 1;
+                current_step = max(1, min(16, current_step));
+            );
+        );
+    ) : display_mode == 1 ? (
+        // Existing Screen 6 clock behaviour.
+        region_start_qn = gmem[302];
+        region_bars = max(0, floor(gmem[303]));
+
+        transport_active && region_bars > 0 ? (
+            measure_qn = max(0.000001, ts_num * 4 / ts_denom);
+            relative_qn = beat_position - region_start_qn;
+
+            relative_qn >= -0.000001 ? (
+                relative_qn = max(0, relative_qn);
+                absolute_bar = floor(relative_qn / measure_qn);
+                wrapped_bar = absolute_bar % region_bars;
+                wrapped_bar < 0 ? wrapped_bar += region_bars;
+                current_bar = wrapped_bar + 1;
+
+                within_bar_qn = relative_qn - (absolute_bar * measure_qn);
+                current_step = floor(within_bar_qn / (measure_qn / 16)) + 1;
+                current_step = max(1, min(16, current_step));
+            );
         );
     );
 
@@ -67,4 +152,5 @@ active_project == project_number && display_mode > 0 ? (
     gmem[my_base + 1] = transport_active ? 1 : 0;
     gmem[my_base + 2] = current_bar;
     gmem[my_base + 3] = current_step;
+    gmem[my_base + 4] = processed_version;
 );

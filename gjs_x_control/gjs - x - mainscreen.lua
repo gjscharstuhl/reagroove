@@ -567,8 +567,6 @@ return function(api, navigation)
 
     main_display_generation = main_display_generation + 1
     local generation = main_display_generation
-    local last_signature = nil
-    local last_check = 0
 
     local function main_display_is_allowed()
         if api.get_current_screen
@@ -580,18 +578,6 @@ return function(api, navigation)
     end
 
     local function refresh_main_display()
-        -- This function is also called through reaper.defer(). A callback that
-        -- was queued while Main was visible may run after a screen/layout
-        -- change, so guard the actual JSFX write itself.
-        if not main_display_is_allowed() then
-            sequencer.disable_display(2)
-            return
-        end
-
-        sequencer.update_main_display()
-    end
-
-    local function keep_main_display_synced()
         if generation ~= main_display_generation then return end
 
         if not main_display_is_allowed() then
@@ -599,32 +585,10 @@ return function(api, navigation)
             return
         end
 
-        local now = reaper.time_precise()
-        if now - last_check >= 0.05 then
-            last_check = now
-            local context = sequencer.get_main_display_context
-                and sequencer.get_main_display_context()
-                or sequencer.get_context()
-
-            local signature = table.concat({
-                tostring(context.project),
-                tostring(context.region_start or 0),
-                tostring(context.region_end or 0),
-                tostring(context.region_number or 0),
-                tostring(reaper.GetExtState("GJS_X", "ActiveTrack"))
-            }, ":")
-
-            if signature ~= last_signature then
-                last_signature = signature
-                refresh_main_display()
-            end
-        end
-		
-        reaper.defer(keep_main_display_synced)
-
+        -- Static context only. Realtime playhead updates stay in JSFX.
+        sequencer.update_main_display()
     end
 
-    -- Defer once so the JSFX repaint happens after core sends the full matrix.
+    -- One-shot ordering after the neutral matrix draw; not a polling loop.
     reaper.defer(refresh_main_display)
-    reaper.defer(keep_main_display_synced)
 end

@@ -982,73 +982,65 @@ if not region_start then
     local context = M.get_main_display_context()
 
     reaper.gmem_attach(DISPLAY_GMEM)
-    publish_active_clock_project()
     reaper.gmem_write(DISPLAY_BASE + 0, 2)
 
     if not context.project
         or not context.region_start
         or not context.region_end
         or context.region_end <= context.region_start then
-        reaper.gmem_write(DISPLAY_BASE + 1, 1)
-        reaper.gmem_write(DISPLAY_BASE + 2, 0)
-        reaper.gmem_write(DISPLAY_BASE + 3, 0)
-        reaper.gmem_write(DISPLAY_BASE + 7, 0)
-        reaper.gmem_write(DISPLAY_BASE + 8, 0)
-        reaper.gmem_write(DISPLAY_BASE + 6, 16)
-        clear_display_steps()
-        display_pattern_version = display_pattern_version + 1
-        reaper.gmem_write(DISPLAY_BASE + 4, display_pattern_version)
         return false
         end
+
+        local active_track = tonumber(
+            reaper.GetExtState("GJS_X", "ActiveTrack")
+        ) or 0
+        active_track = math.max(0, math.min(8, math.floor(active_track)))
+        if active_track < 1 then
+            return false
+            end
 
         local region_start_qn = reaper.TimeMap2_timeToQN(
             context.project,
             context.region_start
         )
-
-        reaper.gmem_write(DISPLAY_BASE + 1, 1)
-        reaper.gmem_write(DISPLAY_BASE + 2, region_start_qn or 0)
-        reaper.gmem_write(DISPLAY_BASE + 3, context.bar_count or 0)
-        -- Main overview bar/play state is calculated in Lua from REAPER's real
-        -- measure map. This avoids the JSFX clock wrapping to the wrong bar
-        -- for regions longer than eight measures. Slots +7/+8 are reserved
-        -- for the mainscreen overview only; screen 6 keeps using the audio clock.
-        reaper.gmem_write(DISPLAY_BASE + 7, context.current_bar or 0)
-        reaper.gmem_write(DISPLAY_BASE + 8, context.transport_active and 1 or 0)
-
-        -- Publish the exact QN boundaries of every visible measure.  Main's
-        -- JSFX can then derive the playhead at audio-block rate instead of
-        -- waiting for Lua's deferred polling loop.  Slots 380..396 are reserved
-        -- for bar boundaries 1..17 (up to sixteen visible measures).
-        local MAIN_BAR_BOUNDARY_BASE = 380
-        for index = 0, 16 do
-            reaper.gmem_write(MAIN_BAR_BOUNDARY_BASE + index, 0)
-        end
-
+        local region_end_qn = reaper.TimeMap2_timeToQN(
+            context.project,
+            context.region_end
+        )
         local visible_bars = math.max(0, math.min(16, context.bar_count or 0))
-        for bar_index = 1, visible_bars do
-            local qn_start, qn_end = get_bar_qn_range(
-                context.project,
-                context.region_start,
-                bar_index
-            )
-            if qn_start and qn_end then
-                reaper.gmem_write(
-                    MAIN_BAR_BOUNDARY_BASE + (bar_index - 1),
-                    qn_start
-                )
-                if bar_index == visible_bars then
-                    reaper.gmem_write(
-                        MAIN_BAR_BOUNDARY_BASE + bar_index,
-                        qn_end
-                    )
-                end
-            end
-        end
 
-        -- Keep the current mainscreen overview visible while switching regions.
-        -- The JSFX receives the new region context atomically via the version bump
-        -- below, without an intermediate empty frame.
+        if not region_start_qn or not region_end_qn
+            or region_end_qn <= region_start_qn
+            or visible_bars < 1 then
+            return false
+            end
+
+        -- Lightweight per-project Main clock context.
+        -- Only the selected subproject clock reads its own block.
+        -- +0 version, +1 start QN, +2 end QN, +3 bar count.
+        local MAIN_CLOCK_CONFIG_ROOT = 600
+        local MAIN_CLOCK_CONFIG_STRIDE = 4
+        local config_base = MAIN_CLOCK_CONFIG_ROOT
+            + (active_track - 1) * MAIN_CLOCK_CONFIG_STRIDE
+
+        local version = math.floor(
+            tonumber(reaper.gmem_read(config_base + 0)) or 0
+        ) + 1
+
+        -- Data first, version last. Active project is published after that.
+        reaper.gmem_write(config_base + 1, region_start_qn)
+        reaper.gmem_write(config_base + 2, region_end_qn)
+        reaper.gmem_write(config_base + 3, visible_bars)
+        reaper.gmem_write(config_base + 0, version)
+
+        -- Static overview context for the display JSFX.
+        reaper.gmem_write(DISPLAY_BASE + 1, 1)
+        reaper.gmem_write(DISPLAY_BASE + 2, region_start_qn)
+        reaper.gmem_write(DISPLAY_BASE + 3, visible_bars)
+
+        -- One atomic selector. Realtime bar timing stays in the subproject JSFX.
+        reaper.gmem_write(DISPLAY_ACTIVE_PROJECT_SLOT, active_track)
+
         display_pattern_version = display_pattern_version + 1
         reaper.gmem_write(DISPLAY_BASE + 4, display_pattern_version)
         return true

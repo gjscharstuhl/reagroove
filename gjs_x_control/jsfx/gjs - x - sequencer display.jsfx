@@ -50,6 +50,8 @@ last_active_project = -1;
 last_region_bars = -1;
 last_current_bar = -1;
 last_active_steps = -1;
+last_main_config_version = -1;
+last_clock_config_version = -1;
 
 buf_midi = 0;
 buf_daw = 256;
@@ -284,44 +286,34 @@ pattern_version = use_gmem ? floor(gmem[gmem_base + 4]) : floor(slider3);
 force_version = use_gmem ? floor(gmem[gmem_base + 5]) : floor(slider3);
 display_active_steps = use_gmem ? max(1, min(16, floor(gmem[gmem_base + 6]))) : 16;
 
-// Prefer the clock calculated inside the active subproject. That JSFX
-// sees the correct local beat_position, tempo map and time signature.
+// Realtime timing comes from the ACTIVE subproject clock.
+// Lua only publishes static track/region context.
 active_project = max(0, min(8, floor(gmem[332])));
-clock_base = 340 + ((max(1, active_project) - 1) * 4);
+clock_stride = 5;
+clock_base = 340 + ((max(1, active_project) - 1) * clock_stride);
 clock_heartbeat = active_project > 0 ? floor(gmem[clock_base + 0]) : 0;
 clock_playing = active_project > 0 ? floor(gmem[clock_base + 1]) : 0;
 clock_bar = active_project > 0 ? floor(gmem[clock_base + 2]) : 0;
 clock_step = active_project > 0 ? floor(gmem[clock_base + 3]) : 0;
+clock_config_version = active_project > 0 ? floor(gmem[clock_base + 4]) : 0;
 clock_available = active_project > 0 && clock_heartbeat > 0;
+
+main_config_base = 600 + ((max(1, active_project) - 1) * 4);
+main_config_version = active_project > 0 ? floor(gmem[main_config_base + 0]) : 0;
+main_clock_ready = clock_available && main_config_version > 0 &&
+    clock_config_version == main_config_version;
 
 playing = clock_available ? clock_playing : ((play_state & 1) == 1);
 current_bar = clock_available ? clock_bar : 0;
 current_step = clock_available ? clock_step : 0;
 
-// Main overview gets exact measure boundaries from Lua, but derives the
-// moving bar here at audio-block rate.  This keeps 1..16 mapping correct
-// while making the visual change land tightly on the measure boundary.
 mode == 2 ? (
-    playing = ((play_state & 1) == 1);
-    current_bar = 0;
-
-    main_boundary_base = 380;
-    main_bar_count = max(0, min(16, region_bars));
-
-    playing && main_bar_count > 0 ? (
-        i = 0;
-        loop(main_bar_count,
-            bar_qn_start = gmem[main_boundary_base + i];
-            bar_qn_end = gmem[main_boundary_base + i + 1];
-
-            bar_qn_end > bar_qn_start &&
-            beat_position >= bar_qn_start &&
-            beat_position < bar_qn_end ? (
-                current_bar = i + 1;
-            );
-            i += 1;
-        );
-    );
+    // Never calculate Main timing on the main-project timeline.
+    // Wait at most one audio block until the newly selected subproject has
+    // processed its static config. Pink bars stay visible meanwhile.
+    playing = main_clock_ready ? clock_playing : 0;
+    current_bar = main_clock_ready ? clock_bar : 0;
+    current_step = main_clock_ready ? clock_step : 0;
 );
 
 // Fallback keeps the display usable before the subproject clock has written
@@ -353,6 +345,8 @@ changed =
     current_step != last_step ||
     playing != last_playing ||
     active_project != last_active_project ||
+    main_config_version != last_main_config_version ||
+    clock_config_version != last_clock_config_version ||
     display_active_steps != last_active_steps;
 
 enabled && changed ? (
@@ -374,6 +368,8 @@ last_step = current_step;
 last_playing = playing;
 last_clock_heartbeat = clock_heartbeat;
 last_active_project = active_project;
+last_main_config_version = main_config_version;
+last_clock_config_version = clock_config_version;
 last_active_steps = display_active_steps;
 
 
