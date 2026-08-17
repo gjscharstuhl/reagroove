@@ -65,6 +65,7 @@ CURRENT_SCREEN_SLOT = 3499;
 STATIC_RENDER_SCREEN_SLOT = 3500;
 STATIC_RENDER_VERSION_SLOT = 3501;
 STATIC_RENDER_RGB_BASE = 3502;
+STATIC_RENDER_SCREEN6_FULL_SLOT = 3694;
 last_static_render_version = -1;
 
 // Sidebar/navigation CC LED state buffer.
@@ -280,7 +281,10 @@ function static_draw_frame(screen) local(i,row,col,source,r,g,b) (
         i += 1;
     );
 
-    screen == 6 ? renderer_flush_rows(1,6) : renderer_flush();
+    screen == 6 ? (
+        screen6_full=floor(gmem[STATIC_RENDER_SCREEN6_FULL_SLOT]);
+        screen6_full==1 ? renderer_flush() : renderer_flush_rows(1,6);
+    ) : renderer_flush();
 );
 
 

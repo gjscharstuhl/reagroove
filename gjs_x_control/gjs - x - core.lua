@@ -36,6 +36,8 @@ local jsfx_render_event_sequence = 0
 local STATIC_RENDER_SCREEN_SLOT = 3500
 local STATIC_RENDER_VERSION_SLOT = 3501
 local STATIC_RENDER_RGB_BASE = 3502
+-- 3694 = screen 6 owns all 8 rows (midi-edit/functions view)
+local STATIC_RENDER_SCREEN6_FULL_SLOT = 3694
 local static_render_version = 0
 
 -- Global screen gate used by the bridge to reject stale renderer events.
@@ -1864,6 +1866,18 @@ publish_static_jsfx_matrix = function(screen, framebuffer)
 
     reaper.gmem_attach(GMEM_NAME)
     reaper.gmem_write(STATIC_RENDER_SCREEN_SLOT, screen)
+
+    if screen == 6 then
+        local screen6_state = get_screen_state(6)
+        local owns_all_rows = screen6_state
+            and screen6_state.sequencer_layout == "midi_edit"
+        reaper.gmem_write(
+            STATIC_RENDER_SCREEN6_FULL_SLOT,
+            owns_all_rows and 1 or 0
+        )
+    else
+        reaper.gmem_write(STATIC_RENDER_SCREEN6_FULL_SLOT, 0)
+    end
 
     local offset = STATIC_RENDER_RGB_BASE
     for row = 1, 8 do
