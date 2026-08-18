@@ -72,6 +72,12 @@ local trman = include("trackmanager.lua")
 
 local screens = {}
 
+-- Main's 16-pad bar/playhead overlay is autonomous in JSFX once enabled.
+-- Turn it off synchronously when any other top-level screen is drawn.
+-- Screen 0/Edit already disables it inside edit.lua.
+local sequencer_display = include("gjs - x - sequencer_engine.lua")
+if not sequencer_display then return end
+
 for screen = 0, 7 do
 
     local module = include(
@@ -82,7 +88,15 @@ for screen = 0, 7 do
         return
     end
 
-    screens[screen] = module
+    if screen == 0 then
+        screens[screen] = module
+    else
+        local screen_module = module
+        screens[screen] = function(api)
+            sequencer_display.disable_display(2)
+            screen_module(api)
+        end
+    end
 
 end
 

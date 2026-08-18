@@ -7,7 +7,6 @@
 local script_path = debug.getinfo(1, "S").source:sub(2)
 local script_dir = script_path:match("(.*[\\/])") or ""
 local sequencer = dofile(script_dir .. "gjs - x - sequencer_engine.lua")
-local main_display_generation = 0
 local trmanager = include("trackmanager.lua")
 
 return function(api, navigation)
@@ -17,9 +16,8 @@ return function(api, navigation)
         api.set_screen0_main_active(true)
     end
 
-    -- Main and Edit both live on core screen 0. Keep a tiny local mode marker
-    -- so deferred Main-sequencer callbacks can tell them apart without any
-    -- core changes.
+    -- Main and Edit both live on core screen 0. Keep an explicit local mode
+    -- marker so their synchronous enter/exit handling stays unambiguous.
     reaper.SetExtState("GJS_X", "Screen0Layout", "main", false)
 
     if api.set_jsfx_loop_overview_active then
@@ -565,39 +563,9 @@ return function(api, navigation)
     -- after the complete matrix has been sent.
     api.drawblock(8, 1, 7, 8, C.GREY, api.MODE_NONE)
 
-    main_display_generation = main_display_generation + 1
-    local generation = main_display_generation
-
-    local function main_display_is_allowed()
-        if api.get_current_screen
-        and api.get_current_screen() ~= 0 then
-            return false
-        end
-
-        return reaper.GetExtState("GJS_X", "Screen0Layout") == "main"
-    end
-
     -- Publish the static Main display context once for this redraw.
-    -- Realtime playhead updates are owned by the JSFX/subproject clock.
-    -- Rewriting this config on every defer bumps the clock version faster
-    -- than the audio thread can acknowledge it, which makes the playhead
-    -- briefly drop out and visibly flicker.
+    -- Realtime playhead updates are owned entirely by the JSFX/subproject
+    -- clock. Leaving Main is handled synchronously by the screen wrappers in
+    -- gjs - x - control.lua, so no Lua polling/defer loop is needed here.
     sequencer.update_main_display()
-
-    local function watch_main_display()
-        if generation ~= main_display_generation then return end
-
-        if not main_display_is_allowed() then
-            -- The JSFX keeps drawing independently once mode 2 has been
-            -- enabled. Always switch it off when Main is no longer the
-            -- visible layout, otherwise the bar LEDs leak into other screens.
-            sequencer.disable_display(2)
-            return
-        end
-
-        -- Watch only for leaving Main. Do not touch display/clock state here.
-        reaper.defer(watch_main_display)
-    end
-
-    reaper.defer(watch_main_display)
 end
