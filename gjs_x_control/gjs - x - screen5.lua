@@ -21,6 +21,11 @@ local slot_manager = dofile(
     script_dir .. "gjs - x - slot_manager.lua"
 )
 
+local clear = dofile(
+    script_dir .. "gjs - x - clear.lua"
+)
+
+
 local MODE_NOTE = 11
 
 local HOME = os.getenv("HOME") or os.getenv("USERPROFILE")
@@ -215,6 +220,55 @@ local function drawscreen5(api)
 
             on_release = function()
                 delayed_redraw(api)
+            end
+        }
+    )
+
+    --------------------------------------------------------
+    -- New project (pad 12, next to load/save)
+    --------------------------------------------------------
+
+    api.drawpad(
+        1,
+        2,
+        C.GREEN,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+
+            on_release = function()
+                local home = os.getenv("HOME")
+                    or os.getenv("USERPROFILE")
+                    or ((os.getenv("HOMEDRIVE") or "") .. (os.getenv("HOMEPATH") or ""))
+
+                if not home or home == "" then
+                    show_error("HOME directory niet gevonden.")
+                    return
+                end
+
+                home = home:gsub("\\", "/")
+                local default_dir = home .. "/ReaBox/default"
+                local rpl_file = default_dir .. "/Media/projlist.RPL"
+
+                api.set_active_slot(nil)
+                api.redraw()
+
+                local success, error_message = slot_manager.load_rpl(
+                    rpl_file,
+                    default_dir,
+                    function()
+                        clear.clear_all_regions_all_projects({
+                            items = true,
+                            fx = true,
+                            track_mode = "all"
+                        })
+                        api.redraw()
+                    end
+                )
+
+                if not success and error_message then
+                    show_error(error_message)
+                end
             end
         }
     )

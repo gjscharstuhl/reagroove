@@ -298,6 +298,80 @@ local function read_project_list(slot)
     return projects
 end
 
+
+local function read_project_list_file(rpl_path, base_dir)
+    local file = io.open(rpl_path, "r")
+    if not file then
+        return nil, "RPL-bestand niet gevonden: " .. tostring(rpl_path)
+    end
+
+    local projects = {}
+    for line in file:lines() do
+        line = line:gsub("\r", "")
+        line = line:match("^%s*(.-)%s*$")
+        line = line:gsub('^"(.-)"$', "%1")
+
+        if line ~= "" then
+            local is_absolute = line:sub(1, 1) == "/"
+                or line:match("^%a:[/\\]") ~= nil
+                or line:sub(1, 2) == "//"
+            local path = is_absolute and line or ((base_dir or "") .. "/" .. line)
+            path = path:gsub("\\", "/")
+            projects[#projects + 1] = path
+        end
+    end
+    file:close()
+
+    if #projects == 0 then
+        return nil, "Projectlijst is leeg: " .. tostring(rpl_path)
+    end
+    return projects
+end
+
+local function open_project_list_like_slot(projects, on_before_open, on_after_open)
+    for index = 1, #projects do
+        if not file_exists(projects[index]) then
+            return false, "Project ontbreekt:\n" .. projects[index]
+        end
+    end
+
+    local function open_projects()
+        local index = 0
+        while true do
+            local project, project_path = reaper.EnumProjects(index, "")
+            if not project then break end
+            if project_path and project_path ~= "" then
+                reaper.Main_SaveProject(project, false)
+            end
+            index = index + 1
+        end
+
+        if type(on_before_open) == "function" then on_before_open() end
+
+        reaper.Main_OnCommand(40886, 0)
+        reaper.Main_openProject("noprompt:" .. projects[1])
+        for project_index = 2, #projects do
+            reaper.Main_OnCommand(41929, 0)
+            reaper.Main_openProject("noprompt:" .. projects[project_index])
+        end
+
+        local first_project = reaper.EnumProjects(0, "")
+        if first_project then reaper.SelectProjectInstance(first_project) end
+
+        if type(on_after_open) == "function" then
+            reaper.defer(on_after_open)
+        end
+    end
+
+    reaper.defer(open_projects)
+    return true
+end
+
+function M.load_rpl(rpl_path, base_dir, on_after_open)
+    local projects, err = read_project_list_file(rpl_path, base_dir)
+    if not projects then return false, err end
+    return open_project_list_like_slot(projects, nil, on_after_open)
+end
 function M.get_active_slot()
     return valid_slot(
         reaper.GetExtState(
@@ -582,7 +656,7 @@ function M.save(slot)
     local fx_mapping_source = find_fx_mapping_source(projects)
 
     local directory = slot_dir_path(slot)
-    local media_directory = directory .. "/media"
+    local media_directory = directory .. "/Media"
     local fx_mapping_destination =
         directory .. "/" .. FX_MAPPING_FILENAME
 

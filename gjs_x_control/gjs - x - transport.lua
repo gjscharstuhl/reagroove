@@ -181,10 +181,55 @@ local function get_armed_tracks(project)
 end
 
 
+
+local function project_directory(project)
+    if type(reaper.GetProjectPathEx) == "function" then
+        local ok, path = reaper.GetProjectPathEx(project, "")
+        if ok and path and path ~= "" then return path end
+    end
+    return nil
+end
+
+local function item_wav_path(item)
+    local take = item and reaper.GetActiveTake(item)
+    if not take then return nil end
+    local source = reaper.GetMediaItemTake_Source(take)
+    if not source then return nil end
+    local path = reaper.GetMediaSourceFileName(source, "")
+    if type(path) ~= "string" or path == "" then return nil end
+    if not path:lower():match("%.wav$") then return nil end
+    return path
+end
+
+local function path_is_inside(path, directory)
+    if not path or not directory or directory == "" then return false end
+    local p = path:gsub("\\", "/")
+    local d = directory:gsub("\\", "/"):gsub("/+$", "")
+    return p == d or p:sub(1, #d + 1) == d .. "/"
+end
+
+local function source_still_used(project, path)
+    for i = 0, reaper.CountMediaItems(project) - 1 do
+        if item_wav_path(reaper.GetMediaItem(project, i)) == path then return true end
+    end
+    return false
+end
+
+local function remove_unused_project_wavs(project, candidates)
+    local directory = project_directory(project)
+    if not directory then return end
+    for path in pairs(candidates or {}) do
+        if path_is_inside(path, directory) and not source_still_used(project, path) then
+            os.remove(path)
+        end
+    end
+end
+
 local function clean_track_keep_last_complete(
     track,
     start_time,
-    end_time
+    end_time,
+    wav_candidates
 )
     if not track then
         return false
@@ -228,6 +273,8 @@ local function clean_track_keep_last_complete(
 
     for _, item in ipairs(overlapping_items) do
         if item ~= keep_item then
+            local wav_path = item_wav_path(item)
+            if wav_path and wav_candidates then wav_candidates[wav_path] = true end
             reaper.DeleteTrackMediaItem(track, item)
             changed = true
         end
@@ -295,16 +342,22 @@ local function clean_time_selection_keep_last_complete(project)
     reaper.PreventUIRefresh(1)
 
     local changed = false
+    local wav_candidates = {}
 
     for _, track in ipairs(armed_tracks) do
         if clean_track_keep_last_complete(
             track,
             start_time,
-            end_time
+            end_time,
+            wav_candidates
         ) then
             changed = true
         end
     end
+
+    -- Physical cleanup: delete WAV files for removed takes when they are
+    -- inside this project directory and no remaining item references them.
+    remove_unused_project_wavs(project, wav_candidates)
 
     -- Make items easy to see and select when
     -- Free Item Positioning is enabled.
