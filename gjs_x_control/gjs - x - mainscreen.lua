@@ -577,18 +577,27 @@ return function(api, navigation)
         return reaper.GetExtState("GJS_X", "Screen0Layout") == "main"
     end
 
-    local function refresh_main_display()
+    -- Publish the static Main display context once for this redraw.
+    -- Realtime playhead updates are owned by the JSFX/subproject clock.
+    -- Rewriting this config on every defer bumps the clock version faster
+    -- than the audio thread can acknowledge it, which makes the playhead
+    -- briefly drop out and visibly flicker.
+    sequencer.update_main_display()
+
+    local function watch_main_display()
         if generation ~= main_display_generation then return end
 
         if not main_display_is_allowed() then
+            -- The JSFX keeps drawing independently once mode 2 has been
+            -- enabled. Always switch it off when Main is no longer the
+            -- visible layout, otherwise the bar LEDs leak into other screens.
             sequencer.disable_display(2)
             return
         end
 
-        -- Static context only. Realtime playhead updates stay in JSFX.
-        sequencer.update_main_display()
+        -- Watch only for leaving Main. Do not touch display/clock state here.
+        reaper.defer(watch_main_display)
     end
 
-    -- One-shot ordering after the neutral matrix draw; not a polling loop.
-    reaper.defer(refresh_main_display)
+    reaper.defer(watch_main_display)
 end
