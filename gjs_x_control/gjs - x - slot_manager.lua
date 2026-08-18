@@ -13,8 +13,13 @@ local M = {}
 local scene_api = include("gjs - scene_api.lua")
 local playlist_api = include("gjs - playlist_api.lua")
 
-local HOME = os.getenv("HOME")
-local JAMS_DIR = HOME and (HOME .. "/jams") or nil
+local HOME = os.getenv("HOME") or os.getenv("USERPROFILE")
+if not HOME then
+    local drive = os.getenv("HOMEDRIVE")
+    local path = os.getenv("HOMEPATH")
+    if drive and path then HOME = drive .. path end
+end
+local REABOX_DIR = HOME and (HOME .. "/ReaBox") or nil
 
 local EXT_SECTION = "GJS_X"
 local EXT_ACTIVE_SLOT = "ActiveSlotSession"
@@ -44,7 +49,7 @@ end
 local function slot_rpl_path(slot)
     local name = slot_name(slot)
 
-    return JAMS_DIR
+    return REABOX_DIR
         .. "/"
         .. name
         .. "/"
@@ -54,7 +59,7 @@ end
 
 
 local function slot_config_path(slot)
-    return JAMS_DIR
+    return REABOX_DIR
         .. "/"
         .. slot_name(slot)
         .. "/config.txt"
@@ -306,14 +311,14 @@ function M.can_load(slot)
     slot = valid_slot(slot)
 
     return slot ~= nil
-       and JAMS_DIR ~= nil
+       and REABOX_DIR ~= nil
        and file_exists(slot_rpl_path(slot))
 end
 
 function M.load(slot, on_loaded)
     slot = valid_slot(slot)
 
-    if not slot or not JAMS_DIR then
+    if not slot or not REABOX_DIR then
         return false,
             "Ongeldig slot of HOME ontbreekt."
     end
@@ -419,12 +424,12 @@ end
 
 -- ============================================================
 -- SAVE
--- Slaat alle geopende projecttabs op in ~/jams/slot_N/ en schrijft
+-- Slaat alle geopende projecttabs op in ~/ReaBox/slot_N/ en schrijft
 -- slot_N.RPL. De bestaande load- en LED-logica blijft ongewijzigd.
 -- ============================================================
 
 local function slot_dir_path(slot)
-    return JAMS_DIR .. "/" .. slot_name(slot)
+    return REABOX_DIR .. "/" .. slot_name(slot)
 end
 
 local function basename(path)
@@ -543,7 +548,7 @@ end
 function M.save(slot)
     slot = valid_slot(slot)
 
-    if not slot or not JAMS_DIR then
+    if not slot or not REABOX_DIR then
         return false,
             "Ongeldig slot of HOME ontbreekt."
     end
@@ -581,7 +586,7 @@ function M.save(slot)
     local fx_mapping_destination =
         directory .. "/" .. FX_MAPPING_FILENAME
 
-    reaper.RecursiveCreateDirectory(JAMS_DIR, 0)
+    reaper.RecursiveCreateDirectory(REABOX_DIR, 0)
     reaper.RecursiveCreateDirectory(directory, 0)
     reaper.RecursiveCreateDirectory(media_directory, 0)
 

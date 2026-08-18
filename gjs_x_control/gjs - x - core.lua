@@ -134,7 +134,7 @@ local LP = {
     current_page = 1,
 
     -- Alleen geldig tijdens deze REAPER/core-sessie.
-    -- Bij het opstarten van REAPER is er dus geen actief jamslot.
+    -- Bij het opstarten van REAPER is er dus geen actief ReaBoxlot.
     active_slot = nil,
 
     screen_state = {},

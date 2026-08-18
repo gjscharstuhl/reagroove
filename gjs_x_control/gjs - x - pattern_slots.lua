@@ -1,6 +1,6 @@
 -- ============================================================
 -- gjs - x - pattern_slots.lua
--- Track-scoped reusable patterns in ~/jams/patterns.
+-- Track-scoped reusable patterns in ~/ReaBox/patterns.
 --
 -- Filename:
 --   <edit-track><slot-2-digits>[optional description].wav / .mid
@@ -26,8 +26,13 @@ local script_path = source:match("^@(.+)$") or ""
 local script_dir = script_path:match("^(.*[/\\])") or ""
 local resize = dofile(script_dir .. "gjs - x - resize.lua")
 
-local HOME = os.getenv("HOME")
-local PATTERN_DIR = HOME and (HOME .. "/jams/patterns") or nil
+local HOME = os.getenv("HOME") or os.getenv("USERPROFILE")
+if not HOME then
+    local drive = os.getenv("HOMEDRIVE")
+    local path = os.getenv("HOMEPATH")
+    if drive and path then HOME = drive .. path end
+end
+local PATTERN_DIR = HOME and (HOME .. "/ReaBox/patterns") or nil
 local SLOT_COUNT = 56
 local EPSILON = 0.000001
 local GLUE_WITHIN_TIME_SELECTION = 41588

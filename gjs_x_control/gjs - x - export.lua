@@ -13,8 +13,13 @@ local playlist_api = include("gjs - playlist_api.lua")
 local STEM_RENDER_ACTION = 40788 -- Track: Render tracks to stereo stem tracks (and mute originals)
 local EPSILON = 0.0000001
 
-local HOME = os.getenv("HOME")
-local EXPORTS_DIR = HOME and (HOME .. "/jams/exports") or nil
+local HOME = os.getenv("HOME") or os.getenv("USERPROFILE")
+if not HOME then
+    local drive = os.getenv("HOMEDRIVE")
+    local path = os.getenv("HOMEPATH")
+    if drive and path then HOME = drive .. path end
+end
+local EXPORTS_DIR = HOME and (HOME .. "/ReaBox/exports") or nil
 local EXT_SECTION = "GJS_X"
 local EXT_ACTIVE_SLOT = "ActiveSlotSession"
 

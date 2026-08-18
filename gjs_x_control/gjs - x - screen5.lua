@@ -23,8 +23,13 @@ local slot_manager = dofile(
 
 local MODE_NOTE = 11
 
-local HOME = os.getenv("HOME")
-local JAMS_DIR = HOME and (HOME .. "/jams") or nil
+local HOME = os.getenv("HOME") or os.getenv("USERPROFILE")
+if not HOME then
+    local drive = os.getenv("HOMEDRIVE")
+    local path = os.getenv("HOMEPATH")
+    if drive and path then HOME = drive .. path end
+end
+local REABOX_DIR = HOME and (HOME .. "/ReaBox") or nil
 
 local LOAD_EMPTY = { 0, 0, 10 }
 local LOAD_FULL  = { 0, 0, 127 }
@@ -55,7 +60,7 @@ end
 local function scan_existing_slots()
     local existing = {}
 
-    if not JAMS_DIR then
+    if not REABOX_DIR then
         return existing
     end
 
@@ -63,7 +68,7 @@ local function scan_existing_slots()
 
     while true do
         local name = reaper.EnumerateSubdirectories(
-            JAMS_DIR,
+            REABOX_DIR,
             index
         )
 
