@@ -5,6 +5,11 @@
 -- Rows 6-5: track FX (light blue)
 -- Rows 4-3: REAPER-visible FX presets (green)
 -- Row 1: confirm / cancel
+--
+-- Preview behaviour:
+--   - pressing a preset loads it immediately so it can be auditioned
+--   - green confirms the current preview state
+--   - red restores every FX preset to the state from before opening
 -- ============================================================
 
 local M = {}
@@ -13,8 +18,8 @@ local MAX_PADS = 16
 local selected_track = 1
 local selected_fx = 1
 local selected_preset = 1
-local original_preset_index = nil
 local context_subproject = nil
+local preview_snapshot = nil
 
 local function get_project(subproject_number)
     local n = math.floor(tonumber(subproject_number) or 0)
@@ -70,23 +75,81 @@ local function current_context(subproject_number)
     return project, tracks, track, fx_count, fx_index, current_index, preset_count
 end
 
+local function snapshot_presets(project)
+    local snapshot = {
+        project = project,
+        entries = {},
+        active = true
+    }
+
+    if not project then return snapshot end
+
+    local tracks = top_level_tracks(project)
+    for _, track in ipairs(tracks) do
+        local fx_count = reaper.TrackFX_GetCount(track)
+        for fx_index = 0, fx_count - 1 do
+            local preset_index = reaper.TrackFX_GetPresetIndex(track, fx_index)
+            preset_index = tonumber(preset_index) or -1
+            snapshot.entries[#snapshot.entries + 1] = {
+                track = track,
+                fx_index = fx_index,
+                preset_index = preset_index
+            }
+        end
+    end
+
+    return snapshot
+end
+
+local function restore_snapshot(snapshot)
+    if not snapshot or not snapshot.active then return true end
+
+    for _, entry in ipairs(snapshot.entries or {}) do
+        if entry.track and entry.preset_index and entry.preset_index >= 0 then
+            reaper.TrackFX_SetPresetByIndex(
+                entry.track,
+                entry.fx_index,
+                entry.preset_index
+            )
+        end
+    end
+
+    if snapshot.project then
+        reaper.TrackList_AdjustWindows(false)
+        reaper.UpdateArrange()
+    end
+
+    snapshot.active = false
+    return true
+end
+
+local function finish_snapshot(snapshot)
+    if snapshot then snapshot.active = false end
+end
+
+local function sync_selected_preset(subproject_number)
+    local _, _, _, _, _, current_index = current_context(subproject_number)
+    if current_index and current_index >= 0 then
+        selected_preset = current_index + 1
+    else
+        selected_preset = 1
+    end
+end
+
 function M.open(subproject_number)
     context_subproject = math.floor(tonumber(subproject_number) or 1)
     selected_track = 1
     selected_fx = 1
     selected_preset = 1
-    local _, _, _, _, _, current_index = current_context(context_subproject)
-    if current_index and current_index >= 0 then
-        selected_preset = current_index + 1
-        original_preset_index = current_index
-    else
-        original_preset_index = nil
-    end
+
+    local project = get_project(context_subproject)
+    preview_snapshot = snapshot_presets(project)
+    sync_selected_preset(context_subproject)
 end
 
 function M.draw(api, C, subproject_number, close_callback)
     subproject_number = context_subproject or subproject_number
-    local _, tracks, track, fx_count, fx_index, current_index, preset_count =
+    local project, tracks, track, fx_count, fx_index, current_index, preset_count =
         current_context(subproject_number)
 
     local dark_purple = { 16, 0, 24 }
@@ -104,8 +167,7 @@ function M.draw(api, C, subproject_number, close_callback)
             on_press = available and function()
                 selected_track = i
                 selected_fx = 1
-                selected_preset = 1
-                original_preset_index = nil
+                sync_selected_preset(subproject_number)
                 api.redraw()
             end or nil
         })
@@ -121,21 +183,14 @@ function M.draw(api, C, subproject_number, close_callback)
             active_color = C.WHITE,
             on_press = available and function()
                 selected_fx = i
-                local _, _, _, _, new_fx_index, new_current = current_context(subproject_number)
-                if new_current and new_current >= 0 then
-                    selected_preset = new_current + 1
-                    original_preset_index = new_current
-                else
-                    selected_preset = 1
-                    original_preset_index = nil
-                end
+                sync_selected_preset(subproject_number)
                 api.redraw()
             end or nil
         })
     end
 
-    -- Presets: rows 4-3. REAPER's preset list includes user presets and
-    -- plug-in/factory presets that REAPER exposes through its preset dropdown.
+    -- Presets: rows 4-3. A press is a live preview, just like Pattern Load:
+    -- the preset is applied immediately so it can be auditioned while playing.
     for i = 1, MAX_PADS do
         local row, col = pad_row_col(i, 4, 3)
         local available = i <= preset_count
@@ -145,31 +200,44 @@ function M.draw(api, C, subproject_number, close_callback)
             active_color = C.WHITE,
             on_press = available and function()
                 selected_preset = i
+                if track and fx_count > 0 then
+                    local ok = reaper.TrackFX_SetPresetByIndex(
+                        track,
+                        fx_index,
+                        selected_preset - 1
+                    )
+                    if not ok then
+                        reaper.ShowConsoleMsg("Preset kon niet worden ingesteld.\n")
+                    else
+                        reaper.TrackList_AdjustWindows(false)
+                        reaper.UpdateArrange()
+                    end
+                end
                 api.redraw()
             end or nil
         })
     end
 
-    -- Confirm: pad 11. Cancel: pad 12.
+    -- Confirm: keep the live preview state and return to Edit.
     api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
         active_color = C.WHITE,
         on_press = function()
-            if track and fx_count > 0 and preset_count > 0 then
-                reaper.Undo_BeginBlock2(get_project(subproject_number))
-                local ok = reaper.TrackFX_SetPresetByIndex(track, fx_index, selected_preset - 1)
-                reaper.Undo_EndBlock2(get_project(subproject_number), "GJS-X select FX preset", -1)
-                if not ok then
-                    reaper.ShowConsoleMsg("Preset kon niet worden ingesteld.\n")
-                end
+            finish_snapshot(preview_snapshot)
+            if project then
+                reaper.Undo_OnStateChange2(project, "GJS-X select FX preset")
             end
+            preview_snapshot = nil
             if close_callback then close_callback() end
             api.redraw()
         end
     })
 
+    -- Cancel: restore the complete preset state from before opening.
     api.drawpad(1, 2, C.RED, api.MODE_HIGHLIGHT, {
         active_color = C.WHITE,
         on_press = function()
+            restore_snapshot(preview_snapshot)
+            preview_snapshot = nil
             if close_callback then close_callback() end
             api.redraw()
         end

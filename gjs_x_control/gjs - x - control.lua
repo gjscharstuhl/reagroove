@@ -6,8 +6,6 @@
 reaper.SetExtState("GJS_X", "Page", "1", true)
 
 reaper.SetExtState("GJS_X", "ActiveTrack", "1", true)
-
-reaper.SetExtState("GJS_MULTI", "Region", "1", true)
 ------------------------------------------------------------
 -- Global include()
 ------------------------------------------------------------
