@@ -1804,7 +1804,34 @@ local function select_screen(screen)
         return
     end
 
+    local previous_screen = LP.current_screen
     LP.current_screen = screen
+
+    -- Screen 6 owns an autonomous JSFX writer for rows 7/8.  When going
+    -- directly to Performance, stop that writer *before* enabling/drawing
+    -- screen 7.  Otherwise the two JSFX instances can emit SysEx in the same
+    -- audio block and the Launchpad may end up with a black matrix.
+    if previous_screen == 6 and screen == 7 then
+        reaper.gmem_attach(GMEM_NAME)
+        reaper.gmem_write(300, 0)   -- sequencer display off immediately
+        reaper.gmem_write(1091, 0)  -- screen6 MIDI/audition ownership off
+        reaper.gmem_write(1100, 0)  -- piano audition off
+        for pitch = 0, 127 do
+            reaper.gmem_write(1120 + pitch, 0)
+        end
+
+        -- Keep Performance disabled for this cycle.  The sequencer-display
+        -- JSFX gets one complete cycle to observe mode 0 before Performance
+        -- is enabled and sends its full 8x8 layout.
+        reaper.gmem_write(PERFORMANCE_MODE_SLOT, 0)
+        reaper.defer(function()
+            if LP.current_screen == 7 then
+                update_performance_mode()
+                draw_current_screen()
+            end
+        end)
+        return
+    end
 
     update_performance_mode()
 
