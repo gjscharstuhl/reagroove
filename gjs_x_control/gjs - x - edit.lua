@@ -69,6 +69,7 @@ local copy_from_region = nil
 local copy_to_region = nil
 local copy_track_mode = 1 -- 1 = armed/selected tracks, 2 = all tracks
 local preset_selector_mode = false
+local quit_confirm_mode = false
 local pattern_slots_mode = false
 local pattern_slot_selected = 1
 local pattern_slot_save_mode = false
@@ -819,6 +820,26 @@ local function draw_pattern_slots_mode(api, C)
     })
 end
 
+
+local function draw_quit_confirm_mode(api, C)
+    -- Safety confirmation for Save & Quit.
+    -- 11 = confirm shutdown, 12 = cancel and return to Edit.
+    api.drawpad(1, 1, C.GREEN, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            save_and_quit.run()
+        end
+    })
+
+    api.drawpad(1, 2, C.RED, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            quit_confirm_mode = false
+            api.redraw()
+        end
+    })
+end
+
 return function(api, navigation)
     local C = api.COLOR
 
@@ -901,6 +922,11 @@ return function(api, navigation)
 
     if pattern_slots_mode then
         draw_pattern_slots_mode(api, C)
+        return
+    end
+
+    if quit_confirm_mode then
+        draw_quit_confirm_mode(api, C)
         return
     end
 
@@ -1040,7 +1066,7 @@ return function(api, navigation)
                         preset_selector.open(selected_track)
                         preset_selector_mode = true
                     elseif pad.col == ACTION_SAVE_QUIT_COL then
-                        save_and_quit.run()
+                        quit_confirm_mode = true
                     end
                 end
 
