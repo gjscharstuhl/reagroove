@@ -25,6 +25,11 @@ local clear = dofile(
     script_dir .. "gjs - x - clear.lua"
 )
 
+-- Use the shared in-memory scene/playlist modules.  These are the same
+-- instances used by Screen 4 because include() is cached globally.
+local scene_api = include("gjs - scene_api.lua")
+local playlist_api = include("gjs - playlist_api.lua")
+
 
 local MODE_NOTE = 11
 
@@ -262,6 +267,12 @@ local function drawscreen5(api)
                             fx = true,
                             track_mode = "all"
                         })
+
+                        -- New really means a clean slate: scenes and the
+                        -- playlist belong to the current jam as well.
+                        scene_api.Clear()
+                        playlist_api.ClearAll()
+
                         api.redraw()
                     end
                 )
