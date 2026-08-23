@@ -112,7 +112,7 @@ local function sync_main_selection_on_entry(api)
     -- Fallback for opening Edit before Main has supplied an entry snapshot.
     if not selected_track then
         selected_track = clamp(
-            reaper.GetExtState("GJS_MULTI", "ActiveTrack"),
+            reaper.GetExtState("GJS_X", "ActiveTrack"),
             1, 8, 1
         )
     end
