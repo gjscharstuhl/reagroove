@@ -608,7 +608,22 @@ local function unique_media_path(media_directory, filename, reserved)
     return candidate
 end
 
+local function strip_project_number_prefix(name)
+    -- Older saves prefixed every project with its tab number (for example
+    -- 10-liverec.rpp). Re-saving could therefore grow names such as
+    -- 10-10-liverec.rpp. Strip all of those prefixes; the .RPL file already
+    -- preserves the tab order, so the filenames themselves do not need them.
+    local previous
+    repeat
+        previous = name
+        name = name:gsub("^%d+[-_ ]+", "")
+    until name == previous
+
+    return name
+end
+
 local function safe_name(name)
+    name = strip_project_number_prefix(name)
     name = name:gsub("[/\\:%*%?\"<>|]", "_")
     name = name:gsub("^%s+", ""):gsub("%s+$", "")
 
@@ -774,9 +789,8 @@ function M.save(slot)
         project_name = safe_name(project_name)
 
         local destination = string.format(
-            "%s/%02d-%s.rpp",
+            "%s/%s.rpp",
             directory,
-            entry.number,
             project_name
         )
 

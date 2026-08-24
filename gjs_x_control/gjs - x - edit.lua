@@ -31,6 +31,9 @@ local preset_selector = dofile(
 local pattern_slots = dofile(
     script_dir .. "gjs - x - pattern_slots.lua"
 )
+local live_record = dofile(
+    script_dir .. "gjs - x - live_record.lua"
+)
 
 local SCOPE_SELECTED_TRACK = 1
 local SCOPE_ALL_TRACKS = 2
@@ -981,6 +984,20 @@ return function(api, navigation)
             end
         }
     )
+
+    -- Pad 58: live recording toggle for liverec.rpp.
+    -- GREEN = stopped, RED = recording.
+    api.drawpad(5, 8, live_record.is_recording() and C.RED or C.GREEN, api.MODE_HIGHLIGHT, {
+        active_color = C.WHITE,
+        on_press = function()
+            live_record.toggle()
+            api.redraw()
+        end,
+        -- toggle() redraws the pad immediately; keep that new state on release.
+        on_release = function()
+            return true
+        end
+    })
 
     api.drawstrip(
         4, 6, 8,
