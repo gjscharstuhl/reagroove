@@ -461,6 +461,16 @@ local function start_playlist(api, slot)
         return false
     end
 
+    -- A new playlist choice replaces ownership of the NEXT transition only.
+    -- The scene that is currently audible remains the active scene until the
+    -- normal scene boundary. This is important both when entering PLAY from
+    -- LOAD and when choosing another green playlist slot while PLAY is active.
+    if api.pattern
+    and type(api.pattern.cancel_queued_scene) == "function" then
+        api.pattern.cancel_queued_scene()
+    end
+
+    -- Invalidate any watcher belonging to the old pending playlist scene.
     pending_generation = pending_generation + 1
     pending_scene = nil
     pending_targets = nil
@@ -469,19 +479,23 @@ local function start_playlist(api, slot)
     playlist_playing = true
     playlist_first_slot = first_slot
     playlist_last_slot = last_slot
-    playlist_active_slot = nil
+
+    -- Do NOT clear playlist_active_slot here. While the replacement slot is
+    -- pending, Screen 4 must keep showing (and the sequencer display must keep
+    -- following) the scene that is actually playing. For LOAD -> PLAY there
+    -- is no active playlist slot yet, so active_scene remains the fallback.
     playlist_pending_slot = slot
     playlist_pressed_slot = slot
 
     clear_scene_radio(api)
 
-
-
-    -- Alleen het aangeklikte startslot wordt onmiddellijk geladen.
+    -- Always hand the selected playlist slot over at the next scene boundary.
+    -- Pattern.update activates immediately by itself when transport is stopped,
+    -- so this also behaves naturally when PLAY is started from silence.
     return queue_playlist_slot(
         api,
         slot,
-        false
+        true
     )
 end
 
@@ -583,11 +597,15 @@ local function drawscreen4(api)
     if operation == MODE_COPY then
         displayed_scene = selected_copy_scene
     elseif operation == MODE_PLAY then
-        -- In PLAY volgt de witte scene-indicatie uitsluitend
-        -- het werkelijk actieve playlistslot.
+        -- Keep showing the scene that is ACTUALLY playing while another
+        -- playlist slot is pending. On LOAD -> PLAY there is no active
+        -- playlist slot yet, so fall back to active_scene until the first
+        -- playlist scene has really arrived.
         if playlist_active_slot then
             displayed_scene =
                 playlist_api.Get(playlist_active_slot)
+        else
+            displayed_scene = active_scene
         end
     else
         displayed_scene = active_scene
