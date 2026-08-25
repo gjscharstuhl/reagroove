@@ -1723,7 +1723,7 @@ local function draw_current_screen()
             elseif LP.current_screen == 6
             and not screen6_midi_edit
             and Bridge.set_matrix_rows_rgb then
-                -- Drum/piano reserve rows 7/8 for the sequencer display JSFX.
+                -- Drum/piano reserve rows 7/8 for the integrated SysEx Bridge sequencer renderer.
                 Bridge.set_matrix_rows_rgb(LP.framebuffer, 1, 6)
                 LP.matrix_screen_active = true
             else
