@@ -1,5 +1,6 @@
 local scene_api = include("gjs - scene_api.lua")
 local playlist_api = include("gjs - playlist_api.lua")
+local sequencer_display = include("gjs - x - sequencer_engine.lua")
 
 local MODE_LOAD = 1
 local MODE_SAVE = 2
@@ -666,6 +667,21 @@ local function drawscreen4(api)
     )
 
     redraw_pending_overlays(api)
+
+    -- Top two rows: realtime bar overview for the scene that is actually
+    -- playing. In PLAY mode this follows the active playlist slot; in the
+    -- other modes it follows the currently active scene, not a copy cursor.
+    local bar_scene = active_scene
+    if operation == MODE_PLAY then
+        bar_scene = displayed_scene
+    end
+
+    local scene_data = bar_scene and scene_api.GetScene(bar_scene) or nil
+    if scene_data and type(scene_data.patternlist) == "table" then
+        sequencer_display.update_scene_display(scene_data.patternlist)
+    else
+        sequencer_display.disable_display(3)
+    end
 
     api.drawstrip(
         1, 1, 8,

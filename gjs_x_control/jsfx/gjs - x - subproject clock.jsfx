@@ -90,7 +90,7 @@ active_project == project_number && display_mode > 0 ? (
     current_step = 0;
     processed_version = 0;
 
-    display_mode == 2 ? (
+    (display_mode == 2 || display_mode == 3) ? (
         config_base = config_root + ((project_number - 1) * config_stride);
         config_version = floor(gmem[config_base + 0]);
         region_start_qn = gmem[config_base + 1];

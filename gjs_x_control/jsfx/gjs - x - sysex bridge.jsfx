@@ -129,7 +129,7 @@ function perf_draw_layout(layout) local(i,row,col,n,target,r,g,b,len) (
 // Integrated from the former "gjs - x - sequencer display.jsfx".
 // This bridge is now the single Launchpad hardware writer.
 //
-// gmem[300] = display mode: 0 off, 1 sequencer, 2 mainscreen bars
+// gmem[300] = display mode: 0 off, 1 sequencer, 2 mainscreen bars, 3 scene bars
 // gmem[301] = selected bar, 1-based
 // gmem[302] = selected region start in quarter notes
 // gmem[303] = selected region length in bars
@@ -151,6 +151,7 @@ seq_last_force_version = -1;
 seq_last_step = -2;
 seq_last_playing = -1;
 seq_last_clock_heartbeat = -1;
+seq_last_legacy_clock_heartbeat = -1;
 seq_last_active_project = -1;
 seq_last_region_bars = -1;
 seq_last_current_bar = -1;
@@ -682,14 +683,42 @@ seq_force_version = floor(gmem[SEQ_GMEM_BASE + 5]);
 seq_display_active_steps = max(1, min(16, floor(gmem[SEQ_GMEM_BASE + 6])));
 
 seq_active_project = max(0, min(8, floor(gmem[332])));
+
+// Current clock layout: stride 5.  Older loaded ReaBox projects can still
+// have a running Subproject Clock instance compiled against the previous
+// stride-4 layout.  Screen 6 accepts either layout and selects the one whose
+// heartbeat is actually advancing.  Main/scene modes still require stride 5
+// because they also use the processed config-version slot.
 seq_clock_stride = 5;
 seq_clock_base = 340 + ((max(1, seq_active_project) - 1) * seq_clock_stride);
-seq_clock_heartbeat = seq_active_project > 0 ? floor(gmem[seq_clock_base + 0]) : 0;
-seq_clock_playing = seq_active_project > 0 ? floor(gmem[seq_clock_base + 1]) : 0;
-seq_clock_bar = seq_active_project > 0 ? floor(gmem[seq_clock_base + 2]) : 0;
-seq_clock_step = seq_active_project > 0 ? floor(gmem[seq_clock_base + 3]) : 0;
+seq_clock_heartbeat_new = seq_active_project > 0 ? floor(gmem[seq_clock_base + 0]) : 0;
+seq_clock_playing_new = seq_active_project > 0 ? floor(gmem[seq_clock_base + 1]) : 0;
+seq_clock_bar_new = seq_active_project > 0 ? floor(gmem[seq_clock_base + 2]) : 0;
+seq_clock_step_new = seq_active_project > 0 ? floor(gmem[seq_clock_base + 3]) : 0;
 seq_clock_config_version = seq_active_project > 0 ? floor(gmem[seq_clock_base + 4]) : 0;
-seq_clock_available = seq_active_project > 0 && seq_clock_heartbeat > 0;
+
+seq_legacy_clock_base = 340 + ((max(1, seq_active_project) - 1) * 4);
+seq_clock_heartbeat_legacy = seq_active_project > 0 ? floor(gmem[seq_legacy_clock_base + 0]) : 0;
+seq_clock_playing_legacy = seq_active_project > 0 ? floor(gmem[seq_legacy_clock_base + 1]) : 0;
+seq_clock_bar_legacy = seq_active_project > 0 ? floor(gmem[seq_legacy_clock_base + 2]) : 0;
+seq_clock_step_legacy = seq_active_project > 0 ? floor(gmem[seq_legacy_clock_base + 3]) : 0;
+
+seq_new_clock_fresh = seq_clock_heartbeat_new > 0 && seq_clock_heartbeat_new != seq_last_clock_heartbeat;
+seq_legacy_clock_fresh = seq_clock_heartbeat_legacy > 0 && seq_clock_heartbeat_legacy != seq_last_legacy_clock_heartbeat;
+
+seq_clock_heartbeat = seq_clock_heartbeat_new;
+seq_clock_playing = seq_clock_playing_new;
+seq_clock_bar = seq_clock_bar_new;
+seq_clock_step = seq_clock_step_new;
+seq_clock_available = seq_active_project > 0 && seq_clock_heartbeat_new > 0;
+
+seq_mode == 1 && seq_legacy_clock_fresh && !seq_new_clock_fresh ? (
+    seq_clock_heartbeat = seq_clock_heartbeat_legacy;
+    seq_clock_playing = seq_clock_playing_legacy;
+    seq_clock_bar = seq_clock_bar_legacy;
+    seq_clock_step = seq_clock_step_legacy;
+    seq_clock_available = 1;
+);
 
 seq_main_config_base = 600 + ((max(1, seq_active_project) - 1) * 4);
 seq_main_config_version = seq_active_project > 0 ? floor(gmem[seq_main_config_base + 0]) : 0;
@@ -700,7 +729,7 @@ seq_playing = seq_clock_available ? seq_clock_playing : ((play_state & 1) == 1);
 seq_current_bar = seq_clock_available ? seq_clock_bar : 0;
 seq_current_step = seq_clock_available ? seq_clock_step : 0;
 
-seq_mode == 2 ? (
+(seq_mode == 2 || seq_mode == 3) ? (
     seq_main_clock_ready ? (
         seq_playing = seq_clock_playing;
         seq_current_bar = seq_clock_bar;
@@ -725,7 +754,7 @@ seq_mode == 2 ? (
 );
 
 // Fallback before a subproject clock has published its first block.
-seq_mode != 2 && !seq_clock_available && seq_playing && seq_enabled && seq_region_bars > 0 ? (
+seq_mode != 2 && seq_mode != 3 && !seq_clock_available && seq_playing && seq_enabled && seq_region_bars > 0 ? (
     seq_measure_qn = max(0.000001, ts_num * 4 / ts_denom);
     seq_relative_qn = beat_position - seq_region_start_qn;
     seq_relative_qn >= 0 ? (
@@ -755,7 +784,7 @@ seq_changed =
     seq_display_active_steps != seq_last_active_steps;
 
 seq_enabled && (seq_changed || lua_display_write) ? (
-    seq_mode == 2 ? (
+    (seq_mode == 2 || seq_mode == 3) ? (
         seq_send_main_display(seq_region_bars, max(0, seq_last_region_bars), seq_current_bar, seq_playing);
     ) : (
         seq_send_display(seq_selected_bar, seq_current_step, seq_playing);
@@ -771,7 +800,8 @@ seq_last_pattern_version = seq_pattern_version;
 seq_last_force_version = seq_force_version;
 seq_last_step = seq_current_step;
 seq_last_playing = seq_playing;
-seq_last_clock_heartbeat = seq_clock_heartbeat;
+seq_last_clock_heartbeat = seq_clock_heartbeat_new;
+seq_last_legacy_clock_heartbeat = seq_clock_heartbeat_legacy;
 seq_last_active_project = seq_active_project;
 seq_last_main_config_version = seq_main_config_version;
 seq_last_clock_config_version = seq_clock_config_version;

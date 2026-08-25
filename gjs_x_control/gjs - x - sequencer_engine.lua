@@ -1046,6 +1046,115 @@ if not region_start then
         return true
         end
 
+        -- Publish the bar overview for the currently active scene on screen 4.
+        -- The scene boundary logic in pattern.lua follows the longest active
+        -- pattern, so the display deliberately uses that exact same clock
+        -- source: the longest region among the eight scene targets.
+        function M.update_scene_display(patternlist)
+        if type(patternlist) ~= "table" then
+            return false
+            end
+
+            reaper.gmem_attach(DISPLAY_GMEM)
+
+            local longest = nil
+
+            for track = 1, 8 do
+                local region_number = tonumber(patternlist[track])
+                -- Track 1..8 maps directly to REAPER project tabs 0..7.
+                -- Do not depend on pattern.lua's private get_pattern_project().
+                local project = reaper.EnumProjects(track - 1, "")
+
+                if project and region_number then
+                    local wanted_region = math.floor(region_number)
+                    local region_start, region_end = nil, nil
+                    local _, marker_count, region_count =
+                        reaper.CountProjectMarkers(project)
+
+                    for index = 0, marker_count + region_count - 1 do
+                        local ok, is_region, start_pos, end_pos, _, number =
+                            reaper.EnumProjectMarkers2(project, index)
+
+                        if ok and is_region and number == wanted_region then
+                            region_start, region_end = start_pos, end_pos
+                            break
+                        end
+                    end
+
+                    if region_start and region_end and region_end > region_start then
+                        local length = region_end - region_start
+                        local bars = count_region_bars(
+                            project,
+                            region_start,
+                            region_end
+                        )
+
+                        if bars and bars > 0
+                            and (not longest or length > longest.length) then
+                            longest = {
+                                track = track,
+                                project = project,
+                                region_start = region_start,
+                                region_end = region_end,
+                                length = length,
+                                bars = bars
+                            }
+                            end
+                        end
+                    end
+                end
+
+                if not longest then
+                    M.disable_display(3)
+                    return false
+                    end
+
+                    local region_start_qn = reaper.TimeMap2_timeToQN(
+                        longest.project,
+                        longest.region_start
+                    )
+                    local region_end_qn = reaper.TimeMap2_timeToQN(
+                        longest.project,
+                        longest.region_end
+                    )
+                    local visible_bars = math.max(
+                        1,
+                        math.min(16, math.floor(longest.bars))
+                    )
+
+                    if not region_start_qn or not region_end_qn
+                        or region_end_qn <= region_start_qn then
+                        M.disable_display(3)
+                        return false
+                        end
+
+                        local MAIN_CLOCK_CONFIG_ROOT = 600
+                        local MAIN_CLOCK_CONFIG_STRIDE = 4
+                        local config_base = MAIN_CLOCK_CONFIG_ROOT
+                            + (longest.track - 1) * MAIN_CLOCK_CONFIG_STRIDE
+
+                        local version = math.floor(
+                            tonumber(reaper.gmem_read(config_base + 0)) or 0
+                        ) + 1
+
+                        -- Data first, version last, then atomically select the
+                        -- clock project. This is identical to Main's publisher.
+                        reaper.gmem_write(config_base + 1, region_start_qn)
+                        reaper.gmem_write(config_base + 2, region_end_qn)
+                        reaper.gmem_write(config_base + 3, visible_bars)
+                        reaper.gmem_write(config_base + 0, version)
+
+                        reaper.gmem_write(DISPLAY_BASE + 0, 3) -- screen 4 scene bars
+                        reaper.gmem_write(DISPLAY_BASE + 1, 1)
+                        reaper.gmem_write(DISPLAY_BASE + 2, region_start_qn)
+                        reaper.gmem_write(DISPLAY_BASE + 3, visible_bars)
+                        reaper.gmem_write(DISPLAY_ACTIVE_PROJECT_SLOT, longest.track)
+
+                        display_pattern_version = display_pattern_version + 1
+                        reaper.gmem_write(DISPLAY_BASE + 4, display_pattern_version)
+                        return true
+                        end
+
         -- Return all unique MIDI pitches that start on one sequencer step.
         -- This is used by screen 6 to recall an existing chord from the MIDI item.
         function M.get_step_pitches(options)
