@@ -17,6 +17,7 @@ local PERFORMANCE_SCREENS = {
 local Bridge = _G.GJS_X_BRIDGE
 local Transport = _G.GJS_X_TRANSPORT
 local Pattern = _G.GJS_X_PATTERN
+local ExternalController = _G.GJS_X_EXTERNAL_CONTROLLER
 local API = {}
 local DEVICE_NAME = "X"
 
@@ -2084,6 +2085,10 @@ local function mainloop()
 
     if Pattern and Pattern.update then
         Pattern.update(API)
+    end
+
+    if ExternalController and ExternalController.update then
+        ExternalController.update()
     end
 
     update_loop_overview()

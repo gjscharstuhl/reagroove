@@ -60,6 +60,12 @@ local pattern = include("gjs - x - pattern.lua")
 if not pattern then return end
 _G.GJS_X_PATTERN = pattern
 
+-- External MIDI controller bridge. The MIDI-learn JSFX publishes learned
+-- controller events to GJS_X_BRIDGE; this module consumes them every cycle.
+local external_controller = include("gjs - x - external_controller.lua")
+if not external_controller then return end
+_G.GJS_X_EXTERNAL_CONTROLLER = external_controller
+
 local core = include("gjs - x - core.lua")
 if not core then return end
      
