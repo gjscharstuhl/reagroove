@@ -177,7 +177,7 @@ while(midirecv(offset,msg1,msg23)) (
     launchpad_note=is_note && lp_row>=1 && lp_row<=8 && lp_col>=1 && lp_col<=8;
     handled=0;
 
-    launchpad_note && !is_dup_voice ? (
+    launchpad_note && (performance_screen || screen6_active) && !is_dup_voice ? (
         !performance_screen ? (
             // Screen 6 drum mode uses the raw pad note, but on the independent
             // sequencer channel. Piano mode uses the gmem audition generator below.
