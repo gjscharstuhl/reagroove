@@ -101,7 +101,14 @@ active_project == project_number && display_mode > 0 ? (
             processed_version = config_version;
 
             transport_active ? (
-                relative_qn = continuous_beat - region_start_qn;
+                // Main wants a continuous phase across ordinary loop wraps,
+                // but Screen 4 scenes must restart their bar count when REAPER
+                // actually jumps to another region. Using continuous_beat for
+                // scene mode carried the previous scene length into the next
+                // one (e.g. 4-bar -> 8-bar displayed as starting on bar 5).
+                relative_qn = display_mode == 3
+                    ? beat_position - region_start_qn
+                    : continuous_beat - region_start_qn;
 
                 // The counted number of measures is the authority for Main.
                 // Do NOT derive the realtime cycle from region_end-region_start:
