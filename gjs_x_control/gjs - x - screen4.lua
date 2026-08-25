@@ -292,9 +292,19 @@ local function queue_scene_at_boundary(
 end
 
 local function load_scene(api, scene_nr)
+    -- Once LOAD owns the next transition, an already queued playlist scene
+    -- must never be allowed to fire afterwards.
     stop_playlist()
+    if api.pattern
+    and type(api.pattern.cancel_queued_scene) == "function" then
+        api.pattern.cancel_queued_scene()
+    end
 
-    return queue_scene_now(
+    -- A scene is one atomic musical transition. Wait for the boundary of the
+    -- scene that is currently playing, then queue all eight target patterns
+    -- together. This prevents tracks with different region lengths from
+    -- changing independently.
+    return queue_scene_at_boundary(
         api,
         scene_nr,
         function()
@@ -693,9 +703,28 @@ local function drawscreen4(api)
             active_color = C.WHITE,
 
             on_press = function(pad)
+                local previous_operation = operation
                 operation = pad.col
 
                 selected_copy_scene = nil
+
+                -- Leaving playlist PLAY means the current scene may finish,
+                -- but the already scheduled next playlist scene must be
+                -- revoked immediately. Otherwise it can still fire after
+                -- LOAD has queued a different scene.
+                if previous_operation == MODE_PLAY
+                and operation ~= MODE_PLAY then
+                    if api.pattern
+                    and type(api.pattern.cancel_queued_scene) == "function" then
+                        api.pattern.cancel_queued_scene()
+                    end
+
+                    pending_generation = pending_generation + 1
+                    pending_scene = nil
+                    pending_targets = nil
+                    pending_arrived_callback = nil
+                end
+
                 stop_playlist()
 
                 if operation == MODE_COPY

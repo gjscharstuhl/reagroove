@@ -412,6 +412,19 @@ function Pattern.queue_scene(patternlist, active_track, activated_callback)
     return true
 end
 
+-- Cancel a scene that has been scheduled for the next scene boundary.
+-- This is used when Screen 4 leaves playlist play mode, so the playlist
+-- can no longer take ownership of the next transition afterwards.
+function Pattern.cancel_queued_scene()
+    local had_queue = queued_scene_patterns ~= nil
+
+    queued_scene_patterns = nil
+    queued_scene_active_track = nil
+    queued_scene_callback = nil
+
+    return had_queue
+end
+
 local function activate_queued_scene(api)
     if not queued_scene_patterns then
         return false
