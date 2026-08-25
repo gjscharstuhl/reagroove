@@ -317,11 +317,18 @@ local(i, count, target, led, red, green, blue, active_bar, message_length) (
 
 @block
 
+// Track whether Lua wrote any LEDs in this audio block.  The realtime
+// sequencer/main-bar overlay must be repainted afterwards even when its
+// own clock state did not change; otherwise a normal screen redraw can
+// overwrite the overlay until the next bar/step transition.
+lua_display_write = 0;
+
 sequence = floor(gmem[0]);
 
 sequence != last_sequence ? (
     last_sequence = sequence;
     command = floor(gmem[1]);
+    (command >= 3 && command <= 5) ? lua_display_write = 1;
 
 
     // ========================================================
@@ -694,9 +701,27 @@ seq_current_bar = seq_clock_available ? seq_clock_bar : 0;
 seq_current_step = seq_clock_available ? seq_clock_step : 0;
 
 seq_mode == 2 ? (
-    seq_playing = seq_main_clock_ready ? seq_clock_playing : 0;
-    seq_current_bar = seq_main_clock_ready ? seq_clock_bar : 0;
-    seq_current_step = seq_main_clock_ready ? seq_clock_step : 0;
+    seq_main_clock_ready ? (
+        seq_playing = seq_clock_playing;
+        seq_current_bar = seq_clock_bar;
+        seq_current_step = seq_clock_step;
+    ) : (
+        // A config-version change and the clock update can cross one audio block
+        // at loop wrap. If Main was already playing, keep the previous valid
+        // bar for that single mismatch instead of briefly drawing "no bar".
+        seq_last_playing == 1 &&
+        seq_active_project == seq_last_active_project &&
+        seq_region_bars == seq_last_region_bars &&
+        seq_last_current_bar >= 1 && seq_last_current_bar <= seq_region_bars ? (
+            seq_playing = seq_last_playing;
+            seq_current_bar = seq_last_current_bar;
+            seq_current_step = seq_last_step;
+        ) : (
+            seq_playing = 0;
+            seq_current_bar = 0;
+            seq_current_step = 0;
+        );
+    );
 );
 
 // Fallback before a subproject clock has published its first block.
@@ -729,7 +754,7 @@ seq_changed =
     seq_clock_config_version != seq_last_clock_config_version ||
     seq_display_active_steps != seq_last_active_steps;
 
-seq_enabled && seq_changed ? (
+seq_enabled && (seq_changed || lua_display_write) ? (
     seq_mode == 2 ? (
         seq_send_main_display(seq_region_bars, max(0, seq_last_region_bars), seq_current_bar, seq_playing);
     ) : (
