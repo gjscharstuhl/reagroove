@@ -31,6 +31,39 @@ local state = {
 -- Projectselectie
 -- ============================================================
 
+local LIVE_RECORD_PROJECT = "liverec.rpp"
+
+local function project_basename(project)
+    if not project then
+        return ""
+    end
+
+    local _, path = reaper.EnumProjects(-1, "")
+
+    -- EnumProjects(-1) only returns the currently active project, so use the
+    -- project pointer to find the matching path among all open tabs.
+    local index = 0
+    while true do
+        local candidate, candidate_path = reaper.EnumProjects(index, "")
+        if not candidate then
+            break
+        end
+
+        if candidate == project then
+            path = candidate_path or ""
+            break
+        end
+
+        index = index + 1
+    end
+
+    return (path:match("([^/\\]+)$") or path):lower()
+end
+
+local function is_live_record_project(project)
+    return project_basename(project) == LIVE_RECORD_PROJECT
+end
+
 local function get_active_project()
     local active_track =
         tonumber(
@@ -463,9 +496,13 @@ local function any_project_is_recording()
             break
         end
 
-        local play_state = reaper.GetPlayStateEx(project)
-        if (play_state & 4) == 4 then
-            return true
+        -- liverec.rpp is an independent background recorder. Its record
+        -- state must not light the normal Main record button.
+        if not is_live_record_project(project) then
+            local play_state = reaper.GetPlayStateEx(project)
+            if (play_state & 4) == 4 then
+                return true
+            end
         end
 
         index = index + 1
@@ -652,13 +689,17 @@ function Transport.stop()
             break
         end
 
-        reaper.Main_OnCommandEx(
-            CMD_STOP,
-            0,
-            project
-        )
+        -- Main Stop controls the ReaGroove transport, but liverec.rpp is
+        -- deliberately independent and must keep recording in the background.
+        if not is_live_record_project(project) then
+            reaper.Main_OnCommandEx(
+                CMD_STOP,
+                0,
+                project
+            )
 
-        move_cursor_to_current_region_start(project)
+            move_cursor_to_current_region_start(project)
+        end
 
         project_index = project_index + 1
     end
