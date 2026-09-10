@@ -34,6 +34,9 @@ local pattern_slots = dofile(
 local live_record = dofile(
     script_dir .. "gjs - x - live_record.lua"
 )
+local exporter = dofile(
+    script_dir .. "gjs - x - export.lua"
+)
 
 local SCOPE_SELECTED_TRACK = 1
 local SCOPE_ALL_TRACKS = 2
@@ -74,6 +77,7 @@ local copy_track_mode = 1 -- 1 = armed/selected tracks, 2 = all tracks
 local preset_selector_mode = false
 local quit_confirm_mode = false
 local pattern_slots_mode = false
+local export_mode = false
 local pattern_slot_selected = 1
 local pattern_slot_save_mode = false
 local pattern_preview_session = nil
@@ -923,6 +927,18 @@ return function(api, navigation)
         return
     end
 
+    if export_mode then
+        exporter.draw(
+            api,
+            C,
+            function()
+                export_mode = false
+                api.redraw()
+            end
+        )
+        return
+    end
+
     if pattern_slots_mode then
         draw_pattern_slots_mode(api, C)
         return
@@ -1087,6 +1103,23 @@ return function(api, navigation)
                     end
                 end
 
+                api.redraw()
+            end
+        }
+    )
+
+    -- Pad 22: Export playlist/project/stems sub-screen.
+    -- This must be drawn AFTER the generic rows 1-2 action block,
+    -- otherwise that block overwrites pad 22 and its on_press handler.
+    api.drawpad(
+        2, 2,
+        C.BLUE,
+        api.MODE_HIGHLIGHT,
+        {
+            active_color = C.WHITE,
+            on_press = function()
+                exporter.open()
+                export_mode = true
                 api.redraw()
             end
         }
