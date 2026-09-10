@@ -507,7 +507,8 @@ local function copy_item_slice(
     source_item,
     destination_track,
     source_region,
-    destination_scene_start
+    destination_scene_start,
+    destination_scene_end
 )
     local item_pos = reaper.GetMediaItemInfo_Value(source_item, "D_POSITION")
     local item_len = reaper.GetMediaItemInfo_Value(source_item, "D_LENGTH")
@@ -533,15 +534,47 @@ local function copy_item_slice(
         reaper.DeleteTrackMediaItem(destination_track, destination_item)
         local scene_offset =
             destination_scene_start - source_region.start_pos
-        return copy_midi_item(
+        local destination_item = copy_midi_item(
             source_item,
             destination_track,
             item_pos + scene_offset
         )
+
+        if destination_item and destination_scene_end then
+            local destination_position = reaper.GetMediaItemInfo_Value(
+                destination_item, "D_POSITION"
+            )
+            local destination_length = reaper.GetMediaItemInfo_Value(
+                destination_item, "D_LENGTH"
+            )
+            local maximum_length = destination_scene_end - destination_position
+
+            if maximum_length <= EPSILON then
+                reaper.DeleteTrackMediaItem(destination_track, destination_item)
+                return nil
+            elseif destination_length > maximum_length + EPSILON then
+                reaper.SetMediaItemInfo_Value(
+                    destination_item, "D_LENGTH", maximum_length
+                )
+            end
+        end
+
+        return destination_item
     else
         local destination_position =
             destination_scene_start + (clip_start - source_region.start_pos)
         local destination_length = clip_end - clip_start
+        if destination_scene_end then
+            destination_length = math.min(
+                destination_length,
+                destination_scene_end - destination_position
+            )
+        end
+        if destination_length <= EPSILON then
+            reaper.DeleteTrackMediaItem(destination_track, destination_item)
+            return nil
+        end
+
         local left_trim = clip_start - item_pos
 
         reaper.SetMediaItemInfo_Value(
@@ -788,26 +821,40 @@ local function copy_project_group(destination_project, entries, project_number, 
     end
 
     -- Populate every playlist scene on the copied tracks.
+    -- A scene is as long as its longest selected pattern.  Shorter patterns
+    -- repeat until the scene ends (for example 4 bars repeats twice in an
+    -- 8-bar scene).
     for _, entry in ipairs(entries) do
         local source_region = entry.patterns[project_number]
 
-        if source_region and entry.length > EPSILON then
-            for _, info in ipairs(included) do
-                local destination_track = destination_by_source[info.track]
+        if source_region
+           and source_region.length > EPSILON
+           and entry.length > EPSILON then
+            local repeat_offset = 0
 
-                for item_index = 0, reaper.CountTrackMediaItems(info.track) - 1 do
-                    local source_item = reaper.GetTrackMediaItem(info.track, item_index)
-                    if item_overlaps_region(source_item, source_region) then
-                        copy_item_slice(
-                            source_project,
-                            destination_project,
-                            source_item,
-                            destination_track,
-                            source_region,
-                            entry.start_pos
-                        )
+            while repeat_offset < entry.length - EPSILON do
+                local destination_repeat_start = entry.start_pos + repeat_offset
+
+                for _, info in ipairs(included) do
+                    local destination_track = destination_by_source[info.track]
+
+                    for item_index = 0, reaper.CountTrackMediaItems(info.track) - 1 do
+                        local source_item = reaper.GetTrackMediaItem(info.track, item_index)
+                        if item_overlaps_region(source_item, source_region) then
+                            copy_item_slice(
+                                source_project,
+                                destination_project,
+                                source_item,
+                                destination_track,
+                                source_region,
+                                destination_repeat_start,
+                                entry.end_pos
+                            )
+                        end
                     end
                 end
+
+                repeat_offset = repeat_offset + source_region.length
             end
         end
     end
