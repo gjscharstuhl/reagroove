@@ -219,6 +219,62 @@ local function get_track_name(track, fallback)
     return fallback or "Track"
 end
 
+local function extract_chunk_block(chunk, block_name)
+    if not chunk or not block_name then return nil end
+
+    local start_pos = chunk:find("<" .. block_name, 1, true)
+    if not start_pos then return nil end
+
+    local pos = start_pos
+    local depth = 0
+    local block_end = nil
+
+    while pos <= #chunk do
+        local line_end = chunk:find("\n", pos, true)
+        local next_pos
+        local line
+
+        if line_end then
+            line = chunk:sub(pos, line_end - 1)
+            next_pos = line_end + 1
+        else
+            line = chunk:sub(pos)
+            next_pos = #chunk + 1
+        end
+
+        local clean = line:gsub("\r$", ""):match("^%s*(.-)%s*$") or ""
+
+        if clean:sub(1, 1) == "<" then
+            depth = depth + 1
+        elseif clean == ">" then
+            depth = depth - 1
+            if depth == 0 then
+                block_end = line_end or #chunk
+                break
+            end
+        end
+
+        pos = next_pos
+    end
+
+    if not block_end then return nil end
+    return chunk:sub(start_pos, block_end)
+end
+
+local function replace_chunk_block(chunk, block_name, replacement)
+    if not chunk or not replacement then return chunk, false end
+
+    local old_block = extract_chunk_block(chunk, block_name)
+    if not old_block then return chunk, false end
+
+    local start_pos, end_pos = chunk:find(old_block, 1, true)
+    if not start_pos then return chunk, false end
+
+    return chunk:sub(1, start_pos - 1)
+        .. replacement
+        .. chunk:sub(end_pos + 1), true
+end
+
 local function copy_track_fx_chain_state(source_track, destination_track)
     local ok_source, source_chunk =
         reaper.GetTrackStateChunk(source_track, "", false)
@@ -230,34 +286,52 @@ local function copy_track_fx_chain_state(source_track, destination_track)
         return
     end
 
-    -- REAPER stores the track FX-chain power state on the top-level
-    -- "FX 0/1" line in the track chunk.  Copy that exact line rather than
-    -- relying on API properties that do not cover every REAPER version/state.
+    -- TrackFX_CopyToTrack is useful for creating the processors, but some
+    -- file-based plugins do not reliably carry every saved detail through that
+    -- API path.  Replace the resulting FXCHAIN with the exact source chunk so
+    -- plugin state/presets and stored external-file paths (NAM models,
+    -- ReaVerb impulses, etc.) are preserved exactly as in the source project.
+    local source_fx_chain = extract_chunk_block(source_chunk, "FXCHAIN")
+    if source_fx_chain then
+        local replaced
+        destination_chunk, replaced = replace_chunk_block(
+            destination_chunk,
+            "FXCHAIN",
+            source_fx_chain
+        )
+
+        -- Normally the chain exists because TrackFX_CopyToTrack ran first.
+        -- Keep a fallback for unusual/empty destination chunks.
+        if not replaced then
+            local final_close = destination_chunk:match("()\r?\n>%s*$")
+            if final_close then
+                destination_chunk = destination_chunk:sub(1, final_close - 1)
+                    .. "\n" .. source_fx_chain
+                    .. destination_chunk:sub(final_close)
+            end
+        end
+    end
+
+    -- REAPER stores the track FX-chain power state on the top-level FX line.
     local source_fx_line =
         source_chunk:match("[\r\n](%s*FX%s+[%-%d]+)[\r\n]")
 
-    if not source_fx_line then return end
-
-    local replaced = false
-    destination_chunk = destination_chunk:gsub(
-        "([\r\n])%s*FX%s+[%-%d]+([\r\n])",
-        function(prefix, suffix)
-            if replaced then
-                return prefix .. "FX 1" .. suffix
-            end
-            replaced = true
-            return prefix .. source_fx_line .. suffix
-        end,
-        1
-    )
-
-    if replaced then
-        reaper.SetTrackStateChunk(
-            destination_track,
-            destination_chunk,
-            false
+    if source_fx_line then
+        local replaced = false
+        destination_chunk = destination_chunk:gsub(
+            "([\r\n])%s*FX%s+[%-%d]+([\r\n])",
+            function(prefix, suffix)
+                if replaced then
+                    return prefix .. "FX 1" .. suffix
+                end
+                replaced = true
+                return prefix .. source_fx_line .. suffix
+            end,
+            1
         )
     end
+
+    reaper.SetTrackStateChunk(destination_track, destination_chunk, false)
 end
 
 local function copy_track_settings(source_track, destination_track, fallback_name)
