@@ -26,6 +26,28 @@ local EXT_ACTIVE_SLOT = "ActiveSlotSession"
 
 local FX_MAPPING_FILENAME = "fx_mapping.ini"
 
+-- Screen 5 load/save/new must never leave transport or recording active.
+-- Unlike the normal ReaBox Stop button this intentionally includes
+-- liverec.rpp, because changing/saving projects while it is recording can
+-- make REAPER show a dialog -- unusable in screenless operation.
+local CMD_STOP = 1016
+
+local function stop_all_open_projects()
+    local index = 0
+
+    while true do
+        local project = reaper.EnumProjects(index, "")
+        if not project then break end
+
+        local play_state = reaper.GetPlayStateEx(project) or 0
+        if play_state ~= 0 then
+            reaper.Main_OnCommandEx(CMD_STOP, 0, project)
+        end
+
+        index = index + 1
+    end
+end
+
 local function valid_slot(slot)
     slot = tonumber(slot)
 
@@ -335,6 +357,9 @@ local function open_project_list_like_slot(projects, on_before_open, on_after_op
         end
     end
 
+    -- Stop main, all subprojects and liverec before changing project tabs.
+    stop_all_open_projects()
+
     local function open_projects()
         local index = 0
         while true do
@@ -421,6 +446,9 @@ function M.load(slot, on_loaded)
     if not config_ok then
         return false, config_error
     end
+
+    -- Stop main, all subprojects and liverec before loading another slot.
+    stop_all_open_projects()
 
     local function open_projects()
         local index = 0
@@ -641,6 +669,10 @@ function M.save(slot)
         return false,
             "Ongeldig slot of HOME ontbreekt."
     end
+
+    -- Saving while any tab is playing/recording can trigger REAPER dialogs.
+    -- Stop everything first, including the independent liverec project.
+    stop_all_open_projects()
 
     local projects = {}
     local index = 0
