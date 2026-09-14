@@ -3,21 +3,23 @@
 -- Version 03 - always reselect resized region after operation
 -- ============================================================
 --
--- Page 2: resize all 8 regions in all subprojects
--- Page 3: resize selected region in all subprojects
+-- Page 2: resize all 8 regions in main + all 8 subprojects
+-- Page 3: resize selected region in main + all 8 subprojects
 -- Page 4: resize selected region in selected subproject
 --
--- Project 0 is the main project. Projects 1 through 7 are subprojects.
--- The chosen bar count is applied to subprojects only. Afterwards the
--- matching main-project region is resized to the scene length: the
--- longest matching region found across projects 1 through 7.
+-- REAPER project 0 is the central/main project.
+-- REAPER projects 1 through 8 are subprojects 1 through 8.
+-- The main project uses the same bar length as the subprojects and its
+-- region chain is rebuilt on musical bar boundaries so it cannot drift
+-- off the measure grid.
 -- ============================================================
 
 local M = {}
 
 local TOLERANCE = 0.000001
 local REGION_COUNT = 8
-local LAST_SUBPROJECT_INDEX = 7
+local FIRST_SUBPROJECT_INDEX = 1
+local LAST_SUBPROJECT_INDEX = 8
 
 local function almost_equal(a, b)
     return math.abs(a - b) <= TOLERANCE
@@ -56,7 +58,7 @@ local function select_region(track_number, region_number)
     track_number = tonumber(track_number) or 1
     region_number = tonumber(region_number) or 1
 
-    local project_index = math.floor(track_number) - 1
+    local project_index = math.floor(track_number)
     local proj = reaper.EnumProjects(project_index, "")
     if not proj then
         return false
@@ -150,34 +152,45 @@ end
 local function shift_regions_after(
     proj,
     region_index,
-    shift_amount,
+    shift_qn,
     regions
 )
     for index = #regions, region_index + 1, -1 do
         local region = regions[index]
 
+        local start_qn =
+            reaper.TimeMap2_timeToQN(proj, region.start_pos)
+        local end_qn =
+            reaper.TimeMap2_timeToQN(proj, region.end_pos)
+
         reaper.SetProjectMarker2(
             proj,
             region.id,
             true,
-            region.start_pos + shift_amount,
-            region.end_pos + shift_amount,
+            reaper.TimeMap2_QNToTime(proj, start_qn + shift_qn),
+            reaper.TimeMap2_QNToTime(proj, end_qn + shift_qn),
             region.name
         )
     end
 end
 
-local function shift_items_from(proj, time_pos, shift_amount)
+local function shift_items_from(proj, time_pos, shift_qn)
     for index = reaper.CountMediaItems(proj) - 1, 0, -1 do
         local item = reaper.GetMediaItem(proj, index)
         local position =
             reaper.GetMediaItemInfo_Value(item, "D_POSITION")
 
         if position >= time_pos - TOLERANCE then
+            local position_qn =
+                reaper.TimeMap2_timeToQN(proj, position)
+
             reaper.SetMediaItemInfo_Value(
                 item,
                 "D_POSITION",
-                position + shift_amount
+                reaper.TimeMap2_QNToTime(
+                    proj,
+                    position_qn + shift_qn
+                )
             )
         end
     end
@@ -288,9 +301,13 @@ local function resize_region_to_bars(
     local new_end =
         bars_to_time_from(proj, old_start, bars)
 
-    local delta = new_end - old_end
+    local old_end_qn =
+        reaper.TimeMap2_timeToQN(proj, old_end)
+    local new_end_qn =
+        reaper.TimeMap2_timeToQN(proj, new_end)
+    local delta_qn = new_end_qn - old_end_qn
 
-    if almost_equal(delta, 0) then
+    if almost_equal(delta_qn, 0) then
         return false
     end
 
@@ -303,7 +320,7 @@ local function resize_region_to_bars(
             new_end
         )
 
-        shift_items_from(proj, old_end, delta)
+        shift_items_from(proj, old_end, delta_qn)
     end
 
     reaper.SetProjectMarker2(
@@ -318,9 +335,36 @@ local function resize_region_to_bars(
     shift_regions_after(
         proj,
         region_number,
-        delta,
+        delta_qn,
         regions
     )
+
+    return true
+end
+
+local function rebuild_regions_to_bars(proj, bars)
+    local regions = get_all_regions(proj)
+    if #regions == 0 then
+        return false
+    end
+
+    local cursor = regions[1].start_pos
+
+    for region_number = 1, math.min(REGION_COUNT, #regions) do
+        local region = regions[region_number]
+        local new_end = bars_to_time_from(proj, cursor, bars)
+
+        reaper.SetProjectMarker2(
+            proj,
+            region.id,
+            true,
+            cursor,
+            new_end,
+            region.name
+        )
+
+        cursor = new_end
+    end
 
     return true
 end
@@ -328,7 +372,7 @@ end
 local function get_scene_length(region_number)
     local longest = nil
 
-    for project_index = 1, LAST_SUBPROJECT_INDEX do
+    for project_index = FIRST_SUBPROJECT_INDEX, LAST_SUBPROJECT_INDEX do
         local proj = reaper.EnumProjects(project_index, "")
 
         if proj then
@@ -391,13 +435,13 @@ function M.resize_all_regions_all_projects(
 
     reaper.PreventUIRefresh(1)
 
-    for project_index = 1, LAST_SUBPROJECT_INDEX do
+    -- Subprojects 1..8: normal resize including their media items.
+    for project_index = FIRST_SUBPROJECT_INDEX, LAST_SUBPROJECT_INDEX do
         local proj = reaper.EnumProjects(project_index, "")
 
         if proj then
             begin_project_undo(proj)
 
-            -- Work backwards so earlier region positions remain stable.
             for region_number = REGION_COUNT, 1, -1 do
                 resize_region_to_bars(
                     proj,
@@ -416,18 +460,19 @@ function M.resize_all_regions_all_projects(
         end
     end
 
+    -- Main project: same requested bar length, but rebuild the complete
+    -- region chain from the first region forward. This removes any old
+    -- accumulated time-based drift and puts every boundary exactly on
+    -- the musical grid.
     local main_proj = reaper.EnumProjects(0, "")
-
     if main_proj then
         begin_project_undo(main_proj)
-
-        for region_number = REGION_COUNT, 1, -1 do
-            resize_main_region_to_scene_length(region_number)
-        end
-
+        rebuild_regions_to_bars(main_proj, bars)
         end_project_undo(
             main_proj,
-            "Resize main regions to scene lengths"
+            "Resize all main regions to "
+            .. tostring(bars)
+            .. " bars"
         )
     end
 
@@ -467,7 +512,7 @@ function M.resize_selected_region_all_projects(
 
     reaper.PreventUIRefresh(1)
 
-    for project_index = 1, LAST_SUBPROJECT_INDEX do
+    for project_index = FIRST_SUBPROJECT_INDEX, LAST_SUBPROJECT_INDEX do
         local proj = reaper.EnumProjects(project_index, "")
 
         if proj then
@@ -491,21 +536,24 @@ function M.resize_selected_region_all_projects(
         end
     end
 
+    -- Same requested size in the main project too.
     local main_proj = reaper.EnumProjects(0, "")
-
     if main_proj then
-        if create_undo_points then begin_project_undo(main_proj) end
-
-        resize_main_region_to_scene_length(region_number)
-
-        if create_undo_points then
-            end_project_undo(
-                main_proj,
-                "Resize main region "
-                .. tostring(region_number)
-                .. " to scene length"
-            )
-        end
+        begin_project_undo(main_proj)
+        resize_region_to_bars(
+            main_proj,
+            region_number,
+            bars,
+            false
+        )
+        end_project_undo(
+            main_proj,
+            "Resize main region "
+            .. tostring(region_number)
+            .. " to "
+            .. tostring(bars)
+            .. " bars"
+        )
     end
 
     reaper.PreventUIRefresh(-1)
@@ -545,11 +593,10 @@ local function resize_selected_region_selected_project_impl(
         return false
     end
 
-    local project_index = active_track - 1
+    local project_index = active_track
 
-    -- Project 0 is the main project. A selected-project resize is meant
-    -- for subprojects only; the main region is derived from their maximum.
-    if project_index < 1 or project_index > LAST_SUBPROJECT_INDEX then
+    if project_index < FIRST_SUBPROJECT_INDEX
+    or project_index > LAST_SUBPROJECT_INDEX then
         return false
     end
 
