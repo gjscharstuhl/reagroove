@@ -378,6 +378,18 @@ function Pattern.select(track_number, region_number)
         false
     )
 
+    -- Queue the REAPER region transition first.
+    -- Important: with Repeat enabled, changing the loop range while the
+    -- play cursor is still in the old region can make a background project
+    -- wrap immediately.  Register the "after current region finishes"
+    -- command before moving the loop range so that transition already owns
+    -- the upcoming boundary.
+    reaper.Main_OnCommandEx(
+        command,
+        0,
+        project
+    )
+
     reaper.GetSet_LoopTimeRange2(
         project,
         true,
@@ -385,12 +397,6 @@ function Pattern.select(track_number, region_number)
         start_pos,
         end_pos,
         false
-    )
-
-    reaper.Main_OnCommandEx(
-        command,
-        0,
-        project
     )
 
     reaper.UpdateArrange()
