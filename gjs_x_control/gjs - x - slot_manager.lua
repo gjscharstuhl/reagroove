@@ -48,6 +48,57 @@ local function stop_all_open_projects()
     end
 end
 
+
+local function replace_open_projects_without_prompt(projects)
+    -- Do NOT use File: Close all projects here. Even when the subsequent
+    -- Main_openProject() uses noprompt:, REAPER will still ask to save dirty
+    -- tabs during the close-all action. Replace the existing tabs in place
+    -- instead; noprompt: then suppresses the save question for each tab.
+    local existing_count = 0
+    while reaper.EnumProjects(existing_count, "") do
+        existing_count = existing_count + 1
+    end
+
+    local common_count = math.min(existing_count, #projects)
+
+    -- Re-use existing tabs first. Re-fetch by index every time because the
+    -- ReaProject handle changes when Main_openProject replaces that tab.
+    for project_index = 1, common_count do
+        local current = reaper.EnumProjects(project_index - 1, "")
+        if current then
+            reaper.SelectProjectInstance(current)
+            reaper.Main_openProject("noprompt:" .. projects[project_index])
+        end
+    end
+
+    -- If the destination contains more projects, append new tabs.
+    for project_index = existing_count + 1, #projects do
+        reaper.Main_OnCommand(41929, 0) -- New project tab
+        reaper.Main_openProject("noprompt:" .. projects[project_index])
+    end
+
+    -- ReaBox normally has the same number of tabs in every set. If an old or
+    -- malformed set contains extras, make each extra tab clean first and then
+    -- close it. Opening a known project with noprompt: discards its dirty
+    -- state without a dialog; the immediately following close is therefore
+    -- silent. Work backwards so tab indices remain stable.
+    if existing_count > #projects and #projects > 0 then
+        for project_index = existing_count, #projects + 1, -1 do
+            local extra = reaper.EnumProjects(project_index - 1, "")
+            if extra then
+                reaper.SelectProjectInstance(extra)
+                reaper.Main_openProject("noprompt:" .. projects[1])
+                reaper.Main_OnCommand(40860, 0) -- Close current project tab
+            end
+        end
+    end
+
+    local first_project = reaper.EnumProjects(0, "")
+    if first_project then
+        reaper.SelectProjectInstance(first_project)
+    end
+end
+
 local function valid_slot(slot)
     slot = tonumber(slot)
 
@@ -361,27 +412,12 @@ local function open_project_list_like_slot(projects, on_before_open, on_after_op
     stop_all_open_projects()
 
     local function open_projects()
-        local index = 0
-        while true do
-            local project, project_path = reaper.EnumProjects(index, "")
-            if not project then break end
-            if project_path and project_path ~= "" then
-                reaper.Main_SaveProject(project, false)
-            end
-            index = index + 1
-        end
-
+        -- New/Load are intentionally non-saving operations.
+        -- The complete destination set was preflighted above, so replace the
+        -- current tabs directly without touching their files on disk.
         if type(on_before_open) == "function" then on_before_open() end
 
-        reaper.Main_OnCommand(40886, 0)
-        reaper.Main_openProject("noprompt:" .. projects[1])
-        for project_index = 2, #projects do
-            reaper.Main_OnCommand(41929, 0)
-            reaper.Main_openProject("noprompt:" .. projects[project_index])
-        end
-
-        local first_project = reaper.EnumProjects(0, "")
-        if first_project then reaper.SelectProjectInstance(first_project) end
+        replace_open_projects_without_prompt(projects)
 
         if type(on_after_open) == "function" then
             reaper.defer(on_after_open)
@@ -451,26 +487,9 @@ function M.load(slot, on_loaded)
     stop_all_open_projects()
 
     local function open_projects()
-        local index = 0
-
-        -- Huidige benoemde projecten opslaan.
-        while true do
-            local project, project_path =
-                reaper.EnumProjects(index, "")
-
-            if not project then
-                break
-            end
-
-            if project_path and project_path ~= "" then
-                reaper.Main_SaveProject(
-                    project,
-                    false
-                )
-            end
-
-            index = index + 1
-        end
+        -- Load never saves the current tabs. Saving is an explicit Screen 5
+        -- operation only. This avoids REAPER save/file dialogs (notably for
+        -- liverec.rpp) while switching jams.
 
         -- Cruciale fix:
         -- dit moet gebeuren voordat Main_openProject de huidige
@@ -489,32 +508,10 @@ function M.load(slot, on_loaded)
             on_loaded()
         end
 
-        -- Huidige projecttabs sluiten.
-        reaper.Main_OnCommand(40886, 0)
-
-        -- Eerste project openen.
-        reaper.Main_openProject(
-            "noprompt:" .. projects[1]
-        )
-
-        -- Overige projecten als tabs openen.
-        for project_index = 2, #projects do
-            reaper.Main_OnCommand(41929, 0)
-
-            reaper.Main_openProject(
-                "noprompt:" .. projects[project_index]
-            )
-        end
-
-        -- Eerste geopende projecttab selecteren.
-        local first_project =
-            reaper.EnumProjects(0, "")
-
-        if first_project then
-            reaper.SelectProjectInstance(
-                first_project
-            )
-        end
+        -- Replace every tab in-place. Never run File: Close all projects here:
+        -- that action itself prompts for dirty projects before noprompt: can
+        -- have any effect.
+        replace_open_projects_without_prompt(projects)
     end
 
     -- Laat eerst de padcallback eindigen.
@@ -871,6 +868,15 @@ function M.save(slot)
     if not config_ok then
         return false, config_error
     end
+
+    -- Main_SaveProjectEx() moved the open projects into this slot, so this is
+    -- now the active working slot as well. Keep this session-only, like Load.
+    reaper.SetExtState(
+        EXT_SECTION,
+        EXT_ACTIVE_SLOT,
+        tostring(slot),
+        false
+    )
 
     return true
 end

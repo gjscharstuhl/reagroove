@@ -157,7 +157,11 @@ local function drawscreen5(api)
             local success, error_message =
                 slot_manager.save(slot)
 
-            if not success and error_message then
+            if success then
+                -- Save As moves the open project set into this slot, so the
+                -- newly written slot is now the active working jam.
+                api.set_active_slot(slot)
+            elseif error_message then
                 show_error(error_message)
             end
 
@@ -170,7 +174,11 @@ local function drawscreen5(api)
             return
         end
 
-        -- Meteen onthouden welk slot actief wordt.
+        local previous_slot = api.get_active_slot()
+
+        -- Meteen onthouden welk slot actief wordt. De load zelf preflight alle
+        -- files voordat tabs worden vervangen. Bij een fout herstellen we de
+        -- vorige LED/status.
         api.set_active_slot(slot)
 
         -- Eerst de nieuwe actieve status tekenen.
@@ -182,8 +190,9 @@ local function drawscreen5(api)
                 local success, error_message =
                     slot_manager.load(slot)
 
-                if not success and error_message then
-                    show_error(error_message)
+                if not success then
+                    api.set_active_slot(previous_slot)
+                    if error_message then show_error(error_message) end
                 end
 
                 api.redraw()
@@ -255,9 +264,6 @@ local function drawscreen5(api)
                 local default_dir = home .. "/ReaBox/default"
                 local rpl_file = default_dir .. "/Media/projlist.RPL"
 
-                api.set_active_slot(nil)
-                api.redraw()
-
                 local success, error_message = slot_manager.load_rpl(
                     rpl_file,
                     default_dir,
@@ -277,7 +283,12 @@ local function drawscreen5(api)
                     end
                 )
 
-                if not success and error_message then
+                if success then
+                    -- Default is not a save slot. load_rpl() has already
+                    -- verified the complete set before returning true.
+                    api.set_active_slot(nil)
+                    api.redraw()
+                elseif error_message then
                     show_error(error_message)
                 end
             end

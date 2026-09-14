@@ -20,6 +20,42 @@ local function get_home()
     return home:gsub("\\", "/")
 end
 
+
+local function replace_open_projects_without_prompt(projects)
+    local existing_count = 0
+    while reaper.EnumProjects(existing_count, "") do
+        existing_count = existing_count + 1
+    end
+
+    local common_count = math.min(existing_count, #projects)
+    for i = 1, common_count do
+        local project = reaper.EnumProjects(i - 1, "")
+        if project then
+            reaper.SelectProjectInstance(project)
+            reaper.Main_openProject("noprompt:" .. projects[i])
+        end
+    end
+
+    for i = existing_count + 1, #projects do
+        reaper.Main_OnCommand(41929, 0)
+        reaper.Main_openProject("noprompt:" .. projects[i])
+    end
+
+    if existing_count > #projects and #projects > 0 then
+        for i = existing_count, #projects + 1, -1 do
+            local extra = reaper.EnumProjects(i - 1, "")
+            if extra then
+                reaper.SelectProjectInstance(extra)
+                reaper.Main_openProject("noprompt:" .. projects[1])
+                reaper.Main_OnCommand(40860, 0)
+            end
+        end
+    end
+
+    local first = reaper.EnumProjects(0, "")
+    if first then reaper.SelectProjectInstance(first) end
+end
+
 local function load_default_project()
     local home = get_home()
     if not home then return false, "HOME directory niet gevonden" end
@@ -40,26 +76,23 @@ local function load_default_project()
                 or line:sub(1, 2) == "//"
             local rpp = is_absolute and line or (default_dir .. "/" .. line)
             rpp = rpp:gsub("\\", "/")
-            if reaper.file_exists(rpp) then
-                projects[#projects + 1] = rpp
-            end
+            projects[#projects + 1] = rpp
         end
     end
     f:close()
 
     if #projects == 0 then
-        return false, "Geen geldige RPP-projecten gevonden in " .. rpl_file
+        return false, "Geen RPP-projecten gevonden in " .. rpl_file
+    end
+
+    for i = 1, #projects do
+        if not reaper.file_exists(projects[i]) then
+            return false, "Default project ontbreekt: " .. projects[i]
+        end
     end
 
     reaper.Main_OnCommand(41898, 0)
-    reaper.Main_OnCommand(40886, 0)
-    reaper.Main_openProject(projects[1])
-
-    for i = 2, #projects do
-        reaper.Main_OnCommand(40859, 0)
-        reaper.Main_openProject(projects[i])
-    end
-
+    replace_open_projects_without_prompt(projects)
     reaper.Main_OnCommand(40861, 0)
     return true
 end
