@@ -58,7 +58,8 @@ local function select_region(track_number, region_number)
     track_number = tonumber(track_number) or 1
     region_number = tonumber(region_number) or 1
 
-    local project_index = math.floor(track_number)
+    -- ActiveTrack 1..8 maps to REAPER projects 0..7.
+    local project_index = math.floor(track_number) - 1
     local proj = reaper.EnumProjects(project_index, "")
     if not proj then
         return false
@@ -593,10 +594,10 @@ local function resize_selected_region_selected_project_impl(
         return false
     end
 
-    local project_index = active_track
+    -- ActiveTrack 1..8 maps to REAPER projects 0..7.
+    local project_index = active_track - 1
 
-    if project_index < FIRST_SUBPROJECT_INDEX
-    or project_index > LAST_SUBPROJECT_INDEX then
+    if project_index < 0 or project_index > 7 then
         return false
     end
 
@@ -627,23 +628,6 @@ local function resize_selected_region_selected_project_impl(
             .. tostring(bars)
             .. " bars"
         )
-    end
-
-    local main_proj = reaper.EnumProjects(0, "")
-
-    if main_proj then
-        if create_undo_points then begin_project_undo(main_proj) end
-
-        resize_main_region_to_scene_length(region_number)
-
-        if create_undo_points then
-            end_project_undo(
-                main_proj,
-                "Resize main region "
-                .. tostring(region_number)
-                .. " to scene length"
-            )
-        end
     end
 
     reaper.PreventUIRefresh(-1)
